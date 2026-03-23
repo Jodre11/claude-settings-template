@@ -36,6 +36,13 @@
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 
+## Bash
+- Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
+- Never use command substitution (`$(...)`, backticks) — capture output from one Bash call and pass it to the next
+- Never use subshells or grouping (`(...)`, `{ ...; }`) — use separate Bash calls
+- Prefer dedicated tools or separate Bash calls over piping (`|`) where possible
+- Prefer dedicated tools or separate Bash calls over redirection (`>`, `>>`) where possible; `2>&1` is acceptable when capturing stderr
+
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision
 - Fall back to Grep/Glob for discovery, broad text searches, config files, and non-code files
