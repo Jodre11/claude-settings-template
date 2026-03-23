@@ -54,9 +54,12 @@
 - Never combine changes to multiple modules in a single PR
 - If changes span multiple modules, create separate branches and PRs for each
 
-## IDE
-- After editing C# files, run `mcp__ide__getDiagnostics` to check for Rider inspections beyond build warnings
-- `mcp__ide__getDiagnostics` only works on the file currently active in the editor; do not call it for files the user hasn't opened (it will timeout)
+## Code Inspection (C#)
+- After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
+  ```bash
+  jb inspectcode <solution> --output=/tmp/inspectcode-output.xml --format=Xml --severity=WARNING
+  ```
+- Parse the XML output; fix any `<Issue>` elements before finishing
 
 ## C#
 - Use source-generated logging (`[LoggerMessage]` attribute) instead of string interpolation for all logging calls
