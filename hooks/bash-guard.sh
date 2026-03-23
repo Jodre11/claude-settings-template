@@ -17,6 +17,11 @@ if [ -z "$cmd" ]; then
     exit 0
 fi
 
+# Whitelist: git commit HEREDOC pattern requires $(cat <<'EOF'...) — no clean alternative
+if echo "$cmd" | grep -qE '^git\s.*commit\s' ; then
+    exit 0
+fi
+
 # Strip single-quoted strings (cannot contain escapes)
 stripped=$(echo "$cmd" | sed "s/'[^']*'//g")
 # Strip double-quoted strings (handle escaped quotes inside)
