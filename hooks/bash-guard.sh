@@ -61,7 +61,8 @@ if [ -n "$warnings" ]; then
     jq -n --arg m "$msg" '{
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "additionalContext": $m
+            "permissionDecision": "deny",
+            "permissionDecisionReason": $m
         }
     }'
 fi
