@@ -39,6 +39,25 @@ If more than 20 files changed, prioritize:
 2. Files with the largest diffs
 3. Skip generated files, lock files, and vendored dependencies
 
+### Step 5b: Run JetBrains InspectCode (C# only)
+
+If any changed files end with `.cs`:
+
+1. Find all `.sln` files: `find . -name '*.sln' -not -path '*/bin/*' -not -path '*/obj/*'`
+2. If exactly one `.sln` exists, use it. If multiple exist, scope to affected solutions:
+   a. For each changed `.cs` file, find its containing `.csproj` by walking up the directory tree.
+   b. Grep each `.sln` for the `.csproj` filename to determine which solutions are affected.
+   c. Collect the unique set of affected `.sln` files.
+3. For each affected solution, run:
+   `jb inspectcode <solution.sln> --output=/tmp/inspectcode-<name>.xml --format=Xml --severity=WARNING`
+4. Parse the XML output for `<Issue>` elements. Cross-reference `TypeId` against `<IssueType>` definitions to get severity and category.
+5. **Filter to only issues in files that appear in the diff.**
+6. Map severity: ERROR → Critical, WARNING → Important, SUGGESTION → Suggestion. Omit HINT.
+7. If `jb` is not on PATH, skip this step and note it in the output.
+8. Clean up temporary XML files after parsing.
+
+Include these findings in Step 7 output under a separate `## JetBrains InspectCode` section (before the manual review findings). If no C# files are in the diff, skip this step entirely.
+
 ### Step 6: Analyze changes
 
 Review every change against the following priorities (highest first):
@@ -58,21 +77,33 @@ Return findings grouped by severity. Use this format:
 ## Summary
 X file(s) changed, Y finding(s)
 
-## Critical
+## JetBrains InspectCode
+> Only present if C# files were in the diff and jb inspectcode ran.
+
 ### Finding #1 — [short title]
+- **File:** path/to/file.cs:42
+- **Rule:** TypeId (Category)
+- **Severity:** Critical | Important | Suggestion
+- **Description:** The issue message from InspectCode
+- **Suggested fix:** Concrete suggestion based on the rule and context
+
+## Critical
+### Finding #N — [short title]
 - **File:** path/to/file.cs:42
 - **Confidence:** 95
 - **Description:** What is wrong and why it matters
 - **Suggested fix:** Concrete code change or approach
 
 ## Important
-### Finding #2 — [short title]
+### Finding #N — [short title]
 ...
 
 ## Suggestions
-### Finding #3 — [short title]
+### Finding #N — [short title]
 ...
 ```
+
+Number findings sequentially across all sections (jbinspect findings first, then manual findings).
 
 If there are no findings, return:
 
