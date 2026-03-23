@@ -1,0 +1,30 @@
+# Ephemeral session data
+history.jsonl
+sessions/
+session-env/
+shell-snapshots/
+debug/
+paste-cache/
+file-history/
+backups/
+plans/
+todos/
+tasks/
+downloads/
+ide/
+cache/
+
+# Plugin runtime data (not authored config)
+plugins/
+
+# Telemetry and stats
+statsig/
+stats-cache.json
+
+# Per-session security warnings
+security_warnings_state_*.json
+
+# Session transcripts, tool results, and indexes inside projects
+projects/*/*.jsonl
+projects/*/sessions-index.json
+projects/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*/

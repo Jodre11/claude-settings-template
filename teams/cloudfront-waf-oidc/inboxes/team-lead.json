@@ -1,0 +1,58 @@
+[
+  {
+    "from": "app-auth-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"app-auth-agent\",\"timestamp\":\"2026-03-10T12:39:44.294Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:39:44.294Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "terraform-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"terraform-agent\",\"timestamp\":\"2026-03-10T12:39:44.368Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:39:44.368Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "terraform-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"terraform-agent\",\"timestamp\":\"2026-03-10T12:41:55.028Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:41:55.028Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "app-auth-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"app-auth-agent\",\"timestamp\":\"2026-03-10T12:41:55.251Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:41:55.251Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "app-auth-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"app-auth-agent\",\"timestamp\":\"2026-03-10T12:42:14.728Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:42:14.728Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "terraform-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"terraform-agent\",\"timestamp\":\"2026-03-10T12:42:15.021Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:42:15.021Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "terraform-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"terraform-agent\",\"timestamp\":\"2026-03-10T12:53:52.468Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:53:52.468Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "app-auth-agent",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"app-auth-agent\",\"timestamp\":\"2026-03-10T12:53:52.599Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-10T12:53:52.599Z",
+    "color": "blue",
+    "read": true
+  }
+]

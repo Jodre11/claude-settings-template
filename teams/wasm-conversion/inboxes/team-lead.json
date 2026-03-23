@@ -1,0 +1,72 @@
+[
+  {
+    "from": "wasm-web",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"wasm-web\",\"timestamp\":\"2026-03-09T15:35:51.781Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:35:51.781Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "api-lambda",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"api-lambda\",\"timestamp\":\"2026-03-09T15:35:51.862Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:35:51.862Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "api-lambda",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"api-lambda\",\"timestamp\":\"2026-03-09T15:36:15.951Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:36:15.951Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "wasm-web",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"wasm-web\",\"timestamp\":\"2026-03-09T15:36:16.357Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:36:16.357Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "wasm-web",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"wasm-web\",\"timestamp\":\"2026-03-09T15:36:38.907Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:36:38.907Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "api-lambda",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"api-lambda\",\"timestamp\":\"2026-03-09T15:36:38.981Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:36:38.981Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "api-lambda",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"api-lambda\",\"timestamp\":\"2026-03-09T15:47:08.551Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:47:08.551Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "wasm-web",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"wasm-web\",\"timestamp\":\"2026-03-09T15:47:08.635Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:47:08.635Z",
+    "color": "green",
+    "read": true
+  },
+  {
+    "from": "api-lambda",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"api-lambda\",\"timestamp\":\"2026-03-09T15:47:23.106Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:47:23.106Z",
+    "color": "blue",
+    "read": true
+  },
+  {
+    "from": "wasm-web",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"wasm-web\",\"timestamp\":\"2026-03-09T15:47:23.106Z\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-03-09T15:47:23.106Z",
+    "color": "green",
+    "read": true
+  }
+]
