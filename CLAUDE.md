@@ -1,3 +1,7 @@
+# Global Settings
+
+This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when editing files here.
+
 # Preferences
 
 ## Code Style
