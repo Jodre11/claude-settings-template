@@ -1,5 +1,5 @@
 {
-  "awsAuthRefresh": "aws sso login --profile claude-code --no-browser",
+  "awsAuthRefresh": "/Users/jodre11/.claude/scripts/aws-sso-refresh.sh",
   "env": {
     "AWS_PROFILE": "claude-code",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
