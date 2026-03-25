@@ -11,6 +11,7 @@
       "Bash(playwright-cli:*)",
       "Bash(read-only commands)",
       "Bash(jb inspectcode:*)",
+      "Bash(terraform fmt:*)",
       "Bash(mkdir -p /tmp/claude-:*)",
       "Bash(ls /tmp/claude-:*)",
       "Bash(cat /tmp/claude-:*)",
