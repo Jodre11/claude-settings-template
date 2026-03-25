@@ -17,8 +17,8 @@
       "Bash(rm /tmp/claude-:*)",
       "Bash(rm -f /tmp/claude-:*)",
       "Bash(rm -rf /tmp/claude-:*)",
-      "Write(/tmp/claude-)",
-      "Edit(/tmp/claude-)",
+      "Write(/tmp/claude-**)",
+      "Edit(/tmp/claude-**)",
       "Read"
     ]
   },
