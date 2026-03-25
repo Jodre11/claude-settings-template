@@ -49,7 +49,7 @@ If any changed files end with `.cs`:
    b. Grep each `.sln` for the `.csproj` filename to determine which solutions are affected.
    c. Collect the unique set of affected `.sln` files.
 3. For each affected solution, run:
-   `jb inspectcode <solution.sln> --output=/tmp/inspectcode-<name>.xml --format=Xml --severity=WARNING`
+   `jb inspectcode <solution.sln> --output=~/.claude/tmp/$PPID-inspectcode-<name>.xml --format=Xml --severity=WARNING`
 4. Parse the XML output for `<Issue>` elements. Cross-reference `TypeId` against `<IssueType>` definitions to get severity and category.
 5. **Filter to only issues in files that appear in the diff.**
 6. Map severity: ERROR → Critical, WARNING → Important, SUGGESTION → Suggestion. Omit HINT.

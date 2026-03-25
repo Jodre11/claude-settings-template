@@ -22,6 +22,25 @@ if echo "$cmd" | grep -qE '^git\s.*commit\s' ; then
     exit 0
 fi
 
+# ── Temp directory enforcement ──
+# Block any command that references /tmp/, $TMPDIR, or /var/folders/ (macOS TMPDIR)
+# unless it also references ~/.claude/tmp/ (which is the approved location).
+if echo "$cmd" | grep -qE '(/tmp/|\$TMPDIR|/var/folders/)'; then
+    if ! echo "$cmd" | grep -qF '~/.claude/tmp'; then
+        if ! echo "$cmd" | grep -qF "$HOME/.claude/tmp"; then
+            msg="TEMP DIRECTORY VIOLATION: Use ~/.claude/tmp/ (with \$PPID prefix) instead of /tmp/ or \$TMPDIR. See CLAUDE.md 'Temporary Files' section."
+            jq -n --arg m "$msg" '{
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": $m
+                }
+            }'
+            exit 0
+        fi
+    fi
+fi
+
 # Strip single-quoted strings (cannot contain escapes)
 stripped=$(echo "$cmd" | sed "s/'[^']*'//g")
 # Strip double-quoted strings (handle escaped quotes inside)

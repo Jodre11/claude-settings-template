@@ -11,7 +11,24 @@
       "Bash(playwright-cli:*)",
       "Bash(read-only commands)",
       "Bash(jb inspectcode:*)",
+      "Bash(mkdir -p ~/.claude/tmp)",
+      "Bash(ls ~/.claude/tmp:*)",
+      "Bash(cat ~/.claude/tmp:*)",
+      "Bash(rm ~/.claude/tmp:*)",
+      "Bash(rm -f ~/.claude/tmp:*)",
+      "Read(~/.claude/tmp)",
+      "Write(~/.claude/tmp)",
+      "Edit(~/.claude/tmp)",
       "Read"
+    ],
+    "deny": [
+      "Bash(dotnet build ~/.claude/tmp:*)",
+      "Bash(dotnet run ~/.claude/tmp:*)",
+      "Bash(msbuild ~/.claude/tmp:*)",
+      "Bash(make ~/.claude/tmp:*)",
+      "Bash(gcc ~/.claude/tmp:*)",
+      "Bash(node ~/.claude/tmp:*)",
+      "Bash(npm run ~/.claude/tmp:*)"
     ]
   },
   "model": "opus",
@@ -25,6 +42,17 @@
             "command": "/Users/jodre11/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jodre11/.claude/hooks/temp-path-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking temp path..."
           }
         ]
       }

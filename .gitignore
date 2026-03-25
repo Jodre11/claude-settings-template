@@ -17,6 +17,9 @@ cache/
 # Plugin runtime data (not authored config)
 plugins/
 
+# Claude temporary files (shared across all sessions/repos)
+tmp/
+
 # Telemetry and stats
 statsig/
 stats-cache.json

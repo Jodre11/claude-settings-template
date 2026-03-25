@@ -40,6 +40,14 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 
+## Temporary Files
+- ALWAYS use `~/.claude/tmp/` for temporary files (tool output, diffs, commit drafts, etc.)
+- NEVER use `/tmp/`, `$TMPDIR`, or repo-local temp directories
+- Create `~/.claude/tmp/` if it does not exist before writing temp files
+- To avoid collisions between concurrent sessions, prefix filenames with a short UUID or `$PPID`: e.g. `~/.claude/tmp/$PPID-inspectcode-output.xml`
+- Clean up: delete your temp files when no longer needed
+- This directory is gitignored in the `~/.claude` repo — never commit its contents
+
 ## Bash
 - Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
 - Never use command substitution (`$(...)`, backticks) — capture output from one Bash call and pass it to the next
@@ -68,7 +76,7 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 ## Code Inspection (C#)
 - After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
   ```bash
-  jb inspectcode <solution> --output=/tmp/inspectcode-output.xml --format=Xml --severity=WARNING
+  jb inspectcode <solution> --output=~/.claude/tmp/$PPID-inspectcode-output.xml --format=Xml --severity=WARNING
   ```
 - Parse the XML output; fix any `<Issue>` elements before finishing
 
