@@ -66,6 +66,9 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 ## Git
 - Do not add Co-Authored-By trailers to commits
 - Do not add Claude Code advertising to PR descriptions
+- PR descriptions must begin with a brief contextual summary (1–3 sentences) explaining
+  why the change is being made and what it achieves, written for a non-technical audience.
+  Follow this with the detailed technical list of changes.
 
 ## Terraform (Haven)
 - Each Terraform module directory requires its own PR — the Platform team applies PRs individually via `/apply` comment
