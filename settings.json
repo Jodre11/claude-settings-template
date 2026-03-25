@@ -20,8 +20,63 @@
       "Bash(rm -rf /tmp/claude-:*)",
       "Write(/tmp/claude-**)",
       "Edit(/tmp/claude-**)",
-      "Read"
-    ]
+      "Read",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(brew info:*)",
+      "Bash(open:*)",
+      "Bash(grep:*)",
+      "Bash(whisper-cli:*)",
+      "WebFetch(domain:community.workday.com)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_evaluate",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet add:*)",
+      "Bash(dotnet run:*)",
+      "Bash(curl:*)",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_press_key",
+      "mcp__playwright__browser_tabs",
+      "Bash(dotnet list:*)",
+      "Bash(dotnet nuget:*)",
+      "Bash(dotnet package:*)",
+      "WebFetch(domain:stackoverflow.com)",
+      "Bash(rustc --version 2>&1 && cargo --version 2>&1)",
+      "Bash(cargo init:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo build:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(npx playwright:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(jq:*)",
+      "Bash(cp:*)",
+      "Bash(command claude:*)",
+      "Read(//Users/jodre11/.claude/commands/**)",
+      "Read(//Users/jodre11/.claude/skills/**)",
+      "Read(//Users/jodre11/.claude/agents/**)",
+      "Read(//Users/jodre11/.claude/plugins/**)",
+      "Bash(find ~/.claude/projects -name *.md -o -name *.json)",
+      "Bash(command -v jbinspect)",
+      "Read(//usr/local/bin/**)",
+      "Read(//Applications/**)",
+      "Skill(update-config)",
+      "Bash(chmod:*)",
+      "Bash(/Users/jodre11/.claude/hooks/bash-guard.sh)",
+      "Bash(python3:*)",
+      "Bash(/tmp/test-sanitise.sh)",
+      "Bash(tmux kill-server:*)",
+      "Bash(aws sso:*)",
+      "Bash(aws:*)",
+      "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
+      "Bash(claude config:*)"
+    ],
+    "defaultMode": "plan"
   },
   "model": "opus",
   "hooks": {
@@ -61,9 +116,6 @@
     "claude-md-management@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true
   },
-  "companyAnnouncements": [
-    "Welcome Jodrell."
-  ],
   "extraKnownMarketplaces": {
     "claude-code-plugins": {
       "source": {
@@ -71,5 +123,9 @@
         "repo": "anthropics/claude-code"
       }
     }
-  }
+  },
+  "companyAnnouncements": [
+    "Welcome Jodrell."
+  ],
+  "language": "English UK"
 }

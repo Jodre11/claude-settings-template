@@ -1,149 +1,134 @@
 # Project Memory
 
-## Current State (2026-03-21)
+## Preferences
+- When summarising status with open PRs, always include full GitHub URLs (not short references)
 
-### PRs
+## Current State (2026-03-25)
 
-| PR | Branch | Repo | Purpose | Status |
-|---|---|---|---|---|
-| #7168 | `feat/master-data-import-ecr` | platform-terraform | Lambda ECR repo | **Applied** |
-| #7181 | `feat/wasm-ecr` | platform-terraform | WASM ECR repo | **Applied** |
-| #20 | `feat/master-data-import-entraid` | platform-multicloud | Entra ID app registration | **Merged & applied** |
-| #463 | — | platform-azure-terraform | Entra ID security groups (Dev + Users) | **Merged & applied** |
-| #737 | — | platform-iamldap | Group membership (7 finance users) | **Merged & applied** |
-| #535 | `feat/master-data-import-infra` | finance-terraform | S3 bucket + Lambda def | **Applied** |
-| #537 | `feat/master-data-import-entraid` | finance-terraform | ~~Entra ID app registration~~ | **Closed** (superseded by platform-multicloud #20) |
-| #541 | `feat/master-data-import-entra-client-id` | finance-terraform | `ENTRA_CLIENT_ID` env var on Lambda | **Merged & applied** |
-| #542 | `feat/master-data-import-function-url` | finance-terraform | Function URL + `ENTRA_IDENTIFIER_URI` + SSM permission | **Merged & applied** |
-| #538 | `feat/master-data-import-cdn` | finance-terraform | CloudFront + WAF + S3 OAC + WASM S3 | **Merged & applied** |
-| #1 | `feat/master-data-import` | finance-erp-master-data-import | App code + CI/CD workflows | **Merged** |
-| #2 | `feat/versioning-and-wasm-deployment` | finance-erp-master-data-import | Versioning + WASM deployment + parallel CI | **Merged & applied** |
-| #22 | `feat/master-data-import-access-control` | platform-multicloud | `app_role_assignment_required` + group→app assignment | **Merged & applied** |
-| #551 | `fix/lambda-function-url-auth-none` | finance-terraform | Change function URL auth to NONE (container-lambdas) | **Merged & applied** |
-| #550 | `fix/remove-lambda-oac` | finance-terraform | Remove Lambda OAC from CloudFront (master-data-import-cdn) | **Merged & applied** |
-| #553 | `fix/lambda-permission-hotfix` | finance-terraform | Restore Lambda access + delete orphaned OAC | **Merged & applied** |
-| #554 | `fix/lambda-public-access-permission` | finance-terraform | Change Principal to `"*"` for function URL | **Closed without applying** (superseded by #560) |
-| #560 | `fix/lambda-resource-policy` | finance-terraform | Grant public access to Lambda function URL | **Merged & applied** |
-| #556 | `feat/master-data-import-cdn-origin-verify` | finance-terraform | X-Origin-Verify header + SSM parameter | **Merged & applied** |
-| #557 | `feat/master-data-import-s3-cors` | finance-terraform | S3 CORS rule for presigned upload | **Merged & applied** |
-| #558 | `feat/container-lambdas-origin-verify` | finance-terraform | `ORIGIN_VERIFY_SECRET` Lambda env var | **Merged & applied** |
-| #4 | `feat/e2e-import-testing` | finance-erp-master-data-import | E2E testing + preview enhancements | **Merged** |
+### Multi-Environment Rollout — Active Work
 
-### Live Environment
+**Design spec:** `docs/superpowers/specs/2026-03-23-multi-environment-design.md`
+**Infra plan:** `docs/superpowers/plans/2026-03-23-multi-environment-infrastructure.md`
+**CI/CD plan:** `docs/superpowers/plans/2026-03-23-multi-environment-cicd.md`
+
+**Terraform PR rule:** One PR, one `/apply`. Once `/apply`'d, do NOT add new commits. Multiple independent module directories CAN go in one PR. Only split if modules have dependencies preventing simultaneous apply.
+
+**Key learning:** finance-terraform runs in finance AWS accounts, platform-terraform in platform accounts. Route53 zones and wildcard ACM certs are in the platform account. finance-terraform PRs require Platform + SRE approval.
+
+**DNS zone ownership:** `haven-stage.com` is in platform-terraform (`staging/platform-dns/`). `haven.com` root zone is NOT in platform-terraform — only `api.haven.com` is (subdelegated). Records in `haven.com` require a Production Support ticket.
+
+#### Infrastructure PRs (Phases 1-2) — ALL APPLIED
+
+| PR | Repo | What | Status |
+|---|---|---|---|
+| A | platform-multicloud #25 | Staging + prod Entra ID app registrations | **Merged & applied** |
+| B | [#563](https://github.com/HavenEngineering/finance-terraform/pull/563) | S3 buckets staging + prod | **Merged & applied** |
+| C | [#564](https://github.com/HavenEngineering/finance-terraform/pull/564) | Lambda bootstrap staging + prod | **Merged & applied** |
+| D | [#567](https://github.com/HavenEngineering/finance-terraform/pull/567) | CloudFront + WAF + WASM S3 staging + prod | **Merged & applied** |
+| E | [#569](https://github.com/HavenEngineering/finance-terraform/pull/569) | Origin verify + ACM certs + `enable_custom_domain` toggle — all 4 modules | **Merged & applied 2026-03-25** |
+
+#### #569 Apply Outputs (needed for remaining steps)
+
+**Staging:**
+- CloudFront domain: `djobvgo2cjjun.cloudfront.net`
+- CloudFront distribution ID: `EEZPJGOJSUKIT`
+- WASM bucket: `finance-master-data-import-wasm-staging`
+- ACM cert ARN: `arn:aws:acm:us-east-1:471112640844:certificate/3768478d-e792-4582-98f4-a2c8e45829ce`
+- DNS validation CNAME: `_207fae806260e8b196254bf774cf35a6.erpx-master-data-import.haven-stage.com.` -> `_a377368aa73b503e9dc89a8cc29917ad.jkddzztszm.acm-validations.aws.`
+
+**Prod:**
+- CloudFront domain: `d35sud8o96jfhr.cloudfront.net`
+- CloudFront distribution ID: `E15CQ91RGU0QXS`
+- WASM bucket: `finance-master-data-import-wasm-prod`
+- ACM cert ARN: `arn:aws:acm:us-east-1:171547406407:certificate/2fd350b9-b753-46f0-926f-238f9b672633`
+- DNS validation CNAME: `_ba6b0c6d7685d897fa204f303b9da2da.erpx-master-data-import.haven.com.` -> `_35ba43cee972a1ca1b295b5d2873597b.jkddzztszm.acm-validations.aws.`
+
+#### Remaining Steps
+
+| Step | What | Blocked by | Status |
+|---|---|---|---|
+| F1 | [platform-terraform #7266](https://github.com/HavenEngineering/platform-terraform/pull/7266): staging DNS validation CNAME + A-record | Platform review | **PR open** |
+| F2 | Production Support ticket: prod DNS validation CNAME + A-record for `haven.com` | Nothing (can submit now) | **Not yet submitted** |
+| F3 | finance-terraform PR: set `enable_custom_domain = true` in staging + prod CDN modules | F1 + F2 (certs must be `ISSUED`) | **PR to create** |
+| H | GitHub repo settings: create `dev`/`staging`/`prod` environments, populate variables | Nothing (unblocked) | **Can do now** |
+| Merge #8 | [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) — multi-env CI/CD workflows | H (environments must exist) | **Ready to merge after H** |
+| First deploy | Manual `deploy-image-manual.yml` to staging, then prod | Merge #8 + H | **Manual** |
+
+**Two-phase custom domain:** #569 creates ACM certs with `enable_custom_domain = false` (default). Certs start as `PENDING_VALIDATION`. After DNS validation CNAMEs are created cross-account and certs become `ISSUED`, step F3 flips the toggle to attach aliases + TLS 1.2 to CloudFront.
+
+#### CI/CD (Phase 3) — PR OPEN
+- [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) (`docs/multi-environment-design`) — multi-environment deploy workflows + lock grace period fix + spec fixes
+- CI auto-deploys to dev (branch has open PR)
+
+#### GitHub Environment Variables to Configure (Step H)
+
+| Variable | `dev` | `staging` | `prod` |
+|---|---|---|---|
+| `AWS_PROFILE` | `finance-dev` | `finance-staging` | `finance-prod` |
+| `LAMBDA_NAME` | `finance-aot-master-data-import` | `finance-aot-master-data-import` | `finance-aot-master-data-import` |
+| `S3_WASM_BUCKET` | `finance-master-data-import-wasm-dev` | `finance-master-data-import-wasm-staging` | `finance-master-data-import-wasm-prod` |
+| `CLOUDFRONT_DISTRIBUTION_ID` | `E3T2R0RXN7D1T9` | `EEZPJGOJSUKIT` | `E15CQ91RGU0QXS` |
+| `ENTRA_CLIENT_ID` | `cc5ebeca-b7ba-4449-bfa7-847160f69640` | `36ce6ffa-41d6-475b-8c34-399234540c3f` | `dfbc0a8d-2327-40fc-b092-e5bbe743d2be` |
+| `ENTRA_IDENTIFIER_URI` | `api://finance-master-data-import-Global` | `api://finance-master-data-import-Staging` | `api://finance-master-data-import-Prod` |
+
+#### Deploy Status
+- Dev currently running code from `docs/multi-environment-design` branch (CI auto-deployed via PR #8)
+
+### Active PRs
+
+| PR | Repo | Purpose | Status |
+|---|---|---|---|
+| [#7266](https://github.com/HavenEngineering/platform-terraform/pull/7266) | platform-terraform | Staging DNS: cert validation CNAME + A-record | **Open — awaiting Platform review** |
+| [#8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) | finance-erp-master-data-import | Multi-env CI/CD workflows + lock grace period fix | **Open — ready to merge after H** |
+
+### Completed PRs (dev + multi-env infra)
+All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terraform #463; platform-iamldap #737; platform-terraform #7168, #7181; finance-terraform #535, #538, #541, #542, #550, #551, #553, #556, #557, #558, #560, #563, #564, #566, #567, #569; finance-erp-master-data-import #1, #2, #4, #7. Closed: finance-terraform #568 (folded into #569).
+
+### Entra ID Client IDs
+| Environment | Client ID |
+|---|---|
+| Dev | `cc5ebeca-b7ba-4449-bfa7-847160f69640` |
+| Staging | `36ce6ffa-41d6-475b-8c34-399234540c3f` |
+| Prod | `dfbc0a8d-2327-40fc-b092-e5bbe743d2be` |
+
+### Local Branch State
+- **finance-terraform**: on `feat/master-data-import-cdn-custom-domain` (PR #569, now merged)
+- **platform-terraform**: on `feat/master-data-import-staging-dns` (PR #7266)
+- **finance-erp-master-data-import**: on `docs/multi-environment-design` (PR #8)
+
+### Live Dev Environment
 
 - **CloudFront domain**: `https://doogokq33npvz.cloudfront.net`
 - **WASM S3 bucket**: `finance-master-data-import-wasm-dev`
-- **Lambda function URL**: `finance-aot-master-data-import` (AuthType NONE, Principal: "*", working)
+- **Lambda function URL**: `finance-aot-master-data-import` (AuthType NONE, Principal: "*")
 - **CloudFront distribution ID**: `E3T2R0RXN7D1T9`
 - **Function URL domain**: `2h74os7amtauw2hqt43kacpizm0cvbee.lambda-url.eu-west-1.on.aws`
-- **WAF**: rate limit 500 req/5min per IP scoped to `/api/*`, managed rule sets (common, known bad inputs, IP reputation)
+- **WAF**: rate limit 500 req/5min per IP scoped to `/api/*`, managed rule sets
 - **Region**: `eu-west-1` (WAF in `us-east-1` for CLOUDFRONT scope)
-
-### What's Done
-- Full implementation merged to `main` (PR #1)
-- Versioning + WASM deployment (PR #2) merged
-- Both ECR repos exist and accepting pushes
-- Image `v0.1.0` in Lambda ECR, Lambda + S3 deployed to dev
-- Entra ID app registration + security groups + access control
-- CloudFront distribution live at `doogokq33npvz.cloudfront.net`
-- Origin verify infrastructure deployed (CloudFront header + SSM + Lambda env var)
-- Origin verify middleware implemented and tested in application code
-- S3 CORS rule for presigned upload deployed
-- Presigned upload endpoint implemented
-- Lambda resource policy fixed — `Principal: "*"` with `FunctionUrlAuthType: NONE` (#560)
-- Lambda reachable through CloudFront (verified: `/health` returns JSON, `/api/*` works)
-- Origin verify blocks direct function URL access on `/api/*` (verified: returns 403)
-- Sign-in via CloudFront works end-to-end (verified: Entra ID login + access control — users not in security groups are blocked)
-- E2E testing + preview enhancements (PR #4) merged
-- Cache-Control + error diagnostics + presigned GET for results (PR #6) merged
-
-### ERPx PATCH API
-See [erpx-patch-api.md](erpx-patch-api.md) for full discovery notes.
-
-### Current Work (2026-03-21) — branch `feat/e2e-testing-2`
-
-**Status: All committed and pushed. Build passes, 173 tests pass, zero warnings, InspectCode clean. Ready for PR to main.**
-
-Branch includes:
-- RFC 6902 JSON Patch for ERPx PATCH endpoint + 422-as-success handling
-- Unified import grid — keeps preview table visible during import with progressive status updates
-- **Preview lock (concurrency guard)** — S3-based advisory lock (`locks/{companyId}.json`)
-- Synchronized failure hover — hovering a failed row highlights the matching failure row
-- Skip legend colour fix — legend-skip dot matches skip badge
-- NuGet upgrades: Sylvan.Data.Excel 0.5.4, HotReload.WebAssembly.Browser 10.0.201
-- **Review fixes** (from code-review-team pre-review):
-  - Cancel polling on execute failure (linked CTS + ContinueWith)
-  - Detect lock theft during import (keep-alive checks Acquired response)
-  - Dispose JsonDocument in static element initialisers
-  - Stricter companyId validation (alphanumeric allowlist, max 10 chars)
-  - Various InspectCode fixes (redundant defaults, unused params, naming)
-
-### Next Steps
-- PR `feat/e2e-testing-2` to `main`
-- E2E test with real spreadsheets against dev environment
-- Optimise ObjectAPI `select` parameter
-
-### Verified (2026-03-18)
-- ObjectAPI batch preview works — all 200s, found 16,890 existing projects in PUK
-- Preview diff display works — strikethrough/bold for changed fields
-- Parser date string bug fixed (`ad8a9a4`) — iCon date strings now parse to YYYYMM
-- Parser whitespace trim bug fixed (`ad8a9a4`) — no more false-positive diffs
-
-### Test Spreadsheets (repo root, untracked)
-- `test-spreadsheet-mixed.xlsx` — flat format: 2 creates + 2 updates
-- `test-spreadsheet-failures.xlsx` — flat format: 2 valid + 2 designed to fail at ERPx (bad cost centre / bad manager) + 1 create
-- `test-spreadsheet-icon.xlsx` — iCon format: 2 creates + 2 updates + pcprojbl budget fields
-
-### Aspire Local Dev
-See [aspire-dashboard-playwright.md](aspire-dashboard-playwright.md) for Playwright-based log viewing.
-
-### CloudFront + WASM S3 Infra
-See [cloudfront-wasm-infra.md](cloudfront-wasm-infra.md) for full context.
-
-**Deferred:**
-- Custom domain + ACM cert — blocked on Platform confirming Route53 zone (resolves Orca findings re: default SSL cert and TLS version)
-- Shield Advanced — not used anywhere in HavenEngineering org; $3k/month org-wide decision, not per-resource
-
-### Orca Security Findings on #538
-See [orca-findings-538.md](orca-findings-538.md) for full triage.
-- #1 Medium: default SSL cert — deferred (needs custom domain)
-- #2 Low: Shield Advanced — org-wide decision, not in use anywhere
-- #3 Low: old TLS — consequence of #1, resolves together
-- #4 Low: S3 policy HTTP — false positive (module handles `attach_deny_insecure_transport_policy`)
-- #5 Info: S3 logging — false positive (logs bucket, not data bucket)
+- **Entra ID client ID**: `cc5ebeca-b7ba-4449-bfa7-847160f69640`
+- **Entra ID identifier URI**: `api://finance-master-data-import-Global`
+- **Current version**: `v0.2.0` (redeployed 2026-03-24 for demo)
 
 ### Key Decisions
-- Lambda function URL uses `AuthType: NONE` — no OAC (OAC blocks browser POST/PUT due to missing `x-amz-content-sha256`). Resource policy MUST use `Principal: "*"` (not `cloudfront.amazonaws.com`) because without OAC there is no SigV4 context. See `docs/cloudfront-lambda-auth-analysis.md`.
-- Origin verify (`X-Origin-Verify` header) is the application-layer replacement for OAC/resource-policy access control
+- Lambda function URL uses `AuthType: NONE` — no OAC. Resource policy `Principal: "*"`. See `docs/cloudfront-lambda-auth-analysis.md`.
+- Origin verify (`X-Origin-Verify` header) is the application-layer replacement for OAC
 - Entra ID app registration in platform-multicloud (not finance-terraform)
-- Entra ID identifier URI: `api://finance-master-data-import-Global`
-- Entra ID client ID: `cc5ebeca-b7ba-4449-bfa7-847160f69640`
-- Lambda Web Adapter ECR image: `public.ecr.aws/awsguru/aws-lambda-adapter` (NOT `aws-lambda-web-adapter`)
-- 404 and 422 excluded from Polly retries (404: definitive "not found"; 422: ERPx success response)
-- WASM S3 bucket separate from uploads/results bucket (different lifecycle, different access)
+- Lambda Web Adapter ECR image: `public.ecr.aws/awsguru/aws-lambda-adapter`
+- 404 and 422 excluded from Polly retries
+- WASM S3 bucket separate from uploads/results bucket
 - Single git tag for both artefacts (same version, same release)
 - `_framework/*` cached aggressively (content-hashed), everything else no-cache
-- S3 modules use `terraform-aws-modules/s3-bucket/aws` v5.9.1 (AWS provider 6.x compatible)
+- S3 modules use `terraform-aws-modules/s3-bucket/aws` v3.14.0
 - CDN module uses AWS provider `~> 6.0` via `_override.tf` (rest of repo on `~> 5.38`)
-- SSM IAM wildcard at `/finance/master-data-import/*` (intentional — avoids churn for future params)
-- HotReload.WebAssembly.Browser must use `Update` (not `Include`) in csproj — SDK implicitly references it; `Include` causes NU1504 duplicate
+- SSM IAM wildcard at `/finance/master-data-import/*`
+- Prod S3 CORS: no localhost (removed per Copilot review); staging/dev keep localhost for local dev
 
 ### Known Tech Debt
-- **ObjectAPI `select` parameter**: `select=projectId,projectName,...` returns 400 on ERPx NPE. Currently fetches all fields without `select`.
-- **ERPx permissions**: Service account gets 403 on `GET /v1/projects/{id}` for some operations.
-- **Execute path N+1**: Each project requires 2 HTTP calls (exists check + create/update).
-- **Unpatchable date fields UX gap**: `dateFrom`/`dateTo` removed from `IsFieldsMatch` because ERPx rejects date patches (error 4020). Users who change dates in their spreadsheet see "skipped" with no indication their date changes were silently ignored. Need a preview warning when dates differ but can't be patched.
-- **Asymmetric CFG match in preview**: `IsCfgMatch` only checks payload fields against current values, not the reverse. PATCH semantics are correct (extra current fields are preserved), but preview doesn't surface extra current CFG fields not in the spreadsheet — could be misleading.
-- **Presigned URL for missing S3 result**: Result endpoint returns a presigned GET URL without checking if the S3 object exists. Client gets a confusing 404 instead of a clear error. Should translate S3 404s in `ImportService.GetResultAsync` or check existence before generating the URL.
-- **Coverage gaps**: `Haven.Finance.Clients.Erpx` at 78.84% and `bootstrap` (Lambda) at 70.78% — both below the 80% gate target.
-
-### ECR / CI Details
-- ECR registry: `745662293263.dkr.ecr.eu-west-1.amazonaws.com`
-- Lambda ECR repo: `erp/erp-lambda-finance-aot-master-data-import`
-- WASM ECR repo: `erp/erp-wasm-finance-master-data-import`
-- Release workflow: `build-and-release-image` (workflow_dispatch, minor/major/patch bump)
-- Current version: `v0.1.0`
-- AWS profile for ECR access: `haven-745662293263-EcrPullAccess`
+- **ObjectAPI `select` parameter**: returns 400 on `/v1/objects/projects`. Code: `ErpxProjectWriteService.cs:130`.
+- **Coverage gaps**: `Haven.Finance.Clients.Erpx` at 78.84%, `bootstrap` (Lambda) at 70.78%
+- **Unpatchable date fields UX gap**: dates silently ignored in preview
+- **Asymmetric CFG match in preview**: doesn't surface extra current CFG fields
+- **Presigned URL for missing S3 result**: confusing 404 instead of clear error
 
 ### Terraform Repos
 - **finance-terraform**: `HavenEngineering/finance-terraform` (local: `../finance-terraform/`)
@@ -152,11 +137,14 @@ See [orca-findings-538.md](orca-findings-538.md) for full triage.
 - **platform-azure-terraform**: `HavenEngineering/platform-azure-terraform` — Entra ID security groups
 - **platform-iamldap**: `HavenEngineering/platform-iamldap` — group membership management
 
-### Org Infrastructure Context
-- CloudFront is widely used across HavenEngineering (platform-cloudfront-www, platform-cloudfront-subdomains, platform-cloudfront-devprod, foundation-pagedrop, haven-terraform, platform-terraform-pci, app-haven-owner-arrivals, service-haven-maintenancemode, service-haven-owners)
-- Shield Advanced is **not enabled anywhere** in the org
-- GitHub org: `https://github.com/HavenEngineering`
-- Local repos may be stale — always search GitHub directly for org-wide questions (`gh search code`)
+### ECR / CI Details
+- ECR registry: `745662293263.dkr.ecr.eu-west-1.amazonaws.com`
+- Lambda ECR repo: `erp/erp-lambda-finance-aot-master-data-import`
+- WASM ECR repo: `erp/erp-wasm-finance-master-data-import`
+- Release workflow: `build-and-release-image` (workflow_dispatch, minor/major/patch bump)
+- AWS profile for ECR access: `haven-745662293263-EcrPullAccess`
 
-### Haven Design System (from module-shared-haven-ui)
-See [haven-design-tokens.md](haven-design-tokens.md) for full reference.
+### Reference Files
+- [orca-findings-538.md](orca-findings-538.md) — Orca triage for dev CDN (#538)
+- [haven-design-tokens.md](haven-design-tokens.md) — Haven design system tokens
+- [erpx-patch-api.md](erpx-patch-api.md) — ERPx PATCH API discovery notes

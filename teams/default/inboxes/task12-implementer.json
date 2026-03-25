@@ -1,0 +1,9 @@
+[
+  {
+    "from": "team-lead",
+    "text": "Code review found issues. Fix these in `.github/workflows/ci.yml`:\n\n1. **Replace `bc` with `awk` for portability** — `bc` isn't available in Git Bash on Windows runners. Replace:\n   ```bash\n   if [ \"$(echo \"$LINE_COVERAGE < 80\" | bc -l)\" = \"1\" ]; then\n   ```\n   with:\n   ```bash\n   if awk \"BEGIN {exit !($LINE_COVERAGE < 80)}\"; then\n   ```\n\n2. **Add null-guard after awk coverage extraction** — After the `LINE_COVERAGE=...` line, add:\n   ```bash\n   if [ -z \"$LINE_COVERAGE\" ]; then\n     echo \"Failed to parse line coverage from summary\"\n     exit 1\n   fi\n   ```\n\n3. **Scope coverage file search** — Add `--results-directory ./test-results` to the Test step and change the find command to search `./test-results` instead of `.`:\n   ```yaml\n   - name: Test\n     run: dotnet test ${{ matrix.solution }} --no-build --collect:\"XPlat Code Coverage\" --results-directory ./test-results\n   ```\n   ```bash\n   COVERAGE_FILE=$(find ./test-results -name \"coverage.cobertura.xml\" -type f | head -1)\n   ```\n\n4. **Add `timeout-minutes: 30` to the job** to prevent hung InspectCode from burning runner minutes.\n\n5. **Add `%` to the threshold failure message** on the echo line — cosmetic but makes logs consistent.\n\nDo NOT add any other changes (no artifact upload, no verbosity flags, no caching). Commit the fix as a new commit.",
+    "summary": "Fix CI review issues in ci.yml",
+    "timestamp": "2026-03-24T15:38:10.049Z",
+    "read": false
+  }
+]
