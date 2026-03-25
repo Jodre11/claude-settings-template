@@ -2,6 +2,14 @@
 
 This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when editing files here.
 
+## Related Repositories
+
+- [dotfiles](https://github.com/Jodre11/dotfiles) (`~/dotfiles`) — macOS dotfiles managed with
+  GNU Stow. Config files are symlinked into `~`, so edits to e.g. `~/.zshrc` modify the dotfiles
+  repo. After changing any dotfile, remind the user to commit and push in `~/dotfiles`. After
+  installing or removing a Homebrew package, remind the user to regenerate the Brewfile:
+  `brew bundle dump --file=~/dotfiles/Brewfile --force`
+
 # Preferences
 
 ## Code Style
@@ -66,9 +74,11 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 ## Git
 - Do not add Co-Authored-By trailers to commits
 - Do not add Claude Code advertising to PR descriptions
-- PR descriptions must begin with a brief contextual summary (1–3 sentences) explaining
-  why the change is being made and what it achieves, written for a non-technical audience.
-  Follow this with the detailed technical list of changes.
+- PR descriptions must begin with a brief contextual summary (1–3 sentences) that orients
+  the reader: what broader initiative or goal this PR contributes to, where it fits in any
+  sequence of related PRs, and why the change is needed now. Write this for a non-technical
+  audience. Follow this with the detailed technical list of changes, including links to
+  related PRs where informative or clarifying.
 
 ## Terraform (Haven)
 - Each Terraform module directory requires its own PR — the Platform team applies PRs individually via `/apply` comment
