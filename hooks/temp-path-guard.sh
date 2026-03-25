@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # temp-path-guard.sh — PreToolUse hook for Write|Edit calls
-# Blocks writes to /tmp/, $TMPDIR, or /var/folders/ — redirect to ~/.claude/tmp/
+# Allows writes to /tmp/claude-*; blocks other /tmp/ and /var/folders/ paths.
 
 set -euo pipefail
 
@@ -11,8 +11,14 @@ if [ -z "$file_path" ]; then
     exit 0
 fi
 
+# Allow session-scoped temp directory
+if echo "$file_path" | grep -qE '^/tmp/claude-'; then
+    exit 0
+fi
+
+# Block bare /tmp/ and /var/folders/
 if echo "$file_path" | grep -qE '^(/tmp/|/var/folders/)'; then
-    msg="TEMP DIRECTORY VIOLATION: Use ~/.claude/tmp/ (with \$PPID prefix) instead of $file_path. See CLAUDE.md 'Temporary Files' section."
+    msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-\$PPID/ instead of $file_path. See CLAUDE.md 'Temporary Files' section."
     jq -n --arg m "$msg" '{
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

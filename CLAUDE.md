@@ -41,12 +41,11 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 - Suggest keeping .md files up to date
 
 ## Temporary Files
-- ALWAYS use `~/.claude/tmp/` for temporary files (tool output, diffs, commit drafts, etc.)
-- NEVER use `/tmp/`, `$TMPDIR`, or repo-local temp directories
-- Create `~/.claude/tmp/` if it does not exist before writing temp files
-- To avoid collisions between concurrent sessions, prefix filenames with a short UUID or `$PPID`: e.g. `~/.claude/tmp/$PPID-inspectcode-output.xml`
-- Clean up: delete your temp files when no longer needed
-- This directory is gitignored in the `~/.claude` repo — never commit its contents
+- Use `/tmp/claude-$PPID/` for all temporary files (tool output, diffs, commit drafts, etc.)
+- Create the directory with `mkdir -p /tmp/claude-$PPID` before first use
+- Files within don't need a session prefix — the directory is already session-scoped
+- Clean up your temp files when no longer needed (OS also cleans on reboot)
+- NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-$PPID` subdirectory
 
 ## Bash
 - Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
@@ -76,7 +75,7 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 ## Code Inspection (C#)
 - After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
   ```bash
-  jb inspectcode <solution> --output=~/.claude/tmp/$PPID-inspectcode-output.xml --format=Xml --severity=WARNING
+  jb inspectcode <solution> --output=/tmp/claude-$PPID/inspectcode-output.xml --format=Xml --severity=WARNING
   ```
 - Parse the XML output; fix any `<Issue>` elements before finishing
 

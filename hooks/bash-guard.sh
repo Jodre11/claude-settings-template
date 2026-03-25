@@ -23,22 +23,21 @@ if echo "$cmd" | grep -qE '^git\s.*commit\s' ; then
 fi
 
 # ── Temp directory enforcement ──
-# Block any command that references /tmp/, $TMPDIR, or /var/folders/ (macOS TMPDIR)
-# unless it also references ~/.claude/tmp/ (which is the approved location).
+# Allow commands referencing /tmp/claude- (session-scoped temp).
+# Block commands referencing bare /tmp/, $TMPDIR, or /var/folders/.
 if echo "$cmd" | grep -qE '(/tmp/|\$TMPDIR|/var/folders/)'; then
-    if ! echo "$cmd" | grep -qF '~/.claude/tmp'; then
-        if ! echo "$cmd" | grep -qF "$HOME/.claude/tmp"; then
-            msg="TEMP DIRECTORY VIOLATION: Use ~/.claude/tmp/ (with \$PPID prefix) instead of /tmp/ or \$TMPDIR. See CLAUDE.md 'Temporary Files' section."
-            jq -n --arg m "$msg" '{
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": $m
-                }
-            }'
-            exit 0
-        fi
+    if echo "$cmd" | grep -qF '/tmp/claude-'; then
+        exit 0
     fi
+    msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-\$PPID/ instead of bare /tmp/, \$TMPDIR, or /var/folders/. See CLAUDE.md 'Temporary Files' section."
+    jq -n --arg m "$msg" '{
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": $m
+        }
+    }'
+    exit 0
 fi
 
 # Strip single-quoted strings (cannot contain escapes)
