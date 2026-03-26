@@ -1,10 +1,11 @@
 # Haven Payroll JML Windows - Project Memory
 
-## Current State — PR Open, CI Green
-- **Branch:** `code/cross-platform-ui`
-- **PR:** #5 — `feat: cross-platform Avalonia UI with .NET 10, xUnit v3, and CI`
-- **CI:** All checks passing (macOS + Windows)
+## Current State — Rebase Needed
+- **Branch:** `code/cross-platform-ui` (checked out, clean)
+- **PR:** #5 — `feat: cross-platform Avalonia UI with .NET 10, xUnit v3, and CI` — still open
+- **CI:** All checks were passing (macOS + Windows) before PR #6 merged
 - **Branch protection:** PR raised on `platform-github` (#1005) to enable on main
+- **Next step:** Rebase `code/cross-platform-ui` onto `main` — PR #6 (absence processor, 28 files, 2934 additions) merged 2026-03-26, expect conflicts in shared files (ImportGeneratorFactory, ImportGeneratorService, MainWindow.xaml/.cs, App.xaml.cs, Program.cs, DataLineDefinitions, .gitignore, .csproj, and the 6 processor services that had txTime fixes)
 
 ## CI Fixes Applied (post-PR creation)
 - CA1873 suppressed to suggestion in `.editorconfig` (SDK 10.0.201 on CI catches it, 10.0.100 local doesn't)
@@ -59,5 +60,9 @@
   - OMZ plugins: git, autosuggestions, syntax-highlighting, z, history-substring-search, aws, web-search, extract, sudo, colored-man-pages, dotnet, terraform
 - tmux wrapper for Claude Code sessions (claude() function in .zshrc)
 
+## PR #6 Context
+- [PR #6 absence processor details](project_pr6_absence_processor.md) — merged 2026-03-26, key context for rebase conflicts
+
 ## Conventions
 - [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-$PPID/, never bare /tmp/ or $TMPDIR
+- [Re-review scope rules](feedback_re_review_scope.md) — re-reviews: only our unfixed bugs + new bugs from fix commits; approve if non-blocking

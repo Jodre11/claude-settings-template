@@ -161,7 +161,16 @@
       "Bash(rm /Users/jodre11/.claude/hooks/aws-auth-refresh.sh)",
       "Bash(rm /Users/jodre11/.claude/hooks/check-aws-credentials.sh)",
       "Bash(rmdir /Users/jodre11/.claude/hooks/)",
-      "Bash(ghostty +show-config --docs --default)"
+      "Bash(ghostty +show-config --docs --default)",
+      "WebFetch(domain:bitwarden.com)",
+      "WebFetch(domain:community.bitwarden.com)",
+      "Bash(launchctl list:*)",
+      "Bash(launchctl print:*)",
+      "WebFetch(domain:contributing.bitwarden.com)",
+      "WebFetch(domain:web.archive.org)",
+      "WebFetch(domain:bugzilla.mindrot.org)",
+      "WebFetch(domain:superuser.com)",
+      "WebFetch(domain:www.electronjs.org)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -28,3 +28,6 @@ security_warnings_state_*.json
 projects/*/*.jsonl
 projects/*/sessions-index.json
 projects/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*/
+
+# Cached images
+image-cache/

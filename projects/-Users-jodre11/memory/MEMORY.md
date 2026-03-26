@@ -1,0 +1,4 @@
+- [Office Document Skills](office-skills.md) — installed local copy of claude-office-skills, security-patched
+- [Bitwarden SSH agent limitations](feedback_bitwarden_ssh.md) — CLI import broken, must use desktop app clipboard import
+- [SSH key inventory](project_ssh_keys.md) — three keys in Bitwarden vault, GitHub regenerated 2026-03-26
+- [Raspberry Pi services](reference_pi.md) — Pi-hole, PiVPN, Ghostty TERM workaround
