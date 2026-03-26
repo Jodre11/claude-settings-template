@@ -15,6 +15,7 @@
       "Bash(mkdir -p /tmp/claude-*)",
       "Bash(ls /tmp/claude-*)",
       "Bash(cat /tmp/claude-*)",
+      "Bash(cat * > /tmp/claude-*)",
       "Bash(rm /tmp/claude-*)",
       "Bash(rm -f /tmp/claude-*)",
       "Bash(rm -rf /tmp/claude-*)",
