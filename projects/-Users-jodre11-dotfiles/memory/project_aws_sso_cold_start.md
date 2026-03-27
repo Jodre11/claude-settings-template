@@ -12,4 +12,4 @@ Claude Code (Bedrock) hangs for ~2.5 minutes on cold start when the SSO access t
 
 **How to apply:** If the cold-start hang returns, check that the preflight script is still executable and that the `claude()` wrapper calls it. The `awsAuthRefresh` script (`aws-sso-refresh.sh`) remains as a mid-session fallback.
 
-**Failed approach:** `credential_process = granted credential-process --profile claude-code --auto-login` in `~/.aws/config` caused an auth loop — Granted fires on every credential request, not just expired ones, compounded by unreliable macOS Keychain caching. Line remains commented out at line 60 of `~/.aws/config`.
+**Failed approach:** `credential_process = granted credential-process --profile claude-code --auto-login` caused an auth loop — Granted fires on every credential request, not just expired ones, compounded by unreliable macOS Keychain caching. Granted has been fully uninstalled and the `credential_process` line removed from `~/.aws/config`.
