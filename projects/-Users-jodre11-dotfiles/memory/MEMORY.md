@@ -1,3 +1,4 @@
 - [AWS SSO cold-start hang](project_aws_sso_cold_start.md) — pre-flight token check fixes Bedrock auth delay on cold start
 - [MCP secrets via envchain](project_mcp_secrets.md) — Datadog keys in macOS Keychain, injected at runtime by wrapper script
 - [Granted removed](project_granted_removed.md) — fully uninstalled due to auth loops with Claude Code Bedrock
+- [Shift+Enter needs tmux extkeys](feedback_shift_enter_tmux.md) — tmux strips CSI u sequences without extkeys in terminal-features
