@@ -1,11 +1,14 @@
 # Haven Payroll JML Windows - Project Memory
 
-## Current State — Rebase Needed
-- **Branch:** `code/cross-platform-ui` (checked out, clean)
+## Current State — Post-Rebase CI Fixes Needed
+- **Branch:** `code/cross-platform-ui` (checked out, clean, rebased onto main)
 - **PR:** #5 — `feat: cross-platform Avalonia UI with .NET 10, xUnit v3, and CI` — still open
-- **CI:** All checks were passing (macOS + Windows) before PR #6 merged
+- **Rebase:** Complete (PR #6 absence processor integrated, commit e127ec0)
 - **Branch protection:** PR raised on `platform-github` (#1005) to enable on main
-- **Next step:** Rebase `code/cross-platform-ui` onto `main` — PR #6 (absence processor, 28 files, 2934 additions) merged 2026-03-26, expect conflicts in shared files (ImportGeneratorFactory, ImportGeneratorService, MainWindow.xaml/.cs, App.xaml.cs, Program.cs, DataLineDefinitions, .gitignore, .csproj, and the 6 processor services that had txTime fixes)
+- **CI status (2026-03-26):** push event passes, pull_request event fails:
+  - **Windows:** MA0134 build error in `PayrollWorkdayGenerateImportFile.WPF/MainWindow.xaml.cs:925` — unobserved async call
+  - **macOS:** 5 `AbsenceProcessorServiceTests.CalculateDateRanges_*` tests fail — string comparison failures, likely culture-dependent date formatting
+  - **InspectCode:** both jobs fail (technical debt, not blocking — to be addressed in future PR)
 
 ## CI Fixes Applied (post-PR creation)
 - CA1873 suppressed to suggestion in `.editorconfig` (SDK 10.0.201 on CI catches it, 10.0.100 local doesn't)
