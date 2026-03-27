@@ -1,0 +1,1 @@
+- [AWS SSO cold-start hang](project_aws_sso_cold_start.md) — pre-flight token check fixes Bedrock auth delay on cold start
