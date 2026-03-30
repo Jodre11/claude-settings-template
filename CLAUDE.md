@@ -49,11 +49,14 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 - Suggest keeping .md files up to date
 
 ## Temporary Files
-- Use `/tmp/claude-$PPID/` for all temporary files (tool output, diffs, commit drafts, etc.)
-- Create the directory with `mkdir -p /tmp/claude-$PPID` before first use
+- Use `/tmp/claude-{session_id}/` for all temporary files (tool output, diffs, commit drafts, etc.)
+- The session ID is available from conversation context (transcript path). Resolve it once at first
+  use and reuse the same path throughout, including in subagent prompts
+- Create the directory with `mkdir -p /tmp/claude-{session_id}` before first use
 - Files within don't need a session prefix — the directory is already session-scoped
+- This convention works in subagents (unlike `$PPID`, which resolves to a different PID per process)
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
-- NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-$PPID` subdirectory
+- NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-{session_id}` subdirectory
 
 ## Bash
 - Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
@@ -88,7 +91,7 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 ## Code Inspection (C#)
 - After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
   ```bash
-  jb inspectcode <solution> --output=/tmp/claude-$PPID/inspectcode-output.xml --format=Xml --severity=WARNING
+  jb inspectcode <solution> --output=/tmp/claude-{session_id}/inspectcode-output.xml --format=Xml --severity=WARNING
   ```
 - Parse the XML output; fix any `<Issue>` elements before finishing
 
