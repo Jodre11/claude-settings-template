@@ -1,6 +1,7 @@
 # Memory Index
 
 - [otel-collector-investigation.md](otel-collector-investigation.md) — OTLP collector investigation for PR #93
+- [subagent-plan-mode-permissions-bug.md](subagent-plan-mode-permissions-bug.md) — Subagent permission glob matching fails (claude-code#39834, related #10906)
 
 # Workflow
 

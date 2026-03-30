@@ -2,3 +2,4 @@
 - [MCP secrets via envchain](project_mcp_secrets.md) — Datadog keys in macOS Keychain, injected at runtime by wrapper script
 - [Granted removed](project_granted_removed.md) — fully uninstalled due to auth loops with Claude Code Bedrock
 - [Shift+Enter needs tmux extkeys](feedback_shift_enter_tmux.md) — tmux strips CSI u sequences without extkeys in terminal-features
+- [Middle-click cross-clipboard paste](project_middle_click_paste.md) — tmux-yank script writes to pasteboard + Ghostty primary selection via OSC 52; not yet committed

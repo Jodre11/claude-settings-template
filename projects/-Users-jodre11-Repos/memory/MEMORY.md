@@ -4,6 +4,10 @@
 - [tmux Claude Wrapper](tmux-claude-wrapper.md) — zsh function wrapping claude in tmux, auth hook remote support
 - [Terminal Setup](user_terminal.md) — Uses Ghostty terminal emulator
 
+# Feedback
+
+- [Subagent permissions](feedback_subagent_permissions.md) — bypassPermissions doesn't override hooks; avoid agents for gh writes and temp file ops
+
 # Preferences
 
 ## Web Browsing

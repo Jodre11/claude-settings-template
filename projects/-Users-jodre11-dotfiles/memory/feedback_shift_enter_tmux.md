@@ -15,5 +15,7 @@ Enter.
 **How to apply:** If Shift+Enter breaks again in Claude Code under tmux, check:
 1. `terminal-features` includes `extkeys` for the Ghostty terminal type
 2. `extended-keys on` is set in `.tmux.conf`
-3. Claude Code v2.1.85+ handles Shift+Enter natively for Ghostty — no explicit Ghostty
-   keybinding is needed (tested and confirmed 2026-03-27, keybinding removed)
+3. Claude Code v2.1.85+ handles Shift+Enter natively for Ghostty — the explicit Ghostty
+   keybinding (`keybind = shift+enter=text:\x1b[13;2u`) was removed but more thorough
+   testing is pending before confirming it is fully redundant
+4. If Shift+Enter breaks after removal, re-add the keybinding to Ghostty config
