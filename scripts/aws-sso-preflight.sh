@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 # aws-sso-preflight.sh — Check SSO token validity before launching Claude Code.
 # Reads the local SSO cache (no network call). If expired, runs aws sso login.
+# Also detects stale ~/.aws/credentials that can confuse the SDK credential chain.
 set -euo pipefail
 
 PROFILE="claude-code"
 SSO_START_URL="https://havenholidays.awsapps.com/start"
 CACHE_DIR="$HOME/.aws/sso/cache"
 GRACE_SECONDS=300  # Refresh if token expires within 5 minutes
+
+# Guard: warn and remove stale credentials file that poisons the SDK resolution chain.
+# All auth goes through SSO — temporary STS creds in this file are always stale leftovers.
+# See anthropics/claude-code#12421 for the full story.
+CREDS_FILE="$HOME/.aws/credentials"
+if [[ -f "$CREDS_FILE" ]]; then
+    echo "⚠ Found ~/.aws/credentials — this can interfere with SSO auth."
+    echo "  Backing up to ~/.aws/credentials.bak and removing."
+    cp "$CREDS_FILE" "${CREDS_FILE}.bak"
+    rm "$CREDS_FILE"
+fi
 
 token_valid=$(python3 -c "
 import json, glob, os, sys

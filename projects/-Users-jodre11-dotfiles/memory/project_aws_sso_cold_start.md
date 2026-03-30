@@ -1,15 +1,35 @@
 ---
 name: AWS SSO cold-start auth hang
-description: Claude Code hangs on cold start due to expired SSO tokens — pre-flight check added to claude() wrapper
+description: Claude Code hangs on cold start due to expired SSO tokens — stale credentials file + preflight/refresh guards fix it
 type: project
 ---
 
-Claude Code (Bedrock) hangs for ~2.5 minutes on cold start when the SSO access token has expired overnight. Root cause is Claude Code GitHub issues #28032 (exponential backoff on expired tokens) and #18396 (in-memory credential cache not invalidated after refresh).
+Claude Code (Bedrock) hangs on cold start when SSO tokens have expired. Two root causes identified:
 
-**Fix (2026-03-27):** Added `~/.claude/scripts/aws-sso-preflight.sh` — a local-only SSO cache check that runs before Claude Code launches via the `claude()` wrapper in `.zshrc`. Opens one browser tab for `aws sso login` only when the token is actually expired.
+1. **Stale `~/.aws/credentials` file** poisons the AWS SDK credential resolution chain. The SDK
+   checks this file before SSO, finds expired STS tokens, and enters a confused state where the
+   first auth attempt opens the SSO start page but doesn't pick up the result. Confirmed as the
+   primary cause by multiple users in anthropics/claude-code#12421.
 
-**Why:** The AWS SDK's built-in retry logic wastes ~2.5 min on expired tokens that will never self-heal. The pre-flight sidesteps this entirely.
+2. **No propagation delay handling** — after `aws sso login` completes, the SDK may retry before
+   the new token is fully propagated, causing a re-trigger loop.
 
-**How to apply:** If the cold-start hang returns, check that the preflight script is still executable and that the `claude()` wrapper calls it. The `awsAuthRefresh` script (`aws-sso-refresh.sh`) remains as a mid-session fallback.
+**Fix (2026-03-30):**
+- Removed `~/.aws/credentials` (backed up to `.bak.2026-03-30`) — all auth goes through SSO
+- Updated `aws-sso-preflight.sh` to auto-detect and remove stale credentials files on each launch
+- Updated `aws-sso-refresh.sh` (the `awsAuthRefresh` handler) with:
+  - Skip-if-recently-refreshed guard (120s window)
+  - Poll-after-refresh (up to 30s) to confirm credentials work before returning
+  - Auto-removal of stale credentials file if it reappears
 
-**Failed approach:** `credential_process = granted credential-process --profile claude-code --auto-login` caused an auth loop — Granted fires on every credential request, not just expired ones, compounded by unreliable macOS Keychain caching. Granted has been fully uninstalled and the `credential_process` line removed from `~/.aws/config`.
+**Why:** The `~/.aws/credentials` file is created by `aws configure` or various CI tools but serves
+no purpose when all auth goes through SSO. Its presence confuses the SDK's credential provider chain.
+
+**How to apply:** If the cold-start hang returns, first check if `~/.aws/credentials` has been
+recreated. The preflight/refresh scripts should auto-clean it, but if they don't run (e.g. launching
+Claude without the wrapper), the file will persist and cause the same problem.
+
+**Key references:**
+- anthropics/claude-code#12421 — auth loop, removing credentials file confirmed as fix
+- anthropics/claude-code#28032 — ExpiredTokenException should fast-fail
+- anthropics/claude-code#9027 — SSO federation endpoint spamming
