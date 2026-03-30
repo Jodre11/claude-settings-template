@@ -87,6 +87,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "/Users/jodre11/.claude/hooks/allow-permissions.sh",
+            "timeout": 5,
+            "statusMessage": "Checking allowed commands..."
+          },
+          {
+            "type": "command",
             "command": "/Users/jodre11/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
@@ -96,6 +102,12 @@
       {
         "matcher": "Write|Edit",
         "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jodre11/.claude/hooks/allow-write-permissions.sh",
+            "timeout": 5,
+            "statusMessage": "Checking write permissions..."
+          },
           {
             "type": "command",
             "command": "/Users/jodre11/.claude/hooks/temp-path-guard.sh",
