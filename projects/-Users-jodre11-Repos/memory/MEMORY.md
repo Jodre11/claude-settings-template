@@ -6,7 +6,8 @@
 
 # Feedback
 
-- [Subagent permissions](feedback_subagent_permissions.md) — bypassPermissions doesn't override hooks; avoid agents for gh writes and temp file ops
+- [Subagent permissions](feedback_subagent_permissions.md) — allow-permission hooks workaround applied; maintain allowlist in two places
+- [Temp directory convention](feedback_temp_directory_convention.md) — use session ID not $PPID; cross-platform considerations
 
 # Preferences
 

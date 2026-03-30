@@ -1,24 +1,28 @@
 ---
-name: Subagent permission and hook limitations
-description: Background agents with bypassPermissions still get blocked by PreToolUse hooks (temp-path-guard, bash-guard) — hooks override permission modes
+name: Subagent permission propagation — workaround applied
+description: Subagents don't inherit permissions.allow but do inherit hooks — allow-permissions hooks now mirror the allowlist for subagent use
 type: feedback
 ---
 
-Background/subagents launched with `mode: "bypassPermissions"` are still subject to PreToolUse hooks.
-The `temp-path-guard.sh` hook blocks Write calls to bare `/tmp/` paths, and `bash-guard.sh` blocks
-compound commands. These hooks issue hard denials that `bypassPermissions` does not override.
+Subagents do not inherit `permissions.allow` patterns from `settings.json`. They *do* inherit
+PreToolUse hooks. Upstream bug: anthropics/claude-code#18950.
 
-Additionally, `$PPID` in subagent Bash calls expands to the subagent's parent PID, not the main
-session PID — so `/tmp/claude-$PPID` resolves to a different directory than the main conversation's
-temp directory.
+**Workaround applied 2026-03-30:** Two allow hooks mirror the permission allowlist:
+- `~/.claude/hooks/allow-permissions.sh` — auto-allows Bash commands matching the same base
+  commands in `permissions.allow` (gh, git, dotnet, aws, etc.)
+- `~/.claude/hooks/allow-write-permissions.sh` — auto-allows Write/Edit to `/tmp/claude-*` paths
 
-**Why:** Observed 2026-03-27 when a background agent wasted ~80s and 16k tokens failing to update
-a GitHub issue body because every Bash and Write call was denied by hooks.
+Hooks run in parallel with existing deny hooks. Most restrictive decision wins, so `bash-guard.sh`
+and `temp-path-guard.sh` denials still override allows. Tested and confirmed working with a
+background agent running `mkdir`, `Write`, and `gh issue view`.
+
+**Why:** Observed 2026-03-27 when a background agent wasted ~80s and 16k tokens failing to run
+`gh issue edit` and `mkdir` because deny hooks fired with no corresponding allow mechanism.
 
 **How to apply:**
-- Do not spawn background agents for tasks that require writing temp files or running `gh issue edit`
-  via Bash — do these in the main conversation where permissions are already granted.
-- Before spawning an agent to fix something, verify whether the fix is actually needed (the issue
-  body was already correct — the agent was unnecessary).
-- For `gh` operations in agents, the read-only `gh issue view --json body` worked fine; the write
-  (`gh issue edit`) did not.
+- Subagents should now work for `gh`, `git`, `dotnet`, `aws`, and other allowlisted commands
+- The `$PPID` issue remains: subagent `$PPID` differs from main session PID, so `/tmp/claude-$PPID`
+  resolves to a different directory. Subagents should use a fixed temp path, not `$PPID`
+- When adding new commands to `permissions.allow` in `settings.json`, also add them to the `case`
+  statement in `allow-permissions.sh` (two places to maintain until upstream fix lands)
+- Still verify work is needed before spawning agents — the original agent was unnecessary

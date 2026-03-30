@@ -1,21 +1,20 @@
 ---
-name: Shift+Enter newline requires tmux extkeys
-description: Shift+Enter in Claude Code fails without extkeys in tmux terminal-features — tmux strips CSI u sequences
+name: Fixterms/CSI u key bindings for Ghostty
+description: Ghostty sends fixterms CSI u sequences for modified keys; zsh needs explicit bindkey entries in bare shells, tmux handles translation via extended-keys
 type: feedback
 ---
 
-Shift+Enter stopped inserting newlines in Claude Code when running inside tmux in Ghostty.
-Root cause: tmux was stripping the CSI u / Kitty keyboard protocol sequences before they
-reached Claude Code.
+Ghostty sends fixterms/CSI u encoded sequences for modified keys (Shift+Enter, Ctrl+Enter, etc.).
+zsh has no native CSI u support, so unrecognised sequences print as garbage in bare Ghostty shells.
 
-**Why:** tmux needs `extkeys` in `terminal-features` and `extended-keys on` to pass extended
-key sequences through to applications. Without these, Shift+Enter is indistinguishable from
-Enter.
+**Why:** tmux with `extended-keys on` + `extkeys` in terminal-features translates these sequences,
+so the problem only manifests in bare shells (no tmux). The Ghostty keybinding approach
+(`keybind = shift+enter=text:\x1b[13;2u`) was tried but is redundant — Ghostty already sends
+CSI u by default. Remapping to plain `\r` would destroy key disambiguation.
 
-**How to apply:** If Shift+Enter breaks again in Claude Code under tmux, check:
-1. `terminal-features` includes `extkeys` for the Ghostty terminal type
-2. `extended-keys on` is set in `.tmux.conf`
-3. Claude Code v2.1.85+ handles Shift+Enter natively for Ghostty — the explicit Ghostty
-   keybinding (`keybind = shift+enter=text:\x1b[13;2u`) was removed but more thorough
-   testing is pending before confirming it is fully redundant
-4. If Shift+Enter breaks after removal, re-add the keybinding to Ghostty config
+**How to apply:**
+1. zsh bindkeys in `.zshrc` handle the sequences Ghostty sends (xterm-modifyOtherKeys format
+   `\e[27;modifier;codepoint~` for Enter/Backspace)
+2. tmux `extended-keys on` + `extkeys` in terminal-features handles translation inside tmux
+3. If new modified keys produce garbage in bare shells, add more bindkey entries to `.zshrc`
+4. No Ghostty keybinding overrides needed — let Ghostty send its native fixterms encoding
