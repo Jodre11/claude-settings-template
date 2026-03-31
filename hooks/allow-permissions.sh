@@ -49,6 +49,10 @@ case "$base" in
     # Code inspection
     jb)         allow ;;
 
+    # Rich text clipboard pipeline
+    pandoc)     allow ;;
+    html2clip)  allow ;;
+
     # General utilities
     curl)       allow ;;
     jq)         allow ;;
@@ -59,7 +63,6 @@ case "$base" in
     open)       allow ;;
     grep)       allow ;;
     aws)        allow ;;
-    claude)     allow ;;
     command)    allow ;;
     whisper-cli) allow ;;
 

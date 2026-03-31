@@ -75,7 +75,8 @@
       "Bash(aws sso *)",
       "Bash(aws *)",
       "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
-      "Bash(claude config *)"
+      "Bash(pandoc /tmp/claude-*)",
+      "Bash(html2clip)"
     ],
     "defaultMode": "plan"
   },
@@ -127,7 +128,8 @@
     "csharp-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true
+    "frontend-design@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-code-plugins": {
@@ -137,8 +139,8 @@
       }
     }
   },
+  "language": "English UK",
   "companyAnnouncements": [
     "Welcome Jodrell."
-  ],
-  "language": "English UK"
+  ]
 }
