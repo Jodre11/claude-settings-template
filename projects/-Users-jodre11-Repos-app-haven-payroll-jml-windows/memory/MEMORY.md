@@ -1,21 +1,11 @@
 # Haven Payroll JML Windows - Project Memory
 
-## Current State — Post-Rebase CI Fixes Needed
-- **Branch:** `code/cross-platform-ui` (checked out, clean, rebased onto main)
-- **PR:** #5 — `feat: cross-platform Avalonia UI with .NET 10, xUnit v3, and CI` — still open
-- **Rebase:** Complete (PR #6 absence processor integrated, commit e127ec0)
-- **Branch protection:** PR raised on `platform-github` (#1005) to enable on main
-- **CI status (2026-03-26):** push event passes, pull_request event fails:
-  - **Windows:** MA0134 build error in `PayrollWorkdayGenerateImportFile.WPF/MainWindow.xaml.cs:925` — unobserved async call
-  - **macOS:** 5 `AbsenceProcessorServiceTests.CalculateDateRanges_*` tests fail — string comparison failures, likely culture-dependent date formatting
-  - **InspectCode:** both jobs fail (technical debt, not blocking — to be addressed in future PR)
-
-## CI Fixes Applied (post-PR creation)
-- CA1873 suppressed to suggestion in `.editorconfig` (SDK 10.0.201 on CI catches it, 10.0.100 local doesn't)
-- `ImportGeneratorFactory` bug fixed: `bits[1]` IndexOutOfRangeException on malformed filenames — added guard
-- `GetNextReferenceTests` added to `[Collection("WorkingDirectoryTests")]` — was missing, caused flaky parallel test failures
-- WPF analyzer errors fixed: CS8603, CA1861, CA1869, MA0134, CA1852 (9 errors across 3 WPF files)
-- InspectCode step made non-blocking (`continue-on-error: true`) — 68 pre-existing issues reported as warnings
+## Current State (2026-03-30)
+- **Branch:** `main` (up to date at `0fe8095`)
+- **PR #5** — `feat: cross-platform Avalonia UI with .NET 10, xUnit v3, and CI` — **merged**
+- **PR #6** — absence processor — **merged** (2026-03-26)
+- **Branch protection:** enabled on `main` (enforcement: everyone) — via `platform-github` PR #1005 (merged)
+- **CI:** passing on `main` (push event, 5m24s)
 
 ## Project Skills
 - `.claude/commands/jbinspect.md` — runs `jb inspectcode`, parses XML, presents findings, offers to fix
@@ -67,5 +57,5 @@
 - [PR #6 absence processor details](project_pr6_absence_processor.md) — merged 2026-03-26, key context for rebase conflicts
 
 ## Conventions
-- [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-$PPID/, never bare /tmp/ or $TMPDIR
+- [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-{session_id}/, never bare /tmp/ or $TMPDIR
 - [Re-review scope rules](feedback_re_review_scope.md) — re-reviews: only our unfixed bugs + new bugs from fix commits; approve if non-blocking

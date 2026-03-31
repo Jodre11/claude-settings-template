@@ -1,13 +1,15 @@
 ---
-name: Use /tmp/claude-$PPID/ for all temporary files
-description: All Claude sessions must use /tmp/claude-$PPID/ with session-scoped subdirectory, never bare /tmp/ or $TMPDIR
+name: Use /tmp/claude-{session_id}/ for all temporary files
+description: All Claude sessions must use /tmp/claude-{session_id}/ with session-scoped subdirectory, never bare /tmp/ or $TMPDIR
 type: feedback
 ---
 
-All temporary files (tool output, diffs, commit drafts, InspectCode XML, etc.) must go in `/tmp/claude-$PPID/`, never bare `/tmp/`, `$TMPDIR`, or `/var/folders/`.
+All temporary files (tool output, diffs, commit drafts, InspectCode XML, etc.) must go in `/tmp/claude-{session_id}/`, never bare `/tmp/`, `$TMPDIR`, or `/var/folders/`.
 
-Create the directory with `mkdir -p /tmp/claude-$PPID` before first use. Files within don't need a prefix — the directory is already session-scoped.
+The session ID is a UUID available from conversation context (e.g. the transcript path). Resolve it once and reuse throughout. When spawning subagents, pass the resolved temp path in the prompt.
 
-**Why:** User runs multiple Claude sessions concurrently. A shared flat `/tmp/` directory risks filename collisions. Session-scoped subdirectories isolate each session's temp files. OS handles cleanup on reboot.
+Create the directory with `mkdir -p /tmp/claude-{session_id}` before first use. Files within don't need a prefix — the directory is already session-scoped.
 
-**How to apply:** Before writing any temp file, create `/tmp/claude-$PPID/` if it doesn't exist. Use natural filenames within. Clean up when done. This is a global convention — applies to all repos.
+**Why:** User runs multiple Claude sessions concurrently. A shared flat `/tmp/` directory risks filename collisions. Session-scoped subdirectories isolate each session's temp files. OS handles cleanup on reboot. Unlike `$PPID`, the session ID is stable across parent and all child subagents.
+
+**How to apply:** Before writing any temp file, create `/tmp/claude-{session_id}/` if it doesn't exist. Use natural filenames within. Clean up when done. This is a global convention — applies to all repos.

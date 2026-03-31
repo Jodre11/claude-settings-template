@@ -23,7 +23,7 @@ if echo "$cmd" | grep -qE '^git\s.*commit\s' ; then
 fi
 
 # ── Temp directory enforcement ──
-# Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use /tmp/claude-$PPID/).
+# Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use /tmp/claude-{session_id}/).
 # $TMPDIR and /var/folders/ are always blocked (macOS expands $TMPDIR to /var/folders/).
 if echo "$cmd" | grep -qE '(/tmp/|\$TMPDIR|/var/folders/)'; then
     # Always allow if command targets session-scoped temp
@@ -32,7 +32,7 @@ if echo "$cmd" | grep -qE '(/tmp/|\$TMPDIR|/var/folders/)'; then
     fi
     # Always block $TMPDIR and /var/folders/ (no read exception)
     if echo "$cmd" | grep -qE '(\$TMPDIR|/var/folders/)'; then
-        msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-\$PPID/ instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
+        msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-{session_id}/ instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
         jq -n --arg m "$msg" '{
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -47,7 +47,7 @@ if echo "$cmd" | grep -qE '(/tmp/|\$TMPDIR|/var/folders/)'; then
         exit 0
     fi
     # Block everything else targeting bare /tmp/
-    msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-\$PPID/ for writing to temp. See CLAUDE.md 'Temporary Files' section."
+    msg="TEMP DIRECTORY VIOLATION: Use /tmp/claude-{session_id}/ for writing to temp. See CLAUDE.md 'Temporary Files' section."
     jq -n --arg m "$msg" '{
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

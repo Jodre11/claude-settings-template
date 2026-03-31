@@ -21,8 +21,8 @@ background agent running `mkdir`, `Write`, and `gh issue view`.
 
 **How to apply:**
 - Subagents should now work for `gh`, `git`, `dotnet`, `aws`, and other allowlisted commands
-- The `$PPID` issue remains: subagent `$PPID` differs from main session PID, so `/tmp/claude-$PPID`
-  resolves to a different directory. Subagents should use a fixed temp path, not `$PPID`
+- The `$PPID` issue is resolved: temp convention now uses `/tmp/claude-{session_id}/` which is stable
+  across parent and all child subagents. Pass the resolved temp path in the subagent prompt.
 - When adding new commands to `permissions.allow` in `settings.json`, also add them to the `case`
   statement in `allow-permissions.sh` (two places to maintain until upstream fix lands)
 - Still verify work is needed before spawning agents — the original agent was unnecessary
