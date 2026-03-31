@@ -7,8 +7,8 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
 `~/.claude/tools/` contains source for custom CLI utilities. These are version-controlled but must
 be compiled and installed on a new machine:
 
-- `html2clip.swift` — copies HTML to macOS clipboard as rich text (used by `md-to-clipboard` skill).
-  Install: `swiftc ~/.claude/tools/html2clip.swift -o ~/.local/bin/html2clip`
+- `md2clip` — converts Markdown to Teams-compatible HTML and copies to macOS clipboard (used by
+  `md-to-clipboard` skill). Install: `ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`
 
 ## Related Repositories
 

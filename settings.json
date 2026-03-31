@@ -75,8 +75,7 @@
       "Bash(aws sso *)",
       "Bash(aws *)",
       "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
-      "Bash(pandoc /tmp/claude-*)",
-      "Bash(html2clip)"
+      "Bash(md2clip *)"
     ],
     "defaultMode": "plan"
   },

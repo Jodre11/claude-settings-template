@@ -5,57 +5,38 @@ description: Use when the user wants to share Markdown content via Teams, Slack,
 
 # Markdown to Rich Text Clipboard
 
-Converts Markdown to HTML on the macOS clipboard using `pandoc` + `html2clip`. The user can then paste directly into Teams, Slack, Outlook, etc. and it renders as formatted text (bold, code, bullets, headings).
+Copies Markdown as Teams-compatible rich text to the macOS clipboard using `md2clip`.
 
 ## Prerequisites
 
-- macOS (relies on `NSPasteboard` via `html2clip`)
+- macOS
 - `pandoc` installed (`brew install pandoc`)
-- `html2clip` installed at `~/.local/bin/html2clip` (source: `~/.claude/tools/html2clip.swift`)
-  If missing, compile from source: `swiftc ~/.claude/tools/html2clip.swift -o ~/.local/bin/html2clip`
-
-Check both are available before proceeding. If `pandoc` is missing, tell the user to run
-`brew install pandoc`. If `html2clip` is missing, compile it from the source above.
-
-## Pipeline
-
-    pandoc (markdown -> HTML) -> post-process HTML -> html2clip (HTML -> clipboard)
-
-Do NOT use `textutil` or `pbcopy`. Do NOT pipe pandoc output directly to `html2clip` — the HTML must be post-processed first.
+- `md2clip` on PATH (`ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`)
 
 ## Workflow
 
 1. **Get the Markdown content.** Either:
    - The user points to an existing `.md` file, OR
-   - You write the content to a temp file: `/tmp/claude-{session_id}/clipboard-export.md`
+   - Write the content to a temp file: `/tmp/claude-{session_id}/clipboard-export.md`
 
-2. **Sanitise the Markdown source** before conversion:
-   - Replace em dashes (`—`) with plain hyphens (`-`) — they corrupt through the pipeline
-   - Replace any non-ASCII punctuation that could cause encoding issues
+2. **Run `md2clip`:**
 
-3. **Convert Markdown to HTML:**
+       md2clip /tmp/claude-{session_id}/clipboard-export.md
 
-        pandoc <file>.md -f markdown -t html --ascii -o <file>.html
+   The script handles all sanitisation, HTML conversion, post-processing, and clipboard copy.
 
-   The `--ascii` flag forces ASCII entity encoding.
+3. **Tell the user** the rich text is on their clipboard and ready to paste.
 
-4. **Post-process the HTML.** This is critical — pandoc's raw output does not render well in Teams. Apply these transformations to the HTML file:
+## What `md2clip` handles internally
 
-   a. Replace `&#xA0;` with regular spaces (pandoc inserts non-breaking spaces after abbreviations like `e.g.`, `i.e.`)
-   b. Replace `&#x2019;` with `'` (smart curly quotes)
-   c. Strip all `<p>` and `</p>` tags — Teams ignores paragraph margins entirely
-   d. Insert `<span style="font-size:1px"><br></span>` between paragraphs for spacing
-   e. Replace pandoc's code block wrappers (`<div class="sourceCode">...<pre>...<code>...</code></pre></div>`) with plain `<code>...</code>`
-   f. Keep `<code>` for inline code — Teams renders it with monospace + grey background
-   g. Keep `<ul>/<li>` for lists, `<strong>` for bold, `<em>` for italic
-   h. Ensure `<ul>` is directly adjacent to its lead-in text (no `<br>` before it)
-   i. Ensure text after `</ul>` follows directly (no `<br>` after it)
-
-5. **Copy to clipboard:**
-
-        cat <file>.html | html2clip
-
-6. **Tell the user** the rich text is on their clipboard and ready to paste.
+- Sanitises Unicode punctuation (em dashes, smart quotes)
+- Converts Markdown to HTML via pandoc (`--ascii`)
+- Joins pandoc's line-wrapped paragraphs onto single lines
+- Strips `<p>` tags (Teams ignores paragraph margins)
+- Inserts blank lines between paragraphs for single-line-gap spacing
+- Simplifies pandoc code block wrappers to plain `<code>`
+- Removes excessive gaps around lists
+- Copies HTML to clipboard via JXA/NSPasteboard
 
 ## Teams HTML Compatibility Reference
 
@@ -70,33 +51,12 @@ Teams' HTML sanitiser is aggressive. It keeps:
 | `<em>` | Italic |
 | `<br>` | Line break (full line height, minimum enforced) |
 | `<a href>` | Clickable link |
+| `<table>` | Rendered table with borders |
 
-Teams strips or ignores:
-
-| Element/Attribute | Effect |
-|---|---|
-| `<p>` margins | Zero margin — paragraphs collapse together |
-| `style` on `<p>` | Stripped entirely |
-| `font-size` on `<span>` | Minimum line height enforced (~full line) |
-| `<pre>` | No special rendering |
-| `<div>` | No special rendering |
-| CSS `margin`, `padding` | Stripped |
+Teams strips or ignores: `<p>` margins, `style` attributes, `<pre>`, `<div>`, CSS `margin`/`padding`.
 
 ## Paragraph Spacing
 
-There is no half-line-break in Teams. The options are:
-- No `<br>` = wall of text (no gap)
-- `<span style="font-size:1px"><br></span>` = single line gap (Teams enforces minimum height)
-- `<br><br>` = double line gap (too much)
-
-Use `<span style="font-size:1px"><br></span>` between paragraphs as the standard spacer.
-
-## Common Mistakes
-
-- **Using `<p>` tags** — Teams strips margins, producing wall of text
-- **Using `textutil` RTF pipeline** — merges paragraphs, strips CSS, loses code formatting
-- **Using `pbcopy`** — puts text on clipboard, not HTML
-- **Using pandoc output directly** — complex `<div class="sourceCode">` wrappers, `<p>` tags
-- **Putting `<br>` before `<ul>`** — creates excessive gap between list lead-in and bullets
-- **Skipping `--ascii`** — causes em dashes and Unicode to corrupt
-- **Skipping `&#xA0;` fix** — produces visible artefacts after abbreviations
+Blank lines in the HTML source produce single-line gaps in Teams. This is the correct approach.
+Avoid `<span style="font-size:1px"><br></span>` — Teams enforces minimum line height on any
+`<br>`, producing double-height gaps regardless of the font-size hack.

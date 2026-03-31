@@ -50,8 +50,7 @@ case "$base" in
     jb)         allow ;;
 
     # Rich text clipboard pipeline
-    pandoc)     allow ;;
-    html2clip)  allow ;;
+    md2clip)    allow ;;
 
     # General utilities
     curl)       allow ;;
