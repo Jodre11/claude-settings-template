@@ -57,5 +57,5 @@
 - [PR #6 absence processor details](project_pr6_absence_processor.md) — merged 2026-03-26, key context for rebase conflicts
 
 ## Conventions
-- [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-{session_id}/, never bare /tmp/ or $TMPDIR
+- [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-{session_name}/, never bare /tmp/ or $TMPDIR
 - [Re-review scope rules](feedback_re_review_scope.md) — re-reviews: only our unfixed bugs + new bugs from fix commits; approve if non-blocking

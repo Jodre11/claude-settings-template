@@ -48,7 +48,7 @@ The repo may contain multiple `.sln` files. You must determine which solutions a
 For each affected solution, run:
 
 ```
-jb inspectcode <solution.sln> --output=/tmp/claude-{session_id}/inspectcode-<solution-name>.xml --format=Xml --severity=WARNING
+jb inspectcode <solution.sln> --output=/tmp/claude-{session_name}/inspectcode-<solution-name>.xml --format=Xml --severity=WARNING
 ```
 
 Where `<solution-name>` is the solution filename without extension (to avoid collisions when multiple solutions are inspected).

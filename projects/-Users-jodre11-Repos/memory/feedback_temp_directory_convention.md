@@ -1,10 +1,10 @@
 ---
 name: Temp directory convention — session ID not $PPID
-description: Use /tmp/claude-{session_id}/ for temp files — $PPID differs across subagents and is not portable cross-platform
+description: Use /tmp/claude-{session_name}/ for temp files — $PPID differs across subagents and is not portable cross-platform
 type: feedback
 ---
 
-Temp directory convention changed from `/tmp/claude-$PPID/` to `/tmp/claude-{session_id}/`
+Temp directory convention changed from `/tmp/claude-$PPID/` to `/tmp/claude-{session_name}/`
 (CLAUDE.md updated 2026-03-30).
 
 **Why:**
@@ -26,6 +26,6 @@ Temp directory convention changed from `/tmp/claude-$PPID/` to `/tmp/claude-{ses
 - No hook changes were needed for this convention switch
 
 **Cross-platform note:**
-- `/tmp/` is Unix-specific. On Windows the equivalent would be `$env:TEMP\claude-{session_id}\`
+- `/tmp/` is Unix-specific. On Windows the equivalent would be `$env:TEMP\claude-{session_name}\`
 - The current hooks and CLAUDE.md are macOS/Linux only. If Windows support is added later, the
   hooks would need platform-aware path matching
