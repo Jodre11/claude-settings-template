@@ -12,8 +12,10 @@ Converts Markdown to HTML on the macOS clipboard using `pandoc` + `html2clip`. T
 - macOS (relies on `NSPasteboard` via `html2clip`)
 - `pandoc` installed (`brew install pandoc`)
 - `html2clip` installed at `~/.local/bin/html2clip` (source: `~/.claude/tools/html2clip.swift`)
+  If missing, compile from source: `swiftc ~/.claude/tools/html2clip.swift -o ~/.local/bin/html2clip`
 
-Check both are available before proceeding. If missing, tell the user.
+Check both are available before proceeding. If `pandoc` is missing, tell the user to run
+`brew install pandoc`. If `html2clip` is missing, compile it from the source above.
 
 ## Pipeline
 
