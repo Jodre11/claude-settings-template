@@ -9,6 +9,10 @@ This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push 
   repo. After changing any dotfile, remind the user to commit and push in `~/dotfiles`. After
   installing or removing a Homebrew package, remind the user to regenerate the Brewfile:
   `brew bundle dump --file=~/dotfiles/Brewfile --force`
+  **Important:** `brew bundle dump` only includes packages currently installed via Homebrew. It
+  silently drops entries for packages installed by other means (e.g. Docker Desktop, Chrome,
+  JetBrains Toolbox). After regenerating, diff the Brewfile and restore any removed entries that
+  were intentionally kept for new-machine provisioning.
 
 # Preferences
 
