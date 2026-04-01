@@ -19,6 +19,6 @@ Subagents (Agent tool, agent teams) fail on Bedrock with `400 The provided model
 
 **Verification (next session):** Trigger a subagent (any Agent tool call or code review) and confirm it completes instead of dying instantly.
 
-**Not the cause:** Plan mode inheritance and permission settings are not involved — the subagent fails at the API layer on its very first call, before any tool use or mode selection occurs.
+**Related but separate:** Plan mode inheritance is a *different* subagent bug (see `project_subagent_plan_mode.md`). The Bedrock model bug fails at the API layer on the first call; the plan-mode bug causes hangs when subagents need Write/Edit tools. Both were fixed on 2026-04-01.
 
 **Debug logs:** `~/.claude/debug/` contains session logs (note: may have stopped writing after v2.1.70 upgrade). The Statsig failed logs at `~/.claude/statsig/statsig.failed_logs.*` also capture API errors.
