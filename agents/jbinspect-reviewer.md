@@ -2,7 +2,6 @@
 name: jbinspect-reviewer
 description: Runs JetBrains InspectCode on affected C# solutions and reports findings. Used by code-review-team orchestrator, code-analysis agent, or standalone.
 tools: Read, Grep, Glob, Bash
-model: sonnet
 background: true
 ---
 

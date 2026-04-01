@@ -2,7 +2,6 @@
 name: security-reviewer
 description: Reviews code changes for security vulnerabilities. Used by code-review-team orchestrator or standalone.
 tools: Read, Grep, Glob, Bash
-model: sonnet
 background: true
 ---
 

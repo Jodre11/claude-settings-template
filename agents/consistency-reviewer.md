@@ -2,7 +2,6 @@
 name: consistency-reviewer
 description: Reviews code changes for violations of project conventions and configuration. Used by code-review-team orchestrator or standalone.
 tools: Read, Grep, Glob, Bash
-model: sonnet
 background: true
 ---
 

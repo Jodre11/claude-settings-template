@@ -2,7 +2,6 @@
 name: efficiency-reviewer
 description: Reviews code changes for performance and efficiency issues. Used by code-review-team orchestrator or standalone.
 tools: Read, Grep, Glob, Bash
-model: sonnet
 background: true
 ---
 
