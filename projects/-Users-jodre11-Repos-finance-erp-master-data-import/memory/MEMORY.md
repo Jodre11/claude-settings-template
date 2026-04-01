@@ -47,8 +47,8 @@
 
 | Step | What | Blocked by | Status |
 |---|---|---|---|
-| F1 | [platform-terraform #7266](https://github.com/HavenEngineering/platform-terraform/pull/7266): staging DNS validation CNAME + A-record | Platform review | **PR open** |
-| F2 | Production Support ticket: prod DNS validation CNAME + A-record for `haven.com` | Nothing (can submit now) | **Not yet submitted** |
+| F1 | [platform-terraform #7266](https://github.com/HavenEngineering/platform-terraform/pull/7266): staging DNS validation CNAME + A-record | **Domain decision — Platform says don't use haven-stage.com** | **Blocked — awaiting Platform team member (on holiday)** |
+| F2 | Production Support ticket: prod DNS validation CNAME + A-record for `haven.com` | Domain decision (may proceed independently) | **Not yet submitted** |
 | F3 | finance-terraform PR: set `enable_custom_domain = true` in staging + prod CDN modules | F1 + F2 (certs must be `ISSUED`) | **PR to create** |
 | H | GitHub repo settings: create `dev`/`staging`/`prod` environments, populate variables | Nothing (unblocked) | **Can do now** |
 | Merge #8 | [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) — multi-env CI/CD workflows | H (environments must exist) | **Ready to merge after H** |
@@ -78,7 +78,7 @@
 
 | PR | Repo | Purpose | Status |
 |---|---|---|---|
-| [#7266](https://github.com/HavenEngineering/platform-terraform/pull/7266) | platform-terraform | Staging DNS: cert validation CNAME + A-record | **Open — awaiting Platform review** |
+| [#7266](https://github.com/HavenEngineering/platform-terraform/pull/7266) | platform-terraform | Staging DNS: cert validation CNAME + A-record | **Open — blocked: Platform says don't use haven-stage.com; stale state lock** |
 | [#8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) | finance-erp-master-data-import | Multi-env CI/CD workflows + lock grace period fix | **Open — ready to merge after H** |
 
 ### Completed PRs (dev + multi-env infra)
@@ -144,7 +144,12 @@ All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terrafor
 - Release workflow: `build-and-release-image` (workflow_dispatch, minor/major/patch bump)
 - AWS profile for ECR access: `haven-745662293263-EcrPullAccess`
 
+### Domain Blocker (2026-03-31)
+- [project_domain_blocker.md](project_domain_blocker.md) — Platform team said haven-stage.com shouldn't be used; staging + prod custom domains uncertain
+- [project_paul_waller_teams_message.md](project_paul_waller_teams_message.md) — 2026-03-31 Teams msg to Paul Waller (Platform, GH: paul-waller) re domain guidance; awaiting response
+
 ### Reference Files
 - [orca-findings-538.md](orca-findings-538.md) — Orca triage for dev CDN (#538)
 - [haven-design-tokens.md](haven-design-tokens.md) — Haven design system tokens
 - [erpx-patch-api.md](erpx-patch-api.md) — ERPx PATCH API discovery notes
+- [reference_integrations_ticket.md](reference_integrations_ticket.md) — Parent ticket: HavenEngineering/integrations#726, deadline 2026-04-30

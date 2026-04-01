@@ -1,0 +1,1 @@
+- [Bedrock subagent model bug](project_bedrock_subagent_bug.md) — workaround applied 2026-04-01; monitor upstream issues for fix, then restore model overrides
