@@ -72,7 +72,11 @@ be compiled and installed on a new machine:
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
 - NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-{session_name}` subdirectory
 
-## Agent Naming
+## Agents
+- Always set `mode: "auto"` when dispatching agents — the interactive session uses plan mode
+  (`defaultMode: "plan"` in settings.json), but subagents inherit this and stall when they need
+  Write/Edit tools. `"auto"` lets subagents execute autonomously while the parent retains
+  plan-mode control
 - Always set the `name` parameter when dispatching agents via the Agent tool
 - Names must be kebab-case, descriptive, and unique within a session
 - For predefined agents with definition files: use the agent definition name
