@@ -39,7 +39,7 @@ Check whether any files in the changed file list end with `.cs`. If so, set `$CS
 
 Do two things simultaneously:
 
-**A) Dispatch all 7 core specialist agents in parallel** using the Agent tool (plus the jbinspect-reviewer if `$CSHARP_DETECTED` is true — see below). Each core agent receives a prompt containing:
+**A) Dispatch all 7 core specialist agents in parallel** using the Agent tool, naming each agent with its reviewer slug (e.g., `name: "security-reviewer"`, `name: "correctness-reviewer"`, etc.). If `$CSHARP_DETECTED` is true, also dispatch `name: "jbinspect-reviewer"`. Each core agent receives a prompt containing:
 - The full diff
 - The list of changed files
 - Full file contents for context
@@ -440,6 +440,7 @@ X file(s) changed | 0 findings — LGTM
 ## Rules
 
 - Dispatch all 7 core specialists in parallel (plus jbinspect-reviewer if C# files are in the diff). Do not run them sequentially.
+- Name every dispatched agent: `security-reviewer`, `correctness-reviewer`, `consistency-reviewer`, `style-reviewer`, `archaeology-reviewer`, `reuse-reviewer`, `efficiency-reviewer`, `jbinspect-reviewer`.
 - Conduct your own deep analysis concurrently while specialists are working.
 - Do not pre-filter or threshold findings before synthesis. Let specialists report everything.
 - Be precise. Preserve file paths and line numbers from specialist reports.

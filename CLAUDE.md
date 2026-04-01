@@ -72,6 +72,18 @@ be compiled and installed on a new machine:
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
 - NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-{session_name}` subdirectory
 
+## Agent Naming
+- Always set the `name` parameter when dispatching agents via the Agent tool
+- Names must be kebab-case, descriptive, and unique within a session
+- For predefined agents with definition files: use the agent definition name
+  (e.g., `security-reviewer`, `code-analysis`)
+- For built-in agent types: use `{type}-{scope}` (e.g., `explore-auth-flow`,
+  `plan-api-redesign`)
+- For task-scoped agents: use `{role}-task-{n}` (e.g., `implementer-task-3`,
+  `spec-reviewer-task-3`)
+- This enables `SendMessage({to: name})` for diagnosing agent failures or
+  assessing results while agents run
+
 ## Bash
 - Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
 - Never use command substitution (`$(...)`, backticks) — capture output from one Bash call and pass it to the next
