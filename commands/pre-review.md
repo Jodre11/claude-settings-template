@@ -183,6 +183,11 @@ X file(s) changed | 0 findings — LGTM
 > Still provide your assessment. Note what you looked at and why it's clean.
 ```
 
+#### Step 5: Clean up
+
+After producing the final output, close all remaining teammate tmux panes that
+were created for this review. Do not leave orphaned panes running.
+
 #### Rules
 - Do NOT use the Agent tool or code-review-team agent. Use the teammate mechanism.
 - Every finding MUST have an **Opus:** assessment.

@@ -69,7 +69,9 @@ output: ERROR → Critical, WARNING → Important, SUGGESTION → Suggestion. Th
 reports and synthesize: cross-reference findings with your own independent analysis,
 classify as Consensus/Contested/Dismissed/Opus-only, and format with sequential
 numbering and Opus assessments (see `/pre-review` for the full output format).
-Then continue with the additional checks and Step 3 below.
+After producing the final synthesis, close all remaining teammate tmux panes —
+do not leave orphaned panes running. Then continue with the additional checks
+and Step 3 below.
 
 For the lightweight path: pass the PR's base branch as the argument to `code-analysis`.
 
