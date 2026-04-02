@@ -71,7 +71,7 @@
       "Bash(/Users/jodre11/.claude/hooks/bash-guard.sh)",
       "Bash(python3 *)",
       "Bash(/tmp/test-sanitise.sh)",
-      "Bash(tmux kill-server *)",
+      "Bash(tmux *)",
       "Bash(aws sso *)",
       "Bash(aws *)",
       "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
