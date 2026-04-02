@@ -85,8 +85,7 @@
       "Bash(diff *)",
       "Bash(file *)",
       "Bash(ls *)"
-    ],
-    "defaultMode": "plan"
+    ]
   },
   "model": "opus",
   "hooks": {
