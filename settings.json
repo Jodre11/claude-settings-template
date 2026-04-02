@@ -75,7 +75,8 @@
       "Bash(aws sso *)",
       "Bash(aws *)",
       "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
-      "Bash(md2clip *)"
+      "Bash(md2clip *)",
+      "Bash(wc *)"
     ],
     "defaultMode": "plan"
   },
@@ -96,6 +97,17 @@
             "command": "/Users/jodre11/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jodre11/.claude/hooks/agent-mode-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking agent mode..."
           }
         ]
       },
