@@ -61,11 +61,15 @@ agent definitions (security-reviewer, correctness-reviewer, consistency-reviewer
 style-reviewer, archaeology-reviewer, reuse-reviewer, efficiency-reviewer, and
 jbinspect-reviewer if C# files are in the diff). Each teammate runs autonomously in
 standalone mode. Instruct each to write findings to
-`/tmp/claude-{session_name}/review-{reviewer-name}.md`. After all teammates finish,
-read the reports and synthesize: cross-reference findings with your own independent
-analysis, classify as Consensus/Contested/Dismissed/Opus-only, and format with
-sequential numbering and Opus assessments (see `/pre-review` for the full output
-format). Then continue with the additional checks and Step 3 below.
+`/tmp/claude-{session_name}/review-{reviewer-name}.md`. Wait for ALL teammates to
+finish before starting synthesis — jbinspect-reviewer takes longer because
+`jb inspectcode` must load and analyse the full .NET solution. JetBrains InspectCode
+findings are 100% confidence (static analysis tooling); classify severity from the
+output: ERROR → Critical, WARNING → Important, SUGGESTION → Suggestion. Then read the
+reports and synthesize: cross-reference findings with your own independent analysis,
+classify as Consensus/Contested/Dismissed/Opus-only, and format with sequential
+numbering and Opus assessments (see `/pre-review` for the full output format).
+Then continue with the additional checks and Step 3 below.
 
 For the lightweight path: pass the PR's base branch as the argument to `code-analysis`.
 
