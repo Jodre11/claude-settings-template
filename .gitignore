@@ -31,3 +31,6 @@ projects/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*/
 
 # Cached images
 image-cache/
+
+# Agent team runtime state
+teams/
