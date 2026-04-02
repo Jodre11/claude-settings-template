@@ -3,3 +3,5 @@
 - [Granted removed](project_granted_removed.md) — fully uninstalled due to auth loops with Claude Code Bedrock
 - [Shift+Enter needs tmux extkeys](feedback_shift_enter_tmux.md) — tmux strips CSI u sequences without extkeys in terminal-features
 - [Middle-click cross-clipboard paste](project_middle_click_paste.md) — tmux-yank script writes to pasteboard + Ghostty primary selection via OSC 52; not yet committed
+- [Agent teams split-pane blocked](project_agent_teams_split_pane.md) — Ghostty env vars leak into tmux, blocking split-pane mode; fix being tested
+- [Check memory before invoking skills](feedback_check_memory_first.md) — scan MEMORY.md for context before launching skill workflows
