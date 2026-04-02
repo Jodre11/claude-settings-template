@@ -76,7 +76,9 @@
       "Bash(aws *)",
       "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
       "Bash(md2clip *)",
-      "Bash(wc *)"
+      "Bash(wc *)",
+      "Bash(tail *)",
+      "Bash(xxd *)"
     ],
     "defaultMode": "plan"
   },
