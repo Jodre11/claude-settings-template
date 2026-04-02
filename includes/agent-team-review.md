@@ -52,7 +52,7 @@ Claude Code's internal directories. Always re-fetch the diff using the commands
 above. Teammates cannot access tool-results paths and the permission prompts
 disrupt the review flow.
 
-#### Step 2: Create the team
+#### Step 2: Create the team and fix the layout
 
 Create a team and spawn these teammates:
 - `security-reviewer`
@@ -70,6 +70,17 @@ branch, gathers the diff, and writes findings in its defined output format.
 
 Instruct each teammate to write its findings to a temp file:
 `/tmp/claude-{session_name}/review-{reviewer-name}.md`
+
+After all teammates have been spawned, apply a layout that keeps the orchestrator
+pane prominent:
+
+```bash
+tmux set-option -w main-pane-width 40%
+tmux select-layout main-vertical
+```
+
+This puts the orchestrator in a large left pane (40%) with teammates stacked on
+the right. Run these commands once, after the last teammate is created.
 
 #### Step 3: Conduct your own analysis (while teammates are working)
 
