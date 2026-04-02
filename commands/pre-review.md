@@ -81,8 +81,15 @@ Record your own findings before reading teammate results.
 
 #### Step 3: Collate and synthesize
 
-After all teammates have finished, read each report from
-`/tmp/claude-{session_name}/review-*.md`.
+Wait for ALL teammates to finish before starting synthesis — jbinspect-reviewer
+takes longer than the others because `jb inspectcode` must load and analyse the
+full .NET solution. Do not begin aggregation until its report is available.
+
+Read each report from `/tmp/claude-{session_name}/review-*.md`.
+
+JetBrains InspectCode findings are 100% confidence (they come from static
+analysis tooling, not heuristic review). Classify their severity based on the
+InspectCode output: ERROR → Critical, WARNING → Important, SUGGESTION → Suggestion.
 
 Cross-reference teammate findings with your own analysis and classify into tiers:
 
