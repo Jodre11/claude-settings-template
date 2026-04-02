@@ -70,6 +70,12 @@ case "$base" in
     wc)         allow ;;
     tail)       allow ;;
     xxd)        allow ;;
+    find)       allow ;;
+    head)       allow ;;
+    sort)       allow ;;
+    uniq)       allow ;;
+    diff)       allow ;;
+    file)       allow ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
     mkdir)
@@ -77,11 +83,7 @@ case "$base" in
             allow
         fi
         ;;
-    ls)
-        if echo "$cmd" | grep -qE '^ls /tmp/claude-'; then
-            allow
-        fi
-        ;;
+    ls)         allow ;;
     cat)
         if echo "$cmd" | grep -qF '/tmp/claude-'; then
             allow
