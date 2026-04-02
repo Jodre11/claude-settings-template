@@ -6,4 +6,5 @@
 - [Agent teams vs Agent tool](project_agent_teams_split_pane.md) — teammates (tmux panes) and subagents (Agent tool) are distinct; code-review-team uses subagents
 - [Agent mode guard hook](project_agent_mode_guard_hook.md) — workaround for #4462; remove hook when upstream fixes subagent plan mode inheritance
 - [Review: teammates vs subagents](project_review_comparison.md) — teammates found more actionable bugs, subagents sharper on DI/lifecycle; complementary approaches
+- [Dual permission update](feedback_dual_permission_update.md) — new Bash perms must go in both settings.json AND allow-permissions.sh hook
 - [Check memory before invoking skills](feedback_check_memory_first.md) — scan MEMORY.md for context before launching skill workflows
