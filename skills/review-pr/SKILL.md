@@ -49,13 +49,25 @@ From the PR metadata gathered in Step 1, check additions, deletions, and changed
 - 150 or fewer total lines changed (additions + deletions)
 - No deletions of non-trivial code blocks (10+ contiguous deleted lines in a single hunk)
 
-**Use `code-review-team` agent (full specialist team with Opus analysis)** when ANY of these are true:
+**Use agent team review (full specialist team in tmux panes)** when ANY of these are true:
 - More than 5 files changed
 - More than 150 total lines changed
 - Significant deletions detected (10+ contiguous deleted lines in any hunk)
 - The diff touches security-sensitive areas (auth, crypto, input validation, SQL, API endpoints)
 
-Pass the PR's base branch as the argument to the chosen agent.
+For the agent team path: do NOT use the `code-review-team` agent or the Agent tool.
+Instead, create a team of teammates in separate tmux panes using the existing reviewer
+agent definitions (security-reviewer, correctness-reviewer, consistency-reviewer,
+style-reviewer, archaeology-reviewer, reuse-reviewer, efficiency-reviewer, and
+jbinspect-reviewer if C# files are in the diff). Each teammate runs autonomously in
+standalone mode. Instruct each to write findings to
+`/tmp/claude-{session_name}/review-{reviewer-name}.md`. After all teammates finish,
+read the reports and synthesize: cross-reference findings with your own independent
+analysis, classify as Consensus/Contested/Dismissed/Opus-only, and format with
+sequential numbering and Opus assessments (see `/pre-review` for the full output
+format). Then continue with the additional checks and Step 3 below.
+
+For the lightweight path: pass the PR's base branch as the argument to `code-analysis`.
 
 ### Additional checks (regardless of which agent was used)
 
