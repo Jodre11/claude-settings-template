@@ -37,7 +37,7 @@ if [ "$permission_mode" = "plan" ]; then
             exit 0
             ;;
         *)
-            msg="AGENT MODE GUARD: Plan mode active — blocked agent type \"${subagent_type:-<unset>}\". Only read-only agents are allowed in plan mode. Current allowlist: Explore, Plan, claude-code-guide, statusline-setup. To unblock: either exit plan mode (shift+tab) or add the agent type to the case statement allowlist in ~/.claude/hooks/agent-mode-guard.sh."
+            msg="AGENT MODE GUARD: Plan mode active — blocked agent type \"${subagent_type:-<unset>}\". Only read-only agents (Explore, Plan, claude-code-guide, statusline-setup) are allowed in plan mode. Do NOT plan or retry — ask the user to switch out of plan mode (shift+tab) so you can proceed. If this agent type should be allowed in plan mode, the user can add it to the allowlist in ~/.claude/hooks/agent-mode-guard.sh."
             jq -n --arg m "$msg" '{
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
