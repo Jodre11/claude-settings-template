@@ -64,6 +64,12 @@ case "$base" in
     aws)        allow ;;
     command)    allow ;;
     whisper-cli) allow ;;
+    tmux)       allow ;;
+
+    # Read-only utilities used by code reviewers
+    wc)         allow ;;
+    tail)       allow ;;
+    xxd)        allow ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
     mkdir)
