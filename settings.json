@@ -13,7 +13,6 @@
       "Bash(jb inspectcode *)",
       "Bash(terraform fmt *)",
       "Bash(mkdir -p /tmp/claude-*)",
-      "Bash(ls /tmp/claude-*)",
       "Bash(cat /tmp/claude-*)",
       "Bash(cat * > /tmp/claude-*)",
       "Bash(rm /tmp/claude-*)",
@@ -78,7 +77,14 @@
       "Bash(md2clip *)",
       "Bash(wc *)",
       "Bash(tail *)",
-      "Bash(xxd *)"
+      "Bash(xxd *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(diff *)",
+      "Bash(file *)",
+      "Bash(ls *)"
     ],
     "defaultMode": "plan"
   },
