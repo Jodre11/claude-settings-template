@@ -1,0 +1,2 @@
+- [Phase 2 — MCP server](project_phase2_mcp.md) — planned MCP server mode to expose S3Search as Claude Code tools (ls, grep, tree, head, cat, --json)
+- [Phase 3 — Web GUI](project_phase3_web_gui.md) — planned web-based GUI; blocked on deployment decisions
