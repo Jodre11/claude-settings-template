@@ -55,9 +55,52 @@ if [[ "$newest_age" -lt "$SKIP_IF_NEWER_THAN" ]]; then
     exit 0
 fi
 
+# Retry wrapper: try normal auth code flow first; if the localhost redirect
+# doesn't complete (cold browser session loses the callback URL), the browser
+# SSO session is still warmed as a side effect. Retry succeeds immediately.
+_sso_login_with_retry() {
+    local profile="$1"
+    local wait_secs="${2:-45}"
+
+    # Disable errexit locally: if the timeout kills the process, wait returns
+    # non-zero and we need to continue to the retry, not abort the script.
+    local login_pid timer_pid login_status
+    set +e
+
+    echo "Attempting SSO login (will retry automatically if redirect fails)..."
+    aws sso login --profile "$profile" &
+    login_pid=$!
+
+    # Timer subshell: kill login after timeout, then exit.
+    # Backgrounded with & so it shares a process group — kill propagates to sleep.
+    # && is intentional: if sleep is killed (login succeeded), skip the kill to
+    # avoid signalling a recycled PID. Do not change to ;
+    (sleep "$wait_secs" && kill "$login_pid" 2>/dev/null) &
+    timer_pid=$!
+
+    wait "$login_pid" 2>/dev/null
+    login_status=$?
+
+    # Clean up timer (subshell + sleep) to avoid orphans
+    kill "$timer_pid" 2>/dev/null
+    wait "$timer_pid" 2>/dev/null
+
+    set -e
+
+    if [[ "$login_status" -eq 0 ]]; then
+        return 0
+    fi
+
+    # First attempt failed — browser session should now be warm.
+    # No timeout on retry: if the browser session didn't warm (different problem),
+    # hanging here is no worse than the pre-fix behaviour.
+    echo "SSO redirect did not complete. Retrying with warm browser session..."
+    aws sso login --profile "$profile"
+}
+
 # Perform the login
 if [[ -z "${SSH_CONNECTION:-}" ]]; then
-    aws sso login --profile "$PROFILE"
+    _sso_login_with_retry "$PROFILE" 45
 else
     # Remote (SSH): use --no-browser, emit OSC 8 clickable links
     aws sso login --profile "$PROFILE" --no-browser 2>&1 \
