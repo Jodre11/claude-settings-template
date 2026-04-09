@@ -34,7 +34,14 @@ Key repos:
 
 ## Provisioning Groups
 
-Provisioning groups do not exist yet in either sandbox or production. They need to be created as part of the setup — this is a task, not a blocker. Group names TBD (original issue assumed "No Access" and "Network Access" but not confirmed). Once security access is in place, `Get_Provisioning_Groups` will show what exists.
+Provisioning groups do not exist yet in either sandbox or production. They need to be created as part of the setup.
+
+**Candidate XPath for the field:**
+`wd:Worker/wd:Worker_Data/wd:Account_Provisioning_Data/wd:Provisioning_Group_Assignment_Data/wd:Provisioning_Group`
+
+**Pending confirmation (as of 2026-04-08):** Exact field name and whether it has a default value. Awaiting feedback from previous implementers.
+
+**Working assumption:** Default value is "No Access". Lambda switches it to "Network Access" on hire date minus 1 day. Additional provisioning group values may be needed later for maternity, leavers, and other scenarios — rules TBD.
 
 ## Sandbox Setup (impl-services1.wd107.myworkday.com, tenant: havenleisureltd)
 

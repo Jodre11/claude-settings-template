@@ -56,6 +56,12 @@
 ## Active Initiatives
 - [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — Appium tests implemented, blocked on macOS Automation Mode permissions
 
+## Research
+- [Personal AI Agent Costs](research_personal_ai_agent_costs.md) — OpenClaw/NanoClaw + Opus 4.6 cost analysis, model routing strategies, subscription vs API comparison
+
+## Windows VM Setup
+- [Terminal colours TODO](project_windows_vm_setup.md) — Windows Terminal Monokai Remastered scheme needs correcting to match Ghostty
+
 ## Conventions
 - [Temp directory convention](feedback_temp_directory.md) — use /tmp/claude-{session_name}/, never bare /tmp/ or $TMPDIR
 - [Re-review scope rules](feedback_re_review_scope.md) — re-reviews: only our unfixed bugs + new bugs from fix commits; approve if non-blocking

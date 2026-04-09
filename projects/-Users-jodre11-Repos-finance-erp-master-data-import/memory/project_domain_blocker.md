@@ -1,16 +1,22 @@
 ---
-name: Domain blocker — haven-stage.com
-description: Platform team said haven-stage.com shouldn't be used for new services (2026-03-31), blocking staging custom domain. Prod domain (haven.com) also uncertain.
+name: Domain decision — haven-leisure.com via tf-network
+description: Paul Waller confirmed haven-leisure.com for internal tools, managed in tf-network repo. Replaces earlier haven-stage.com/haven.com approach.
 type: project
 ---
 
-Platform team (Christian Haddrell) said on Teams that `haven-stage.com` shouldn't be used: "I don't think we are and suppose to use staging" and "we not using staging in platform-terraform". When asked for alternatives, someone pointed to `finance-terraform/staging` — which misses the point since finance-terraform has no Route53 capability (DNS must come from platform-terraform or Production Support).
+**Resolved 2026-04-07:** Paul Waller confirmed the domain should be a subdomain of `haven-leisure.com`, managed through `HavenEngineering/tf-network`.
 
-**Why:** The `staging/platform-dns` module in platform-terraform appears to have been abandoned — state lock stale since June 2025, only `www.haven-stage.com` actively using the domain. Platform team may be consolidating away from it.
+**Impact on existing work:**
+- platform-terraform #7266 (haven-stage.com staging DNS) — should be **closed**, wrong repo and domain
+- finance-terraform #569 ACM certs — issued for `erpx-master-data-import.haven-stage.com` and `erpx-master-data-import.haven.com` — need **re-creating** for `*.haven-leisure.com` subdomains
+- finance-terraform CDN modules' `enable_custom_domain` toggle — domain/cert ARN values will change
 
-**How to apply:**
-- PR #7266 (staging DNS) is effectively blocked pending clarification
-- A detailed question has been prepared for a specific Platform team member (on holiday as of 2026-03-31)
-- Recommended interim path: skip staging custom domain, use default CloudFront domain (`djobvgo2cjjun.cloudfront.net`), proceed with `haven.com` for prod via Production Support ticket
-- Domain options analysis: `/Users/jodre11/.claude/plans/encapsulated-drifting-tarjan.md`
-- The ACM certs created by finance-terraform #569 for both staging and prod will remain `PENDING_VALIDATION` until DNS validation CNAMEs are created
+**New approach:**
+- Domain: e.g. `master-data-import.haven-leisure.com` (or similar subdomain — TBD)
+- DNS managed in: `HavenEngineering/tf-network`
+- Reference docs: `https://docs-green.tooling.haven-leisure.com/general/platform-domains/#our-v3-set-up`
+
+**Outstanding question from Paul:** Why CloudFront instead of API Gateway? Need to explain the architecture — WASM static files + API on same origin avoids CORS, plus WAF rate limiting and origin verify.
+
+**Why:** This is the authoritative domain decision from Platform.
+**How to apply:** All custom domain work (certs, DNS, CloudFront aliases) must target haven-leisure.com via tf-network instead of the previous haven-stage.com/haven.com approach.

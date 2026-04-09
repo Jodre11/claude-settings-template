@@ -1,21 +1,20 @@
 ---
-name: Teams message to Paul Waller re custom domains
-description: 2026-03-31 Teams message to Paul Waller (Platform team, GitHub: paul-waller) seeking guidance on which domains to use for staging/prod custom domain setup
+name: Paul Waller domain guidance response
+description: Paul Waller (Platform) responded 2026-04-07 — use haven-leisure.com subdomain via tf-network repo; also questioned CloudFront vs API Gateway
 type: project
 ---
 
-On 2026-03-31, sent a Teams message to Paul Waller (Platform team representative) asking for guidance on custom domain selection for staging and production CloudFront distributions.
+**2026-03-31:** Sent Teams message to Paul Waller asking for domain guidance.
 
-**Key questions asked:**
-1. Which domain(s) should we use for staging and production?
-2. Is there a self-service option (e.g. delegated subzone in finance-terraform)?
-3. Is skipping the staging custom domain an option (default CloudFront domain for staging, custom only for prod)?
-4. Minor: staging/platform-dns Terraform state has been locked since June 2025 (lock ID `55906e6b-69be-23aa-e49f-34a51d50e9e9`)
+**2026-04-07:** Paul responded with two points:
 
-**Context provided:**
-- Surveyed available domains: haven.com (prod), haven-stage.com (staging), haven-dev.com (dev), staging.digitaldevs.co.uk (cross-account cert issue), hde.systems (tooling only)
-- Security motivation: CloudFront default `*.cloudfront.net` cert can't enforce `minimum_protocol_version = "TLSv1.2_2021"` — Orca flags as medium
-- Previously told haven-stage.com may not be appropriate for new services
+1. **Domain:** As an internal tool, it should sit as a subdomain on `haven-leisure.com`. DNS is managed through `HavenEngineering/tf-network` (not platform-terraform). Reference docs: `https://docs-green.tooling.haven-leisure.com/general/platform-domains/#our-v3-set-up` (internal, not externally accessible).
 
-**Why:** Custom domains are the last piece for closing the TLS 1.2 gap on staging/prod CloudFront distributions.
-**How to apply:** Awaiting Paul's response. His guidance will determine which domain we use and whether we proceed with platform-terraform #7266 or take a different approach.
+2. **Architecture question:** Platform normally exposes Lambdas through API Gateway, not CloudFront. Asked why we chose CloudFront over API Gateway.
+
+**Why:** This changes the domain approach significantly — haven-leisure.com via tf-network, not haven-stage.com/haven.com via platform-terraform.
+**How to apply:**
+- platform-terraform #7266 (staging DNS) should be **closed** — wrong repo and wrong domain
+- ACM certs in finance-terraform #569 were issued for haven-stage.com and haven.com — these will need to be **re-created** for haven-leisure.com subdomains
+- Need to investigate tf-network repo for DNS record management pattern
+- Need to draft response to Paul explaining the CloudFront architecture (WASM static files + API on same origin, WAF, origin verify)

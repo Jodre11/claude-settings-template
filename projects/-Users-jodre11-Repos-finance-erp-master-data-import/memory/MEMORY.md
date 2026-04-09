@@ -2,8 +2,9 @@
 
 ## Preferences
 - When summarising status with open PRs, always include full GitHub URLs (not short references)
+- [All config in source control](feedback_source_control_config.md) — never use GitHub Environment variables for non-secret config
 
-## Current State (2026-03-25)
+## Current State (2026-04-08)
 
 ### Multi-Environment Rollout — Active Work
 
@@ -11,78 +12,73 @@
 **Infra plan:** `docs/superpowers/plans/2026-03-23-multi-environment-infrastructure.md`
 **CI/CD plan:** `docs/superpowers/plans/2026-03-23-multi-environment-cicd.md`
 
-**Terraform PR rule:** One PR, one `/apply`. Once `/apply`'d, do NOT add new commits. Multiple independent module directories CAN go in one PR. Only split if modules have dependencies preventing simultaneous apply.
+**Terraform PR rule:** One PR gets exactly one `/apply`. That single `/apply` applies all module directories in the PR together. Once `/apply`'d, do NOT add new commits — the PR is done. Multiple independent module directories CAN go in one PR (they're not a reason to split). Only split PRs if there's a genuine ordering dependency between modules. Do not list module directories as separate apply steps in PR descriptions — it implies multiple `/apply` comments are needed.
 
 **Key learning:** finance-terraform runs in finance AWS accounts, platform-terraform in platform accounts. Route53 zones and wildcard ACM certs are in the platform account. finance-terraform PRs require Platform + SRE approval.
 
-**DNS zone ownership:** `haven-stage.com` is in platform-terraform (`staging/platform-dns/`). `haven.com` root zone is NOT in platform-terraform — only `api.haven.com` is (subdelegated). Records in `haven.com` require a Production Support ticket.
+**DNS zone ownership:** `{env}.haven-leisure.com` zones are in platform-terraform (`{env}/platform-dns/`). Wildcard ACM certs (`*.{env}.haven-leisure.com`) already exist in `{env}/platform-k8s/acm.tf`. DNS records for CloudFront aliases go in `{env}/platform-dns/dns.tf`.
 
-#### Infrastructure PRs (Phases 1-2) — ALL APPLIED
+**Custom domains:** `master-data-import.{env}.haven-leisure.com`. All three environments fully operational.
 
-| PR | Repo | What | Status |
-|---|---|---|---|
-| A | platform-multicloud #25 | Staging + prod Entra ID app registrations | **Merged & applied** |
-| B | [#563](https://github.com/HavenEngineering/finance-terraform/pull/563) | S3 buckets staging + prod | **Merged & applied** |
-| C | [#564](https://github.com/HavenEngineering/finance-terraform/pull/564) | Lambda bootstrap staging + prod | **Merged & applied** |
-| D | [#567](https://github.com/HavenEngineering/finance-terraform/pull/567) | CloudFront + WAF + WASM S3 staging + prod | **Merged & applied** |
-| E | [#569](https://github.com/HavenEngineering/finance-terraform/pull/569) | Origin verify + ACM certs + `enable_custom_domain` toggle — all 4 modules | **Merged & applied 2026-03-25** |
+#### Environment CloudFront Details
 
-#### #569 Apply Outputs (needed for remaining steps)
+**Dev:**
+- CloudFront domain: `doogokq33npvz.cloudfront.net`
+- CloudFront distribution ID: `E3T2R0RXN7D1T9`
+- WASM bucket: `finance-master-data-import-wasm-dev`
+- Custom domain: `master-data-import.dev.haven-leisure.com` (active)
 
 **Staging:**
 - CloudFront domain: `djobvgo2cjjun.cloudfront.net`
 - CloudFront distribution ID: `EEZPJGOJSUKIT`
 - WASM bucket: `finance-master-data-import-wasm-staging`
-- ACM cert ARN: `arn:aws:acm:us-east-1:471112640844:certificate/3768478d-e792-4582-98f4-a2c8e45829ce`
-- DNS validation CNAME: `_207fae806260e8b196254bf774cf35a6.erpx-master-data-import.haven-stage.com.` -> `_a377368aa73b503e9dc89a8cc29917ad.jkddzztszm.acm-validations.aws.`
+- Custom domain: `master-data-import.staging.haven-leisure.com` (active)
 
 **Prod:**
 - CloudFront domain: `d35sud8o96jfhr.cloudfront.net`
 - CloudFront distribution ID: `E15CQ91RGU0QXS`
 - WASM bucket: `finance-master-data-import-wasm-prod`
-- ACM cert ARN: `arn:aws:acm:us-east-1:171547406407:certificate/2fd350b9-b753-46f0-926f-238f9b672633`
-- DNS validation CNAME: `_ba6b0c6d7685d897fa204f303b9da2da.erpx-master-data-import.haven.com.` -> `_35ba43cee972a1ca1b295b5d2873597b.jkddzztszm.acm-validations.aws.`
+- Custom domain: `master-data-import.prod.haven-leisure.com` (active)
+
+#### Route53 Zone IDs (haven-leisure.com)
+- Dev: `Z0641457244UIP2SZ79N2` (`dev.haven-leisure.com`)
+- Staging: `Z0043771386ATLDADKBR2` (`staging.haven-leisure.com`)
+- Prod: `Z087260813NK12A69EC1R` (`prod.haven-leisure.com`)
 
 #### Remaining Steps
 
 | Step | What | Blocked by | Status |
 |---|---|---|---|
-| F1 | [platform-terraform #7266](https://github.com/HavenEngineering/platform-terraform/pull/7266): staging DNS validation CNAME + A-record | **Domain decision — Platform says don't use haven-stage.com** | **Blocked — awaiting Platform team member (on holiday)** |
-| F2 | Production Support ticket: prod DNS validation CNAME + A-record for `haven.com` | Domain decision (may proceed independently) | **Not yet submitted** |
-| F3 | finance-terraform PR: set `enable_custom_domain = true` in staging + prod CDN modules | F1 + F2 (certs must be `ISSUED`) | **PR to create** |
-| H | GitHub repo settings: create `dev`/`staging`/`prod` environments, populate variables | Nothing (unblocked) | **Can do now** |
-| Merge #8 | [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) — multi-env CI/CD workflows | H (environments must exist) | **Ready to merge after H** |
-| First deploy | Manual `deploy-image-manual.yml` to staging, then prod | Merge #8 + H | **Manual** |
+| ~~Apply #582~~ | [finance-terraform #582](https://github.com/HavenEngineering/finance-terraform/pull/582) — dev CloudFront alias | — | **Done** |
+| ~~Env config~~ | Environment config in source control (`.github/environments.json`) | — | **Done** |
+| ~~Merge #8~~ | [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) — multi-env CI/CD workflows + deploy-wasm | — | **Merged 2026-04-08** |
+| ~~My Apps~~ | My Apps portal branding (display names, login URLs, logos) | — | **Done** |
+| First deploy | Release + deploy to staging, then prod | — | **Next — see deploy process below** |
+| WASM dispatch | Auto-trigger WASM deploy after finance-terraform apply | GitHub App or PAT with `actions:write` | **Ticketed: [integrations #742](https://github.com/HavenEngineering/integrations/issues/742) — future nice-to-have** |
 
-**Two-phase custom domain:** #569 creates ACM certs with `enable_custom_domain = false` (default). Certs start as `PENDING_VALIDATION`. After DNS validation CNAMEs are created cross-account and certs become `ISSUED`, step F3 flips the toggle to attach aliases + TLS 1.2 to CloudFront.
+#### Staging/Prod Deploy Process (after PR #8 merges)
+1. **Lambda**: finance-terraform PR updating `image_tag` in `{env}/container-lambdas/lambdas.tf` → merge → `/apply`
+2. **WASM**: manually trigger `deploy-wasm.yml` with the same environment and image tag
+3. Both steps must use the same image tag to keep Lambda and WASM in sync
+4. **Future**: cross-repo `repository_dispatch` to automate step 2 — see [integrations #742](https://github.com/HavenEngineering/integrations/issues/742)
 
-#### CI/CD (Phase 3) — PR OPEN
-- [PR #8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) (`docs/multi-environment-design`) — multi-environment deploy workflows + lock grace period fix + spec fixes
-- CI auto-deploys to dev (branch has open PR)
-
-#### GitHub Environment Variables to Configure (Step H)
-
-| Variable | `dev` | `staging` | `prod` |
-|---|---|---|---|
-| `AWS_PROFILE` | `finance-dev` | `finance-staging` | `finance-prod` |
-| `LAMBDA_NAME` | `finance-aot-master-data-import` | `finance-aot-master-data-import` | `finance-aot-master-data-import` |
-| `S3_WASM_BUCKET` | `finance-master-data-import-wasm-dev` | `finance-master-data-import-wasm-staging` | `finance-master-data-import-wasm-prod` |
-| `CLOUDFRONT_DISTRIBUTION_ID` | `E3T2R0RXN7D1T9` | `EEZPJGOJSUKIT` | `E15CQ91RGU0QXS` |
-| `ENTRA_CLIENT_ID` | `cc5ebeca-b7ba-4449-bfa7-847160f69640` | `36ce6ffa-41d6-475b-8c34-399234540c3f` | `dfbc0a8d-2327-40fc-b092-e5bbe743d2be` |
-| `ENTRA_IDENTIFIER_URI` | `api://finance-master-data-import-Global` | `api://finance-master-data-import-Staging` | `api://finance-master-data-import-Prod` |
+#### Cross-Repo WASM Deploy Automation (deferred)
+- **Ticket**: [HavenEngineering/integrations#742](https://github.com/HavenEngineering/integrations/issues/742)
+- **Problem**: after finance-terraform `/apply` on container-lambdas, WASM deploy is a separate manual step that's easy to forget
+- **Proposed**: `repository_dispatch` from finance-terraform to finance-erp-master-data-import after successful apply
+- **Blocker**: requires a GitHub App or PAT with `actions:write` on the target repo. No cross-repo `repository_dispatch` pattern exists in the org today. Existing `platform-github-terraform` App (ID `867876`) lacks `actions:write`.
+- **Manual workaround**: trigger `deploy-wasm.yml` manually after each finance-terraform apply on container-lambdas
 
 #### Deploy Status
 - Dev currently running code from `docs/multi-environment-design` branch (CI auto-deployed via PR #8)
+- Staging and prod: infrastructure ready, no code deployed yet
 
 ### Active PRs
 
-| PR | Repo | Purpose | Status |
-|---|---|---|---|
-| [#7266](https://github.com/HavenEngineering/platform-terraform/pull/7266) | platform-terraform | Staging DNS: cert validation CNAME + A-record | **Open — blocked: Platform says don't use haven-stage.com; stale state lock** |
-| [#8](https://github.com/HavenEngineering/finance-erp-master-data-import/pull/8) | finance-erp-master-data-import | Multi-env CI/CD workflows + lock grace period fix | **Open — ready to merge after H** |
+None — all multi-environment PRs merged/applied.
 
-### Completed PRs (dev + multi-env infra)
-All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terraform #463; platform-iamldap #737; platform-terraform #7168, #7181; finance-terraform #535, #538, #541, #542, #550, #551, #553, #556, #557, #558, #560, #563, #564, #566, #567, #569; finance-erp-master-data-import #1, #2, #4, #7. Closed: finance-terraform #568 (folded into #569).
+### Completed PRs (dev + multi-env infra + custom domains + CI/CD)
+All merged & applied: platform-multicloud #20, #22, #25, #26, #27; tf-az-entraid-application #2 (tagged v1.1.0); platform-azure-terraform #463; platform-iamldap #737; platform-terraform #7168, #7181, #7343; finance-terraform #535, #538, #541, #542, #550, #551, #553, #556, #557, #558, #560, #563, #564, #566, #567, #569, #579, #581, #582; finance-erp-master-data-import #1, #2, #4, #7, #8. Closed: finance-terraform #568 (folded into #569), platform-terraform #7266 (wrong domain — replaced by haven-leisure.com approach), integrations #739 (domain blocker — resolved).
 
 ### Entra ID Client IDs
 | Environment | Client ID |
@@ -92,12 +88,15 @@ All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terrafor
 | Prod | `dfbc0a8d-2327-40fc-b092-e5bbe743d2be` |
 
 ### Local Branch State
-- **finance-terraform**: on `feat/master-data-import-cdn-custom-domain` (PR #569, now merged)
-- **platform-terraform**: on `feat/master-data-import-staging-dns` (PR #7266)
+- **finance-terraform**: on `feat/master-data-import-enable-custom-domain-dev` (PR #582)
+- **platform-terraform**: on `feat/master-data-import-haven-leisure-dns` (PR #7343 — merged)
 - **finance-erp-master-data-import**: on `docs/multi-environment-design` (PR #8)
+- **tf-az-entraid-application**: on `main` (v1.1.0 tagged)
+- **platform-multicloud**: on `feat/master-data-import-myapps-branding` (PR #27 — merged)
 
 ### Live Dev Environment
 
+- **Custom domain**: `https://master-data-import.dev.haven-leisure.com` (active)
 - **CloudFront domain**: `https://doogokq33npvz.cloudfront.net`
 - **WASM S3 bucket**: `finance-master-data-import-wasm-dev`
 - **Lambda function URL**: `finance-aot-master-data-import` (AuthType NONE, Principal: "*")
@@ -133,9 +132,10 @@ All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terrafor
 ### Terraform Repos
 - **finance-terraform**: `HavenEngineering/finance-terraform` (local: `../finance-terraform/`)
 - **platform-terraform**: `HavenEngineering/platform-terraform` — default branch `master`
-- **platform-multicloud**: `HavenEngineering/platform-multicloud` — Entra ID app registrations
+- **platform-multicloud**: `HavenEngineering/platform-multicloud` (local: `../platform-multicloud/`) — Entra ID app registrations
 - **platform-azure-terraform**: `HavenEngineering/platform-azure-terraform` — Entra ID security groups
 - **platform-iamldap**: `HavenEngineering/platform-iamldap` — group membership management
+- **tf-az-entraid-application**: `HavenEngineering/tf-az-entraid-application` (local: `~/Repos/tf-az-entraid-application/`) — shared Terraform module for Entra ID apps (v1.1.0)
 
 ### ECR / CI Details
 - ECR registry: `745662293263.dkr.ecr.eu-west-1.amazonaws.com`
@@ -144,12 +144,14 @@ All merged & applied: platform-multicloud #20, #22, #25; platform-azure-terrafor
 - Release workflow: `build-and-release-image` (workflow_dispatch, minor/major/patch bump)
 - AWS profile for ECR access: `haven-745662293263-EcrPullAccess`
 
-### Domain Blocker (2026-03-31)
-- [project_domain_blocker.md](project_domain_blocker.md) — Platform team said haven-stage.com shouldn't be used; staging + prod custom domains uncertain
-- [project_paul_waller_teams_message.md](project_paul_waller_teams_message.md) — 2026-03-31 Teams msg to Paul Waller (Platform, GH: paul-waller) re domain guidance; awaiting response
+### Domain Decision (resolved 2026-04-07, #739 closed 2026-04-08)
+- [project_domain_blocker.md](project_domain_blocker.md) — Resolved: `haven-leisure.com` for internal tools (Paul Waller, Platform)
+- [project_paul_waller_teams_message.md](project_paul_waller_teams_message.md) — Paul also questioned CloudFront vs API Gateway; replied explaining the architecture
 
 ### Reference Files
 - [orca-findings-538.md](orca-findings-538.md) — Orca triage for dev CDN (#538)
 - [haven-design-tokens.md](haven-design-tokens.md) — Haven design system tokens
 - [erpx-patch-api.md](erpx-patch-api.md) — ERPx PATCH API discovery notes
 - [reference_integrations_ticket.md](reference_integrations_ticket.md) — Parent ticket: HavenEngineering/integrations#726, deadline 2026-04-30
+- [project_domain_blocker.md](project_domain_blocker.md) — Domain decision: haven-leisure.com
+- [project_paul_waller_teams_message.md](project_paul_waller_teams_message.md) — CloudFront architecture reply to Paul Waller
