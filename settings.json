@@ -1,5 +1,5 @@
 {
-  "awsAuthRefresh": "/Users/jodre11/.claude/scripts/aws-sso-refresh.sh",
+  "awsAuthRefresh": "$HOME/.claude/scripts/aws-sso-refresh.sh",
   "env": {
     "AWS_PROFILE": "claude-code",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
@@ -22,8 +22,6 @@
       "Edit(//tmp/claude-**)",
       "Read",
       "WebFetch(domain:docs.anthropic.com)",
-      "Bash(brew info *)",
-      "Bash(open *)",
       "Bash(grep *)",
       "Bash(whisper-cli *)",
       "WebFetch(domain:community.workday.com)",
@@ -61,19 +59,20 @@
       "Read(//Users/jodre11/.claude/skills/**)",
       "Read(//Users/jodre11/.claude/agents/**)",
       "Read(//Users/jodre11/.claude/plugins/**)",
+      "Read(C:/Users/chris/.claude/commands/**)",
+      "Read(C:/Users/chris/.claude/skills/**)",
+      "Read(C:/Users/chris/.claude/agents/**)",
+      "Read(C:/Users/chris/.claude/plugins/**)",
       "Bash(find ~/.claude/projects -name *.md -o -name *.json)",
       "Bash(command -v jbinspect)",
-      "Read(//usr/local/bin/**)",
-      "Read(//Applications/**)",
       "Skill(update-config)",
       "Bash(chmod *)",
-      "Bash(/Users/jodre11/.claude/hooks/bash-guard.sh)",
+      "Bash($HOME/.claude/hooks/bash-guard.sh)",
       "Bash(python3 *)",
       "Bash(/tmp/test-sanitise.sh)",
       "Bash(tmux *)",
       "Bash(aws sso *)",
       "Bash(aws *)",
-      "Bash(/opt/homebrew/Cellar/awscli/2.34.9/libexec/bin/python3 -c \"import botocore; print\\(botocore.__file__\\)\")",
       "Bash(md2clip *)",
       "Bash(wc *)",
       "Bash(tail *)",
@@ -84,7 +83,11 @@
       "Bash(uniq *)",
       "Bash(diff *)",
       "Bash(file *)",
-      "Bash(ls *)"
+      "Bash(ls *)",
+      "Bash(brew info *)",
+      "Bash(open *)",
+      "Read(//usr/local/bin/**)",
+      "Read(//Applications/**)"
     ]
   },
   "model": "opus",
@@ -95,13 +98,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/jodre11/.claude/hooks/allow-permissions.sh",
+            "command": "$HOME/.claude/hooks/allow-permissions.sh",
             "timeout": 5,
             "statusMessage": "Checking allowed commands..."
           },
           {
             "type": "command",
-            "command": "/Users/jodre11/.claude/hooks/bash-guard.sh",
+            "command": "$HOME/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
           }
@@ -112,7 +115,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/jodre11/.claude/hooks/agent-mode-guard.sh",
+            "command": "$HOME/.claude/hooks/agent-mode-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking agent mode..."
           }
@@ -123,13 +126,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/jodre11/.claude/hooks/allow-write-permissions.sh",
+            "command": "$HOME/.claude/hooks/allow-write-permissions.sh",
             "timeout": 5,
             "statusMessage": "Checking write permissions..."
           },
           {
             "type": "command",
-            "command": "/Users/jodre11/.claude/hooks/temp-path-guard.sh",
+            "command": "$HOME/.claude/hooks/temp-path-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking temp path..."
           }
@@ -139,7 +142,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "input=$(cat); model_id=$(echo \"$input\" | jq -r '.model.id'); model_type=\"unknown\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_OPUS_MODEL\" ] && model_type=\"opus\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_SONNET_MODEL\" ] && model_type=\"sonnet\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_HAIKU_MODEL\" ] && model_type=\"haiku\"; cwd=$(echo \"$input\" | jq -r '.workspace.current_dir'); cwd_short=\"${cwd/#$HOME/~}\"; term_width=$(stty size 2>/dev/null </dev/tty | cut -d' ' -f2); [ -z \"$term_width\" ] && term_width=${COLUMNS:-80}; context_size=$(echo \"$input\" | jq -r '.context_window.context_window_size // 200000'); usage=$(echo \"$input\" | jq '.context_window.current_usage // empty'); ctx_pct=\"\"; ctx_pct_plain=\"\"; if [ -n \"$usage\" ]; then input_tok=$(echo \"$usage\" | jq '.input_tokens // 0'); cache_create=$(echo \"$usage\" | jq '.cache_creation_input_tokens // 0'); cache_read=$(echo \"$usage\" | jq '.cache_read_input_tokens // 0'); total=$((input_tok + cache_create + cache_read)); pct=$((total * 100 / context_size)); if [ \"$pct\" -le 50 ]; then col='\\033[32m'; elif [ \"$pct\" -le 80 ]; then col='\\033[33m'; else col='\\033[31m'; fi; ctx_pct=$(printf '%b%d%%\\033[0m' \"$col\" \"$pct\"); ctx_pct_plain=\"${pct}%\"; fi; left_part=$(printf '\\033[32m[%s]\\033[0m \\033[36m%s\\033[0m' \"$model_type\" \"$cwd_short\"); left_plain=\"[$model_type] $cwd_short\"; if git -C \"$cwd\" rev-parse --git-dir >/dev/null 2>&1; then branch=$(git -C \"$cwd\" branch --show-current 2>/dev/null || echo 'detached'); left_part=\"$left_part $(printf '\\033[33m(%s)\\033[0m' \"$branch\")\"; left_plain=\"$left_plain ($branch)\"; fi; left_len=${#left_plain}; right_len=${#ctx_pct_plain}; padding=$((term_width - left_len - right_len - 6)); [ $padding -lt 1 ] && padding=1; printf '%b%*s%b' \"$left_part\" \"$padding\" \"\" \"$ctx_pct\""
+    "command": "input=$(cat); model_id=$(echo \"$input\" | jq -r '.model.id'); model_type=\"unknown\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_OPUS_MODEL\" ] && model_type=\"opus\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_SONNET_MODEL\" ] && model_type=\"sonnet\"; [ \"$model_id\" = \"$ANTHROPIC_DEFAULT_HAIKU_MODEL\" ] && model_type=\"haiku\"; cwd_raw=$(echo \"$input\" | jq -r '.workspace.current_dir'); if command -v cygpath >/dev/null 2>&1; then cwd=$(cygpath -u \"$cwd_raw\"); else cwd=\"$cwd_raw\"; fi; cwd_short=\"${cwd/#$HOME/~}\"; term_width=$(stty size 2>/dev/null </dev/tty | cut -d' ' -f2); [ -z \"$term_width\" ] && term_width=${COLUMNS:-80}; context_size=$(echo \"$input\" | jq -r '.context_window.context_window_size // 200000'); usage=$(echo \"$input\" | jq '.context_window.current_usage // empty'); ctx_pct=\"\"; ctx_pct_plain=\"\"; if [ -n \"$usage\" ]; then input_tok=$(echo \"$usage\" | jq '.input_tokens // 0'); cache_create=$(echo \"$usage\" | jq '.cache_creation_input_tokens // 0'); cache_read=$(echo \"$usage\" | jq '.cache_read_input_tokens // 0'); total=$((input_tok + cache_create + cache_read)); pct=$((total * 100 / context_size)); if [ \"$pct\" -le 50 ]; then col='\\033[32m'; elif [ \"$pct\" -le 80 ]; then col='\\033[33m'; else col='\\033[31m'; fi; ctx_pct=$(printf '%b%d%%\\033[0m' \"$col\" \"$pct\"); ctx_pct_plain=\"${pct}%\"; fi; left_part=$(printf '\\033[32m[%s]\\033[0m \\033[36m%s\\033[0m' \"$model_type\" \"$cwd_short\"); left_plain=\"[$model_type] $cwd_short\"; if git -C \"$cwd\" rev-parse --git-dir >/dev/null 2>&1; then branch=$(git -C \"$cwd\" branch --show-current 2>/dev/null || echo 'detached'); left_part=\"$left_part $(printf '\\033[33m(%s)\\033[0m' \"$branch\")\"; left_plain=\"$left_plain ($branch)\"; fi; left_len=${#left_plain}; right_len=${#ctx_pct_plain}; padding=$((term_width - left_len - right_len - 6)); [ $padding -lt 1 ] && padding=1; printf '%b%*s%b' \"$left_part\" \"$padding\" \"\" \"$ctx_pct\""
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
@@ -147,7 +150,7 @@
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "swift-lsp@claude-plugins-official": true
+    "swift-lsp@claude-plugins-official": false
   },
   "extraKnownMarketplaces": {
     "claude-code-plugins": {
