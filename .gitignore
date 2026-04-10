@@ -1,3 +1,7 @@
+# Machine-specific settings
+settings.local.json
+**/settings.local.json
+
 # Ephemeral session data
 history.jsonl
 sessions/
