@@ -1,6 +1,19 @@
 # Global Settings
 
-This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when editing files here.
+This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when
+editing files here. The repo is cloned independently on each machine (macOS, Windows, WSL, Linux).
+
+## Cross-Platform Architecture
+
+- **`settings.json`** (tracked) — platform-agnostic settings. All paths use `~` (expanded by
+  Claude Code for permissions, by bash for hooks). Never put absolute or `$HOME` paths here.
+- **`settings.local.json`** (gitignored) — per-machine overrides. Written by
+  `scripts/setup-platform.sh`. Contains `awsAuthRefresh` with the correct platform-specific
+  command. On Windows, `awsAuthRefresh` is wrapped with Git Bash because Claude Code invokes
+  it via CMD which cannot execute `.sh` files directly.
+- **Hook scripts** — use `#!/usr/bin/env bash` shebangs. Claude Code runs hook commands through
+  bash on all platforms, so `~` and `$HOME` expand correctly in hook `command` values.
+- After cloning on a new machine, always run: `bash ~/.claude/scripts/setup-platform.sh`
 
 ## Custom Tools
 
@@ -9,6 +22,7 @@ be compiled and installed on a new machine:
 
 - `md2clip` — converts Markdown to Teams-compatible HTML and copies to macOS clipboard (used by
   `md-to-clipboard` skill). Install: `ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`
+  (macOS only)
 
 ## Related Repositories
 
