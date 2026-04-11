@@ -1,5 +1,4 @@
 {
-  "awsAuthRefresh": "$HOME/.claude/scripts/aws-sso-refresh.sh",
   "env": {
     "AWS_PROFILE": "claude-code",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
@@ -22,6 +21,7 @@
       "Edit(//tmp/claude-**)",
       "Read",
       "WebFetch(domain:docs.anthropic.com)",
+      "Bash(brew info *)",
       "Bash(grep *)",
       "Bash(whisper-cli *)",
       "WebFetch(domain:community.workday.com)",
@@ -55,19 +55,16 @@
       "Bash(jq *)",
       "Bash(cp *)",
       "Bash(command claude *)",
-      "Read(//Users/jodre11/.claude/commands/**)",
-      "Read(//Users/jodre11/.claude/skills/**)",
-      "Read(//Users/jodre11/.claude/agents/**)",
-      "Read(//Users/jodre11/.claude/plugins/**)",
-      "Read(C:/Users/chris/.claude/commands/**)",
-      "Read(C:/Users/chris/.claude/skills/**)",
-      "Read(C:/Users/chris/.claude/agents/**)",
-      "Read(C:/Users/chris/.claude/plugins/**)",
+      "Read(~/.claude/commands/**)",
+      "Read(~/.claude/skills/**)",
+      "Read(~/.claude/agents/**)",
+      "Read(~/.claude/plugins/**)",
       "Bash(find ~/.claude/projects -name *.md -o -name *.json)",
       "Bash(command -v jbinspect)",
+      "Read(//usr/local/bin/**)",
       "Skill(update-config)",
       "Bash(chmod *)",
-      "Bash($HOME/.claude/hooks/bash-guard.sh)",
+      "Bash(~/.claude/hooks/bash-guard.sh)",
       "Bash(python3 *)",
       "Bash(/tmp/test-sanitise.sh)",
       "Bash(tmux *)",
@@ -84,9 +81,7 @@
       "Bash(diff *)",
       "Bash(file *)",
       "Bash(ls *)",
-      "Bash(brew info *)",
       "Bash(open *)",
-      "Read(//usr/local/bin/**)",
       "Read(//Applications/**)"
     ]
   },
@@ -98,13 +93,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/allow-permissions.sh",
+            "command": "~/.claude/hooks/allow-permissions.sh",
             "timeout": 5,
             "statusMessage": "Checking allowed commands..."
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/bash-guard.sh",
+            "command": "~/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
           }
@@ -115,7 +110,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/agent-mode-guard.sh",
+            "command": "~/.claude/hooks/agent-mode-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking agent mode..."
           }
@@ -126,13 +121,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/allow-write-permissions.sh",
+            "command": "~/.claude/hooks/allow-write-permissions.sh",
             "timeout": 5,
             "statusMessage": "Checking write permissions..."
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/temp-path-guard.sh",
+            "command": "~/.claude/hooks/temp-path-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking temp path..."
           }
@@ -149,8 +144,7 @@
     "csharp-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true,
-    "swift-lsp@claude-plugins-official": false
+    "frontend-design@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-code-plugins": {

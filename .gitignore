@@ -1,4 +1,4 @@
-# Machine-specific settings
+# Per-machine settings (written by scripts/setup-platform.sh)
 settings.local.json
 **/settings.local.json
 

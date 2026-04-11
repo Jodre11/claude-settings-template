@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 # Sanitises a pane title for use as a tmux session name.
 # Called by the pane-title-changed hook set in the claude() zsh function.
 #
