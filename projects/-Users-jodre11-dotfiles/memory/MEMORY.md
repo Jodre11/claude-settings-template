@@ -8,3 +8,5 @@
 - [Review: teammates vs subagents](project_review_comparison.md) — teammates found more actionable bugs, subagents sharper on DI/lifecycle; complementary approaches
 - [Dual permission update](feedback_dual_permission_update.md) — new Bash perms must go in both settings.json AND allow-permissions.sh hook
 - [Check memory before invoking skills](feedback_check_memory_first.md) — scan MEMORY.md for context before launching skill workflows
+- [Graph MCP server](project_graph_mcp_server.md) — planned MCP server for Microsoft Graph via delegated permissions; blocked on Haven app registration approval
+- [CLI for Microsoft 365](reference_cli_microsoft365.md) — PnP community CLI wrapping Graph APIs; candidate foundation for graph-mcp

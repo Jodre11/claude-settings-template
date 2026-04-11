@@ -11,12 +11,12 @@ type: project
 - finance-terraform #569 ACM certs — issued for `erpx-master-data-import.haven-stage.com` and `erpx-master-data-import.haven.com` — need **re-creating** for `*.haven-leisure.com` subdomains
 - finance-terraform CDN modules' `enable_custom_domain` toggle — domain/cert ARN values will change
 
-**New approach:**
-- Domain: e.g. `master-data-import.haven-leisure.com` (or similar subdomain — TBD)
-- DNS managed in: `HavenEngineering/tf-network`
-- Reference docs: `https://docs-green.tooling.haven-leisure.com/general/platform-domains/#our-v3-set-up`
+**Fully resolved 2026-04-08.** Custom domains active in all three environments:
+- `master-data-import.dev.haven-leisure.com`
+- `master-data-import.staging.haven-leisure.com`
+- `master-data-import.prod.haven-leisure.com`
 
-**Outstanding question from Paul:** Why CloudFront instead of API Gateway? Need to explain the architecture — WASM static files + API on same origin avoids CORS, plus WAF rate limiting and origin verify.
+DNS zones are in platform-terraform (`{env}/platform-dns/`), not tf-network. Wildcard ACM certs (`*.{env}.haven-leisure.com`) in `{env}/platform-k8s/acm.tf`.
 
-**Why:** This is the authoritative domain decision from Platform.
-**How to apply:** All custom domain work (certs, DNS, CloudFront aliases) must target haven-leisure.com via tf-network instead of the previous haven-stage.com/haven.com approach.
+**Why:** This is the authoritative domain decision from Platform (Paul Waller).
+**How to apply:** All custom domain work targets `haven-leisure.com`. DNS records for CloudFront aliases go in `{env}/platform-dns/dns.tf`.

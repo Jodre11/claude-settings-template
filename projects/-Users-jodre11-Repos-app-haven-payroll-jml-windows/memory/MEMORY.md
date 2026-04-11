@@ -1,8 +1,7 @@
 # Haven Payroll JML Windows - Project Memory
 
-## Current State (2026-04-04)
-- **Branch:** `feat/avalonia-e2e-testing` (at `3f85b00`, off `main`)
-- **In progress:** Avalonia E2E testing — Appium smoke tests implemented, blocked on macOS Automation Mode
+## Current State (2026-04-10)
+- **PR #17** — Avalonia E2E testing — **merged** (2026-04-10)
 - **PR #5** — cross-platform Avalonia UI — **merged**
 - **PR #6** — absence processor — **merged** (2026-03-26)
 - **PR #15** — externalise config and reference data — **merged**
@@ -54,7 +53,7 @@
 - [PR #6 absence processor details](project_pr6_absence_processor.md) — merged 2026-03-26, key context for rebase conflicts
 
 ## Active Initiatives
-- [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — Appium tests implemented, blocked on macOS Automation Mode permissions
+- [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — PR #17 merged 2026-04-10, 71 headless + 3 Appium tests
 
 ## Research
 - [Personal AI Agent Costs](research_personal_ai_agent_costs.md) — OpenClaw/NanoClaw + Opus 4.6 cost analysis, model routing strategies, subscription vs API comparison
@@ -67,3 +66,4 @@
 - [Re-review scope rules](feedback_re_review_scope.md) — re-reviews: only our unfixed bugs + new bugs from fix commits; approve if non-blocking
 - [Reviewer assignment](feedback_reviewer_assignment.md) — never add PR reviewers unless explicitly asked
 - [SSH signing via Bitwarden](feedback_ssh_signing.md) — ssh-add -l won't show the signing key; just commit, it works
+- [Install FOSS tools](feedback_install_foss_tools.md) — use brew install rather than workarounds; remind to regenerate Brewfile
