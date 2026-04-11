@@ -157,5 +157,6 @@
   "language": "English UK",
   "companyAnnouncements": [
     "Welcome Jodrell."
-  ]
+  ],
+  "awsAuthRefresh": "~/.claude/scripts/aws-sso-refresh.sh"
 }

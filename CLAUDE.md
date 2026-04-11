@@ -5,15 +5,18 @@ editing files here. The repo is cloned independently on each machine (macOS, Win
 
 ## Cross-Platform Architecture
 
-- **`settings.json`** (tracked) — platform-agnostic settings. All paths use `~` (expanded by
-  Claude Code for permissions, by bash for hooks). Never put absolute or `$HOME` paths here.
-- **`settings.local.json`** (gitignored) — per-machine overrides. Written by
-  `scripts/setup-platform.sh`. Contains `awsAuthRefresh` with the correct platform-specific
-  command. On Windows, `awsAuthRefresh` is wrapped with Git Bash because Claude Code invokes
-  it via CMD which cannot execute `.sh` files directly.
+- **`settings.json`** (tracked) — cross-platform settings. All paths use `~` (expanded by
+  Claude Code for permissions, by bash for hooks/statusLine/awsAuthRefresh). Never put absolute
+  or `$HOME` paths here.
+- **`settings.local.json`** — Claude Code only reads this at the **project** level
+  (`<project>/.claude/settings.local.json`), NOT at the user level (`~/.claude/settings.local.json`).
+  Do not put user-level settings here — they will be silently ignored.
+- **`awsAuthRefresh`** — lives in `settings.json` (tracked). Uses `~` which Claude Code expands
+  via its resolved bash (Git Bash on Windows, `/bin/bash` on Unix). Works cross-platform without
+  per-machine configuration.
 - **Hook scripts** — use `#!/usr/bin/env bash` shebangs. Claude Code runs hook commands through
   bash on all platforms, so `~` and `$HOME` expand correctly in hook `command` values.
-- After cloning on a new machine, always run: `bash ~/.claude/scripts/setup-platform.sh`
+- After cloning on a new machine, run: `bash ~/.claude/scripts/setup-platform.sh`
 
 ## Custom Tools
 

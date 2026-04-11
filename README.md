@@ -92,15 +92,16 @@ Same as macOS/WSL. Run `setup-platform.sh` after cloning.
 
 ## Cross-Platform Design
 
-- **`settings.json`** (tracked) contains only platform-agnostic settings.
-  Paths use `~` which Claude Code and bash expand on all platforms.
-- **`settings.local.json`** (gitignored) contains per-machine overrides
-  like `awsAuthRefresh`. Written by `scripts/setup-platform.sh`.
+- **`settings.json`** (tracked) contains cross-platform settings.
+  Paths use `~` which Claude Code expands via its resolved bash
+  (Git Bash on Windows, `/bin/bash` on Unix).
+- **`settings.local.json`** is only read at the **project** level
+  (`<project>/.claude/settings.local.json`), not the user level.
+  Do not put user-level overrides in `~/.claude/settings.local.json`.
+- **`awsAuthRefresh`** lives in `settings.json`. Uses a `~` path that
+  works cross-platform because Claude Code runs it through bash.
 - **Hook scripts** use `#!/usr/bin/env bash` shebangs and avoid
   platform-specific paths.
-- **`awsAuthRefresh`** must be a command that the system shell can execute.
-  On macOS/Linux/WSL this is the script path directly. On Windows it is
-  wrapped as `"<git-bash-path>" "<script-path>"`.
 
 ## Related Repositories
 
