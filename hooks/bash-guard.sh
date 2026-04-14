@@ -41,10 +41,8 @@ if mentions_temp_path "$cmd"; then
     hook_deny "TEMP DIRECTORY VIOLATION: Use /tmp/claude-{session_name}/ for writing to temp. See CLAUDE.md 'Temporary Files' section."
 fi
 
-# Strip single-quoted strings (cannot contain escapes)
-stripped=$(sed "s/'[^']*'//g" <<< "$cmd")
-# Strip double-quoted strings (handle escaped quotes inside)
-stripped=$(sed 's/"[^"]*"//g' <<< "$stripped")
+# Strip quoted strings and comments in one sed call (3 forks → 1)
+stripped=$(sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g' -e 's/#.*//' <<< "$cmd")
 
 warnings=""
 
@@ -58,10 +56,8 @@ if [[ "$stripped" == *'||'* ]]; then
     warnings="${warnings}  - compound operator '||' detected (use separate Bash calls)\n"
 fi
 
-# Check for ; (but not in comments starting with #)
-# Remove comments first, then check
-stripped_no_comments=$(sed 's/#.*//' <<< "$stripped")
-if [[ "$stripped_no_comments" == *';'* ]]; then
+# Check for ;
+if [[ "$stripped" == *';'* ]]; then
     warnings="${warnings}  - compound operator ';' detected (use separate Bash calls)\n"
 fi
 
