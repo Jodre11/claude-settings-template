@@ -154,6 +154,7 @@
       }
     }
   },
+  "showThinkingSummaries": true,
   "language": "English UK",
   "companyAnnouncements": [
     "Welcome Jodrell."

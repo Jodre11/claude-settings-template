@@ -2,7 +2,51 @@
 name: Workday Account Provisioning Integration
 description: Decisions, sandbox setup state, API findings, AD provisioning flow, and next steps for the account provisioning integration (HavenEngineering/integrations#736)
 type: project
+originSessionId: f308e453-e6f2-46fa-be39-0871d7185713
 ---
+## Problem Statement
+
+Haven's AD account provisioning currently suffers from two issues:
+
+1. **Premature provisioning** — the Entra provisioning app (Workday-to-AD) picks up all workers and provisions them immediately, which can be weeks or months before their actual start date. Users get system access far too early.
+2. **Entra app limitation** — the Entra provisioning app cannot read Workday calculated fields or integration system attributes ([known Microsoft limitation](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/hr-attribute-retrieval-issues#issue-fetching-workday-calculated-fields)). Any derived/calculated values needed for provisioning decisions must be surfaced via a workaround.
+
+## Solution: Lambda as Data Preparation + Time-Gate
+
+A scheduled Lambda reads workers from Workday, evaluates hire date proximity, and writes a flag to each worker's profile via SOAP — but only when the worker is within the provisioning window (default: hire date minus 1 day). This flag is stored in a field the Entra provisioning app *can* read (provisioning group assignment or custom ID), bridging the data gap.
+
+The Entra provisioning app then picks up the flag during its own sync cycle and uses it in attribute mappings and scoping filters to provision the AD account at the right time.
+
+**Two documented workaround mechanisms:**
+- **Provisioning groups** — tested and confirmed working.
+- **Custom IDs** — alternative option, not yet tested. Either serves the same purpose.
+
+Decision on which mechanism to use is still open. Provisioning groups are the current frontrunner.
+
+## How AD Provisioning Currently Works
+
+Discovered 2026-03-31 by investigating HavenEngineering repos:
+
+1. **Microsoft Entra provisioning app** (Workday-to-AD) calls `Get_Workers` over SOAP, reads worker attributes, and creates/updates user accounts in on-prem AD (`OU=Workday,OU=Users,OU=AzureSync,DC=bourne-leisure,DC=co,DC=uk`)
+2. **PowerShell post-provisioning scripts** on the HRIS VM pick up new accounts and configure them (groups, Exchange mailbox, UPN)
+3. **Entra Connect** syncs on-prem AD to Entra ID
+4. **MFA script** registers phone via Microsoft Graph
+
+Key repos:
+- `modernworkplace/workday-integrations/live/` — the PowerShell scripts (`Invoke-OnboardingWorkdayUser.ps1`, `Invoke-OnboardMFAV2.ps1`, `Invoke-MoveDisabledUsers.ps1`)
+- `platform-azure-terraform` — Terraform for HRIS VM (`az-hav-vm-uks-prod-hris-workday-01`) and Entra Connect VM
+- `legacy-haven-integrations` — old VS2012 AD integration code (predecessor)
+
+## Provisioning Groups / Custom IDs
+
+Provisioning groups do not exist yet in either sandbox or production. They need to be created as part of the setup.
+
+**Candidate XPath for the field:**
+`wd:Worker/wd:Worker_Data/wd:Account_Provisioning_Data/wd:Provisioning_Group_Assignment_Data/wd:Provisioning_Group`
+
+**Pending confirmation (as of 2026-04-08):** Exact field name and whether it has a default value. Awaiting feedback from previous implementers.
+
+**Working assumption:** Default value is "No Access". Lambda switches it to "Network Access" on hire date minus 1 day. Additional provisioning group values may be needed later for maternity, leavers, and other scenarios — rules TBD.
 
 ## Architectural Decisions
 
@@ -13,35 +57,6 @@ New standalone repo for Workday integrations — not within service-finance-erp-
 **How to apply:** Plan for multiple Lambda functions. Each integration gets its own Lambda. Tech stack: .NET 10 / C#, AOT container Lambda on arm64, following the Finance Terraform repo pattern.
 
 New ISU: `ISU_Account_Provisioning` — do not reuse `ISU_IaC_PoC` (had problems).
-
-## How AD Provisioning Currently Works
-
-Discovered 2026-03-31 by investigating HavenEngineering repos:
-
-1. **Workday's built-in AD provisioning connector** creates user accounts directly in on-prem AD (`OU=Workday,OU=Users,OU=AzureSync,DC=bourne-leisure,DC=co,DC=uk`)
-2. **PowerShell post-provisioning scripts** on the HRIS VM pick up new accounts and configure them (groups, Exchange mailbox, UPN)
-3. **Entra Connect** syncs on-prem AD to Entra ID
-4. **MFA script** registers phone via Microsoft Graph
-
-Key repos:
-- `modernworkplace/workday-integrations/live/` — the PowerShell scripts (`Invoke-OnboardingWorkdayUser.ps1`, `Invoke-OnboardMFAV2.ps1`, `Invoke-MoveDisabledUsers.ps1`)
-- `platform-azure-terraform` — Terraform for HRIS VM (`az-hav-vm-uks-prod-hris-workday-01`) and Entra Connect VM
-- `legacy-haven-integrations` — old VS2012 AD integration code (predecessor)
-
-**Critical insight:** No custom code calls `New-ADUser`. Workday's native connector creates the AD account. The connector almost certainly uses provisioning groups as its trigger.
-
-**Our Lambda's role:** Detect workers with upcoming hire dates → set the correct provisioning group flag → Workday's native connector handles the rest.
-
-## Provisioning Groups
-
-Provisioning groups do not exist yet in either sandbox or production. They need to be created as part of the setup.
-
-**Candidate XPath for the field:**
-`wd:Worker/wd:Worker_Data/wd:Account_Provisioning_Data/wd:Provisioning_Group_Assignment_Data/wd:Provisioning_Group`
-
-**Pending confirmation (as of 2026-04-08):** Exact field name and whether it has a default value. Awaiting feedback from previous implementers.
-
-**Working assumption:** Default value is "No Access". Lambda switches it to "Network Access" on hire date minus 1 day. Additional provisioning group values may be needed later for maternity, leavers, and other scenarios — rules TBD.
 
 ## Sandbox Setup (impl-services1.wd107.myworkday.com, tenant: havenleisureltd)
 
@@ -84,6 +99,7 @@ Domain Security Policies granted to ISSG (all activated and confirmed working):
 
 1. Create provisioning groups in sandbox (names TBD)
 2. Test `Put_Provisioning_Group_Assignment` once groups exist
-3. Resolve open questions on ticket (repo strategy, business logic details, deployment)
-4. Write implementation plan
-5. Implement the Lambda
+3. Finalise provisioning groups vs custom IDs decision
+4. Resolve open questions on ticket (repo strategy, business logic details, deployment)
+5. Write implementation plan
+6. Implement the Lambda

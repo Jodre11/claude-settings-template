@@ -1,12 +1,11 @@
 # Haven Payroll JML Windows - Project Memory
 
-## Current State (2026-04-10)
-- **PR #17** — Avalonia E2E testing — **merged** (2026-04-10)
-- **PR #5** — cross-platform Avalonia UI — **merged**
-- **PR #6** — absence processor — **merged** (2026-03-26)
-- **PR #15** — externalise config and reference data — **merged**
-- **Branch protection:** enabled on `main` (enforcement: everyone)
+## Current State (2026-04-14)
+- **Latest release:** v0.0.4 — tested on macOS (ARM64) and Windows x64
+- **All PRs merged**, no open issues, no open PRs
+- **Branch protection:** enabled on `main` (enforcement: everyone) with merge queue
 - **CI:** passing on `main`
+- **Release workflow:** `.github/workflows/release.yml`, `workflow_dispatch`, input `bump-level` (patch/minor/major)
 
 ## Project Skills
 - `.claude/commands/jbinspect.md` — runs `jb inspectcode`, parses XML, presents findings, offers to fix
@@ -14,23 +13,29 @@
 - `/jbinspect` skill confirmed working after session restart
 
 ## Identified Tech Debt
-- **InspectCode 68 issues** — pre-existing across all projects; needs follow-up PR to fix (naming, nullability, redundant usings, namespace mismatches)
-- **Source-generated logging** — CA1848, CA1873, CA2254 all deferred to suggestion; significant perf win when addressed
-- **Avalonia test coverage** — being addressed by E2E testing initiative (see below)
+- **InspectCode issues** — resolved to zero in PR #19
+- **Source-generated logging** — CA1848, CA1873, CA2254 addressed in PR #19 (warning suppressions removed, IsEnabled guards + local variables added)
+- **Simplify review** — completed in PR #19: ColumnNames constants (78 fields, 13 service files), DataLineDefinitions cached as static readonly fields, [RelayCommand] source gen, DI scope dedup, TOCTOU removal, TextBox bounding, HashSet for validEmployeeIds
+- **Avalonia test coverage** — 87 headless tests, 80% line coverage gate passing
 
 ## Project Structure
 - `payroll-workday-generate-import-file/` — Core library + console app (net10.0)
-- `PayrollWorkdayGenerateImportFile.WPF/` — Windows-only GUI (net10.0-windows)
 - `PayrollWorkdayGenerateImportFile.Avalonia/` — Cross-platform GUI (net10.0)
 - `PayrollWorkdayGenerateImportFile.Tests/` — xUnit v3 test project (693 tests)
+- `PayrollWorkdayGenerateImportFile.Avalonia.Tests/` — Avalonia headless E2E tests (87 tests)
+- `PayrollWorkdayGenerateImportFile.Appium.Tests/` — Appium smoke tests (3, CI-excluded)
 
 ## Key Technical Facts
 - Avalonia 11.3.12, Fluent theme, DataGrid via Avalonia.Controls.DataGrid
 - `MsgIcon` type alias for `MsBox.Avalonia.Enums.Icon` vs `Avalonia.Controls.WindowIcon` conflict
 - `StorageProvider` API for file/folder pickers; `Dispatcher.UIThread.InvokeAsync()` for UI thread
 - NLog config: `NLog.avalonia.config` with `AvaloniaTextBoxTarget`
+- NLog `internalLogFile` must use built-in renderers only (e.g. `${tempdir}`), not custom `${dataroot}`
 - CI runs SDK 10.0.201 (rollForward: latestFeature from pinned 10.0.100)
 - `WorkingDirectoryTests` collection eliminated — tests now use explicit paths via `IDataRootProvider` for full parallelism
+- .NET 10 requires Visual Studio 2026 v18.0+ (NOT VS2022 17.x)
+- Self-contained publish: `IncludeAllContentForSelfExtract=true` + `DebugType=embedded` in Directory.Build.props
+- `Host.CreateDefaultBuilder` calls `GetCwd()` internally — must `SetCurrentDirectory` before calling it on macOS
 
 ## User Preferences
 - Prefers being asked before large actions
@@ -52,8 +57,16 @@
 ## PR #6 Context
 - [PR #6 absence processor details](project_pr6_absence_processor.md) — merged 2026-03-26, key context for rebase conflicts
 
+## Security
+- [PII in user data directory](project_pii_in_user_data.md) — ~/.jml-payroll contains employee PII; never claim app stores no sensitive data
+
+## References
+- [IT service desk ticket #403868](reference_it_service_desk_ticket.md) — PayrollJML deployment, release info, awaiting IT response
+
 ## Active Initiatives
-- [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — PR #17 merged 2026-04-10, 71 headless + 3 Appium tests
+- [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — PR #17 merged 2026-04-10, 87 headless + 3 Appium tests
+- [Velopack deployment strategy](project_velopack_deployment.md) — self-contained single-file first, then Velopack for installers + auto-updates
+- [Disable merge queue](project_disable_merge_queue.md) — keep required checks, remove queue; change in platform-github Terraform
 
 ## Research
 - [Personal AI Agent Costs](research_personal_ai_agent_costs.md) — OpenClaw/NanoClaw + Opus 4.6 cost analysis, model routing strategies, subscription vs API comparison
@@ -67,3 +80,4 @@
 - [Reviewer assignment](feedback_reviewer_assignment.md) — never add PR reviewers unless explicitly asked
 - [SSH signing via Bitwarden](feedback_ssh_signing.md) — ssh-add -l won't show the signing key; just commit, it works
 - [Install FOSS tools](feedback_install_foss_tools.md) — use brew install rather than workarounds; remind to regenerate Brewfile
+- [TransId static is intentional](feedback_transid_static.md) — _transId is deliberately static; real bugs are double-increment and redundant LoadReferenceData
