@@ -10,88 +10,56 @@
 # If not, exits silently (falls through to subsequent hooks like bash-guard.sh).
 
 set -euo pipefail
+source "$(dirname "$0")/_lib.sh"
+hook_read_input
 
-input=$(cat)
-cmd=$(echo "$input" | jq -r '.tool_input.command // empty')
-
-if [ -z "$cmd" ]; then
+cmd=$(hook_field '.tool_input.command')
+if [[ -z "$cmd" ]]; then
     exit 0
 fi
 
 # Extract the base command (first word)
-base=$(echo "$cmd" | awk '{print $1}')
-
-allow() {
-    jq -n '{
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)"
-        }
-    }'
-    exit 0
-}
+read -r base _ <<< "$cmd"
 
 case "$base" in
     # Version control and GitHub CLI
-    git)        allow ;;
-    gh)         allow ;;
+    git|gh)         hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Build tools
-    dotnet)     allow ;;
-    terraform)  allow ;;
-    cargo)      allow ;;
+    dotnet|terraform|cargo) hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Browser automation
-    playwright-cli) allow ;;
-    npx)        allow ;;
+    playwright-cli|npx) hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Code inspection
-    jb)         allow ;;
+    jb)             hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Rich text clipboard pipeline
-    md2clip)    allow ;;
+    md2clip)        hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # General utilities
-    curl)       allow ;;
-    jq)         allow ;;
-    cp)         allow ;;
-    chmod)      allow ;;
-    python3)    allow ;;
-    brew)       allow ;;
-    open)       allow ;;
-    grep)       allow ;;
-    aws)        allow ;;
-    command)    allow ;;
-    whisper-cli) allow ;;
-    tmux)       allow ;;
+    curl|jq|cp|chmod|python3|brew|open|grep|aws|command|whisper-cli|tmux)
+                    hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Read-only utilities used by code reviewers
-    wc)         allow ;;
-    tail)       allow ;;
-    xxd)        allow ;;
-    find)       allow ;;
-    head)       allow ;;
-    sort)       allow ;;
-    uniq)       allow ;;
-    diff)       allow ;;
-    file)       allow ;;
+    wc|tail|xxd|find|head|sort|uniq|diff|file)
+                    hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
     mkdir)
-        if echo "$cmd" | grep -qE '^mkdir -p /tmp/claude-'; then
-            allow
+        if [[ "$cmd" == "mkdir -p /tmp/claude-"* ]]; then
+            hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)"
         fi
         ;;
-    ls)         allow ;;
+    ls)             hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)" ;;
     cat)
-        if echo "$cmd" | grep -qF '/tmp/claude-'; then
-            allow
+        if [[ "$cmd" == *"/tmp/claude-"* ]]; then
+            hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)"
         fi
         ;;
     rm)
-        if echo "$cmd" | grep -qE '^rm (-f |-rf )?/tmp/claude-'; then
-            allow
+        if [[ "$cmd" == "rm /tmp/claude-"* || "$cmd" == "rm -f /tmp/claude-"* || "$cmd" == "rm -rf /tmp/claude-"* ]]; then
+            hook_allow "Allowed by allow-permissions hook (mirrors settings.json permissions.allow)"
         fi
         ;;
 esac

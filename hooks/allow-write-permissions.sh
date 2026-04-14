@@ -10,24 +10,17 @@
 # If not, exits silently (falls through to subsequent hooks like temp-path-guard.sh).
 
 set -euo pipefail
+source "$(dirname "$0")/_lib.sh"
+hook_read_input
 
-input=$(cat)
-file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
-
-if [ -z "$file_path" ]; then
+file_path=$(hook_field '.tool_input.file_path')
+if [[ -z "$file_path" ]]; then
     exit 0
 fi
 
 # Allow session-scoped temp directory (mirrors Write(//tmp/claude-**) and Edit(//tmp/claude-**))
-if echo "$file_path" | grep -qE '^/tmp/claude-'; then
-    jq -n '{
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "Allowed by allow-write-permissions hook (mirrors settings.json permissions.allow)"
-        }
-    }'
-    exit 0
+if [[ "$file_path" == "/tmp/claude-"* ]]; then
+    hook_allow "Allowed by allow-write-permissions hook (mirrors settings.json permissions.allow)"
 fi
 
 # No match — fall through silently to subsequent hooks
