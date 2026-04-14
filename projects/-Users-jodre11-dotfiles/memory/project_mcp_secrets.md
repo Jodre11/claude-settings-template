@@ -1,18 +1,18 @@
 ---
-name: MCP secrets managed via envchain
-description: Datadog MCP keys stored in macOS Keychain via envchain, injected at runtime by wrapper script
+name: MCP secrets via dotenv file
+description: Datadog MCP keys stored in ~/.config/datadog/env (chmod 600), sourced at runtime by wrapper script
 type: project
+originSessionId: 896abf0f-d3d9-4630-87c0-06c64819a9ee
 ---
-
 MCP server configuration is tracked in `~/dotfiles/mcp/.mcp.json` (Stow-symlinked to `~/.mcp.json`).
-Datadog API keys are NOT stored on disk — they live in the macOS Keychain under the `datadog`
-envchain namespace and are injected at runtime by `~/dotfiles/scripts/datadog-mcp.sh`.
+Datadog API keys are stored in `~/.config/datadog/env` (chmod 600, not tracked in git) and sourced
+at runtime by `~/dotfiles/scripts/datadog-mcp.sh`.
 
-**Why:** Plain-text API keys in `~/.mcp.json` were a security risk, especially with the file now
-tracked in git.
+**Why:** envchain was removed — environment variables from the keychain didn't reliably pass
+through tmux sessions, making MCP server startup inconsistent. A plain dotenv file with strict
+permissions is simpler and works predictably regardless of session context.
 
 **How to apply:**
-- To update Datadog keys: `envchain --set datadog DATADOG_API_KEY DATADOG_APP_KEY`
+- To update Datadog keys: edit `~/.config/datadog/env` (sets `DD_API_KEY` and `DD_APP_KEY`)
 - Keys are also backed up in a Bitwarden vault secure note ("Datadog MCP Keys")
-- The wrapper script sets `DATADOG_SITE=datadoghq.eu` and `exec`s the MCP server
-- envchain uses the macOS login keychain — no interactive prompt needed at runtime
+- The wrapper script exports as `DATADOG_API_KEY`/`DATADOG_APP_KEY`, sets `DATADOG_SITE=datadoghq.eu`, and `exec`s the MCP server

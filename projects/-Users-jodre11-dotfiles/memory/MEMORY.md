@@ -1,5 +1,5 @@
 - [AWS SSO device flow redirect failure](project_aws_sso_cold_start.md) — first-of-day auth loses OAuth callback when browser SSO session is cold; the one remaining auth problem
-- [MCP secrets via envchain](project_mcp_secrets.md) — Datadog keys in macOS Keychain, injected at runtime by wrapper script
+- [MCP secrets via dotenv file](project_mcp_secrets.md) — Datadog keys in ~/.config/datadog/env, sourced at runtime by wrapper script
 - [Granted removed](project_granted_removed.md) — fully uninstalled due to auth loops with Claude Code Bedrock
 - [Shift+Enter needs tmux extkeys](feedback_shift_enter_tmux.md) — tmux strips CSI u sequences without extkeys in terminal-features
 - [Middle-click cross-clipboard paste](project_middle_click_paste.md) — tmux-yank script writes to pasteboard + Ghostty primary selection via OSC 52; not yet committed
@@ -10,3 +10,5 @@
 - [Check memory before invoking skills](feedback_check_memory_first.md) — scan MEMORY.md for context before launching skill workflows
 - [Graph MCP server](project_graph_mcp_server.md) — planned MCP server for Microsoft Graph via delegated permissions; blocked on Haven app registration approval
 - [CLI for Microsoft 365](reference_cli_microsoft365.md) — PnP community CLI wrapping Graph APIs; candidate foundation for graph-mcp
+- [Dictation STT model](project_dictation_stt_model.md) — whisper-cpp large-v3-turbo-q8_0 + Silero VAD; periodic review for improvements
+- [Firefox overhardened](project_firefox_hardening.md) — blocks localhost OAuth, claude.ai, general dev friction; arkenfox Stow package planned
