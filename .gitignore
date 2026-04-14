@@ -21,6 +21,9 @@ cache/
 # Plugin runtime data (not authored config)
 plugins/
 
+# MCP auth state
+mcp-needs-auth-cache.json
+
 # Telemetry and stats
 statsig/
 stats-cache.json
