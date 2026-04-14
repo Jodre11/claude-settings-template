@@ -15,27 +15,28 @@ hook_field() {
     jq -r "$1 // empty" <<< "$HOOK_INPUT"
 }
 
+# JSON-escape a string: escape backslashes, double quotes, and newlines.
+_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "$s"
+}
+
 # Emit a PreToolUse "allow" decision and exit.
 hook_allow() {
-    jq -n --arg r "${1:-Allowed by hook}" '{
-        hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "allow",
-            permissionDecisionReason: $r
-        }
-    }'
+    local r
+    r=$(_json_escape "${1:-Allowed by hook}")
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"%s"}}' "$r"
     exit 0
 }
 
 # Emit a PreToolUse "deny" decision and exit.
 hook_deny() {
-    jq -n --arg r "$1" '{
-        hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: $r
-        }
-    }'
+    local r
+    r=$(_json_escape "$1")
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$r"
     exit 0
 }
 
