@@ -11,4 +11,4 @@
 - [Graph MCP server](project_graph_mcp_server.md) — planned MCP server for Microsoft Graph via delegated permissions; blocked on Haven app registration approval
 - [CLI for Microsoft 365](reference_cli_microsoft365.md) — PnP community CLI wrapping Graph APIs; candidate foundation for graph-mcp
 - [Dictation STT model](project_dictation_stt_model.md) — whisper-cpp large-v3-turbo-q8_0 + Silero VAD; periodic review for improvements
-- [Firefox overhardened](project_firefox_hardening.md) — blocks localhost OAuth, claude.ai, general dev friction; arkenfox Stow package planned
+- [Firefox hardening](project_firefox_hardening.md) — arkenfox Stow package implemented, pinned to 140.1; IPv4 proxy workaround removable

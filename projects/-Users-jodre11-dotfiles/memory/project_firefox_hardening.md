@@ -1,16 +1,22 @@
 ---
-name: Firefox overhardened — blocking dev workflows
-description: Firefox privacy hardening breaks localhost OAuth callbacks (IPv6), claude.ai, and other dev tools; investigating arkenfox/user.js as Stow package
+name: Firefox hardening — implemented via arkenfox Stow package
+description: Firefox privacy hardening replaced manual about:config with arkenfox user.js Stow package; pinned to 140.1; IPv4 proxy workaround can be removed
 type: project
-originSessionId: 0a788949-b781-4658-8b2b-18b739b34092
+originSessionId: 02e78271-d720-451d-9351-145e646f440e
 ---
-Firefox is overhardened, causing breakage across multiple dev workflows.
+Firefox hardening is implemented on `feat/firefox-hardening` as a Stow package in
+`~/dotfiles/firefox/` using arkenfox/user.js (pinned to release tag `140.1`).
 
-**Confirmed issues:**
-- Claude Code personal OAuth: callback server binds IPv6-only (`[::1]`), Firefox can't connect (likely `network.dns.disableIPv6 = true`)
-- claude.ai doesn't work in Firefox — must use Chrome
-- General auth/redirect friction across various sites
+**What it fixed:**
+- Localhost OAuth (IPv6 re-enabled by clearing `network.dns.disableIPv6`)
+- claude.ai (FPP replaces RFP via `prefsCleaner.sh` clearing `privacy.resistFingerprinting`)
+- OAuth redirects (cross-origin referrers restored)
+- WebRTC (re-enabled for video conferencing)
 
-**Why:** User over-applied privacy hardening settings. The goal is hardened-but-usable, not hardened-to-the-point-of-broken.
+**Why:** User had over-applied manual `about:config` privacy settings. Arkenfox provides
+a maintained, versioned baseline with `user-overrides.js` for dev-friendly customisation.
 
-**How to apply:** A Firefox Stow package in `~/dotfiles/firefox/` based on arkenfox/user.js with dev-friendly `user-overrides.js` is the planned approach. Once fixed, the `claude-personal` IPv4 proxy workaround can be removed. Prompt for the investigation saved at `/tmp/claude-firefox-prompt/firefox-hardening-prompt.md`.
+**How to apply:**
+- The `claude-personal` IPv4 proxy workaround can now be removed
+- To update arkenfox: bump `ARKENFOX_VERSION` in `setup.sh`, close Firefox, re-run `setup.sh`
+- Cookie exceptions are batched into a single sqlite3 session; add new origins to `cookie-exceptions.sh`
