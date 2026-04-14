@@ -39,13 +39,19 @@ hook_deny() {
     exit 0
 }
 
-# Returns 0 if the argument contains a /tmp/claude-{session}/ path.
-is_session_temp_path() {
+# Returns 0 if the path starts with /tmp/claude- (for file_path arguments).
+is_session_temp_file() {
+    [[ "$1" == /tmp/claude-* ]]
+}
+
+# Returns 0 if the string contains /tmp/claude- anywhere (for command strings).
+cmd_mentions_session_temp() {
     [[ "$1" == *"/tmp/claude-"* ]]
 }
 
-# Returns 0 if the argument contains a forbidden temp root:
-# bare /tmp/, /var/folders/, or $TMPDIR.
-has_forbidden_temp_path() {
+# Returns 0 if the string contains any temp-like directory reference:
+# bare /tmp/, /var/folders/, or $TMPDIR. Includes session-scoped paths —
+# callers must carve out the exception via is_session_temp_file/cmd_mentions_session_temp.
+mentions_temp_path() {
     [[ "$1" == */tmp/* || "$1" == *'$TMPDIR'* || "$1" == */var/folders/* ]]
 }

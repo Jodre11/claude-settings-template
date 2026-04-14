@@ -24,9 +24,9 @@ fi
 # ── Temp directory enforcement ──
 # Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use /tmp/claude-{session_name}/).
 # $TMPDIR and /var/folders/ are always blocked (macOS expands $TMPDIR to /var/folders/).
-if has_forbidden_temp_path "$cmd"; then
+if mentions_temp_path "$cmd"; then
     # Always allow if command targets session-scoped temp
-    if is_session_temp_path "$cmd"; then
+    if cmd_mentions_session_temp "$cmd"; then
         exit 0
     fi
     # Always block $TMPDIR and /var/folders/ (no read exception)

@@ -12,7 +12,7 @@ if [[ -z "$file_path" ]]; then
 fi
 
 # Allow session-scoped temp directory
-if is_session_temp_path "$file_path"; then
+if is_session_temp_file "$file_path"; then
     exit 0
 fi
 
