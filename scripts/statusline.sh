@@ -80,16 +80,19 @@ fi
 left_part=$(printf '\033[32m[%s]\033[0m \033[36m%s\033[0m' "$model_type" "$cwd_short")
 left_plain="[$model_type] $cwd_short"
 
-# Single git call: get branch name (implies repo exists)
+# Single git call for the common case; fallback for detached HEAD (rebase/bisect)
 if branch=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null); then
     left_part="$left_part $(printf '\033[33m(%s)\033[0m' "$branch")"
     left_plain="$left_plain ($branch)"
+elif git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+    left_part="$left_part $(printf '\033[33m(%s)\033[0m' 'detached')"
+    left_plain="$left_plain (detached)"
 fi
 
 # ── Assemble with padding ──
 left_len=${#left_plain}
 right_len=${#ctx_pct_plain}
-padding=$((term_width - left_len - right_len - 6))
+padding=$((term_width - left_len - right_len - 6))  # -6: ANSI escape byte overhead (left_part vs left_plain)
 [[ $padding -lt 1 ]] && padding=1
 
 printf '%b%*s%b' "$left_part" "$padding" "" "$ctx_pct"
