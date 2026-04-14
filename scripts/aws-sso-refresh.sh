@@ -9,46 +9,18 @@
 # Remote: uses --no-browser, strips box art, emits clean OSC 8 hyperlinks.
 set -euo pipefail
 
-PROFILE="claude-code"
-SSO_START_URL="https://havenholidays.awsapps.com/start"
-CACHE_DIR="$HOME/.aws/sso/cache"
+source "$(dirname "$0")/_aws-sso-common.sh"
+
 SKIP_IF_NEWER_THAN=120  # seconds
 POLL_TIMEOUT=30          # seconds
 
-# Guard: remove stale credentials file if it reappears
-CREDS_FILE="$HOME/.aws/credentials"
-if [[ -f "$CREDS_FILE" ]]; then
-    cp "$CREDS_FILE" "${CREDS_FILE}.bak"
-    rm "$CREDS_FILE"
-fi
+remove_stale_credentials
 
 # Skip if SSO token was written recently (avoids re-trigger during propagation)
-newest_age=$(python3 -c "
-import json, glob, os, sys, time
-
-cache_dir = os.path.expanduser('$CACHE_DIR')
-start_url = '$SSO_START_URL'
-newest = None
-
-for path in glob.glob(os.path.join(cache_dir, '*.json')):
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        continue
-    if data.get('startUrl') != start_url:
-        continue
-    if 'accessToken' not in data:
-        continue
-    mtime = os.path.getmtime(path)
-    if newest is None or mtime > newest:
-        newest = mtime
-
-if newest is not None:
-    print(int(time.time() - newest))
-else:
-    print(999999)
-" 2>/dev/null || echo "999999")
+newest_age=$(python3 "$SSO_CACHE_CHECK" \
+    --cache-dir "$CACHE_DIR" \
+    --start-url "$SSO_START_URL" \
+    --mode age 2>/dev/null || echo "999999")
 
 if [[ "$newest_age" -lt "$SKIP_IF_NEWER_THAN" ]]; then
     echo "SSO token refreshed ${newest_age}s ago, skipping re-login"
