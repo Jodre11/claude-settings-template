@@ -75,7 +75,9 @@ be compiled and installed on a new machine:
 - I am an experienced expert software engineer
 
 ## Behavior
-- Don't guess. If unsure, search using MCPs or ask the user
+- Don't guess. If unsure, search using MCPs, the `web-search` skill (`ddgr`), or ask the user
+- When you need URLs, documentation, or current information: use the `web-search` skill rather
+  than guessing or declining. It uses `ddgr` (DuckDuckGo CLI) — no API key, no tracking.
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 

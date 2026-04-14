@@ -1,2 +1,3 @@
 - [Bedrock subagent model bug](project_bedrock_subagent_bug.md) — workaround applied 2026-04-01; monitor upstream issues for fix, then restore model overrides
 - [Subagent plan-mode stall](project_subagent_plan_mode.md) — subagents inherit plan mode and hang on Write/Edit; fixed 2026-04-01 via `mode: "auto"` directive
+- [Web search tool](reference_web_search.md) — ddgr (DuckDuckGo CLI) available for web searches; use web-search skill
