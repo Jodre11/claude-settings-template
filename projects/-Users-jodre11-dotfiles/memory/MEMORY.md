@@ -12,3 +12,5 @@
 - [CLI for Microsoft 365](reference_cli_microsoft365.md) — PnP community CLI wrapping Graph APIs; candidate foundation for graph-mcp
 - [Dictation STT model](project_dictation_stt_model.md) — whisper-cpp large-v3-turbo-q8_0 + Silero VAD; periodic review for improvements
 - [Firefox hardening](project_firefox_hardening.md) — arkenfox Stow package implemented, pinned to 140.1; IPv4 proxy workaround removable
+- [Claude Code optimisation](project_claude_code_optimisation.md) — CLI tools, LSPs, env vars added; capability vars not yet verified working
+- [Claude Code features to explore](project_claude_code_features_to_explore.md) — /effort, /loop, hooks, settings identified but not actioned
