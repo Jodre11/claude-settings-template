@@ -88,9 +88,7 @@
       "Read(~/.strongbox_keyring)",
       "Edit(~/.strongbox_keyring)",
       "Write(~/.strongbox_keyring)",
-      "Bash(cat ~/.strongbox_keyring*)",
-      "Bash(cat $HOME/.strongbox_keyring*)",
-      "Bash(cat /Users/*/strongbox_keyring*)"
+      "Bash(*strongbox_keyring*)"
     ]
   },
   "model": "opus",
