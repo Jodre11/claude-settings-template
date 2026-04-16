@@ -62,6 +62,7 @@
 
 ## References
 - [IT service desk ticket #403868](reference_it_service_desk_ticket.md) — PayrollJML deployment, release info, awaiting IT response
+- [Enterprise Integrations board](reference_enterprise_integrations_board.md) — project #135, deep-link URL format for issues
 
 ## Active Initiatives
 - [Avalonia E2E Testing](project_avalonia_e2e_testing.md) — PR #17 merged 2026-04-10, 87 headless + 3 Appium tests
@@ -81,3 +82,4 @@
 - [SSH signing via Bitwarden](feedback_ssh_signing.md) — ssh-add -l won't show the signing key; just commit, it works
 - [Install FOSS tools](feedback_install_foss_tools.md) — use brew install rather than workarounds; remind to regenerate Brewfile
 - [TransId static is intentional](feedback_transid_static.md) — _transId is deliberately static; real bugs are double-increment and redundant LoadReferenceData
+- [Issue content inline](feedback_issue_content_inline.md) — put full spec content on the issue body, don't link to a repo file

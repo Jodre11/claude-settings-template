@@ -14,3 +14,9 @@
 - [Firefox hardening](project_firefox_hardening.md) — arkenfox Stow package implemented, pinned to 140.1; IPv4 proxy workaround removable
 - [Claude Code optimisation](project_claude_code_optimisation.md) — CLI tools, LSPs, env vars added; capability vars not yet verified working
 - [Claude Code features to explore](project_claude_code_features_to_explore.md) — /effort, /loop, hooks, settings identified but not actioned
+- [NVIDIA dev box plans](project_nvidia_dev_box.md) — considering local GPU for ML inference + gaming; cloud rental preferred for heavy AI jobs; prices severely inflated Apr 2026
+- [Vast.ai preemption frustration](feedback_vast_ai_preemption.md) — got repeatedly outbid/bumped on good-value servers; avoid for interactive workloads
+- [GPU cloud rental providers](reference_gpu_cloud_rental.md) — pricing comparison Apr 2026; RunPod preferred for ad-hoc AI jobs; avoid Vast.ai and hyperscalers
+- [haddrell.co.uk DMARC rollout](project_haddrell_dmarc_rollout.md) — SPF-only alignment; cap at p=quarantine; never reach p=reject without DKIM
+- [haddrell.co.uk DKIM unavailable](project_haddrell_dkim_unavailable.md) — M365 Family SKU does not offer customer DKIM; re-check Apr 2027
+- [haddrell.co.uk consolidation deferred](project_haddrell_consolidation.md) — don't merge registrar/DNS/email now; wait for M365 Family custom-domain deprecation as forcing event

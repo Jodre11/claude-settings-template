@@ -4,24 +4,23 @@ description: Decisions, sandbox setup state, API findings, AD provisioning flow,
 type: project
 originSessionId: f308e453-e6f2-46fa-be39-0871d7185713
 ---
-## Problem Statement
+## Core Problem (the whole point of this work)
 
-Haven's AD account provisioning currently suffers from two issues:
+The Entra provisioning app (Workday-to-AD) **cannot read Workday calculated fields or integration system attributes** — this is a [known Microsoft limitation](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/hr-attribute-retrieval-issues#issue-fetching-workday-calculated-fields). This means Entra cannot evaluate derived logic (e.g. "is hire date within N days?") to decide *when* to provision. The result is premature provisioning — all workers get AD accounts immediately, weeks or months before their start date.
 
-1. **Premature provisioning** — the Entra provisioning app (Workday-to-AD) picks up all workers and provisions them immediately, which can be weeks or months before their actual start date. Users get system access far too early.
-2. **Entra app limitation** — the Entra provisioning app cannot read Workday calculated fields or integration system attributes ([known Microsoft limitation](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/hr-attribute-retrieval-issues#issue-fetching-workday-calculated-fields)). Any derived/calculated values needed for provisioning decisions must be surfaced via a workaround.
+## Solution: Lambda + Provisioning Groups as Data Bridge
 
-## Solution: Lambda as Data Preparation + Time-Gate
+A scheduled Lambda reads workers from Workday, evaluates hire date proximity, and writes a provisioning group assignment via SOAP when the worker is within the provisioning window (default: hire date minus 1 day).
 
-A scheduled Lambda reads workers from Workday, evaluates hire date proximity, and writes a flag to each worker's profile via SOAP — but only when the worker is within the provisioning window (default: hire date minus 1 day). This flag is stored in a field the Entra provisioning app *can* read (provisioning group assignment or custom ID), bridging the data gap.
+**Provisioning groups have no intrinsic business meaning here.** They are purely a data bridge — one of the few writable fields that Entra *can* read. The actual time-gate logic lives entirely in the Lambda; the provisioning group is just the delivery mechanism to surface the Lambda's decision to Entra.
 
-The Entra provisioning app then picks up the flag during its own sync cycle and uses it in attribute mappings and scoping filters to provision the AD account at the right time.
+The Entra provisioning app then picks up the group assignment during its own sync cycle and uses it in scoping filters to provision the AD account at the right time.
 
 **Two documented workaround mechanisms:**
-- **Provisioning groups** — tested and confirmed working.
+- **Provisioning groups** — tested and confirmed working. Current frontrunner.
 - **Custom IDs** — alternative option, not yet tested. Either serves the same purpose.
 
-Decision on which mechanism to use is still open. Provisioning groups are the current frontrunner.
+Decision on which mechanism to use is still open.
 
 ## How AD Provisioning Currently Works
 
@@ -47,6 +46,14 @@ Provisioning groups do not exist yet in either sandbox or production. They need 
 **Pending confirmation (as of 2026-04-08):** Exact field name and whether it has a default value. Awaiting feedback from previous implementers.
 
 **Working assumption:** Default value is "No Access". Lambda switches it to "Network Access" on hire date minus 1 day. Additional provisioning group values may be needed later for maternity, leavers, and other scenarios — rules TBD.
+
+## Repo Situation
+
+All spike/PoC work so far has been done in `workday-iac` — a repo originally created for a different purpose (Workday Integration-as-Code). Christian hijacked it because it had useful SOAP client code. **This repo is not the long-term home.** The work needs to move into a new standalone repo for the account provisioning Lambda.
+
+**Why:** `workday-iac` was for general Workday integration system management; the account provisioning Lambda is a distinct product with its own deployment lifecycle.
+
+**How to apply:** When moving to implementation, create a new repo. The PoC code in `workday-iac` is reference material, not a starting point to build on in-place.
 
 ## Architectural Decisions
 
