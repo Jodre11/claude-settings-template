@@ -1,0 +1,66 @@
+title = "claude-settings-template gitleaks config"
+
+# Org-specific rules (supplement the built-in rules)
+
+[[rules]]
+id = "org-aws-account-id"
+description = "Organisation AWS account ID"
+regex = '''(123456789012|123456789012|123456789012|123456789012|123456789012|123456789012)'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-sso-url"
+description = "Organisation SSO start URL"
+regex = '''yourorg\.awsapps\.com'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-ecr-registry"
+description = "AWS ECR registry URL"
+regex = '''\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-bedrock-arn-fragment"
+description = "Bedrock inference profile ARN fragment"
+regex = '''(your-profile-id|your-profile-id|your-profile-id)'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-ad-path"
+description = "Active Directory path"
+regex = '''DC=your-domain'''
+tags = ["corporate"]
+
+[[rules]]
+id = "org-name"
+description = "Organisation references"
+regex = '''(?i)(YourOrgEngineering|yourorg|your-company\.com|your-stage\.com|your-dev-server|your-prod-server|yourorgltd)'''
+tags = ["corporate"]
+
+[[rules]]
+id = "org-internal-project"
+description = "Internal project names"
+regex = '''(?i)(internal-project-1|internal-project-2|internal-project-3|internal-project-4|YOUR_NUGET_PAT|internal-project-5)'''
+tags = ["corporate"]
+
+[[rules]]
+id = "personal-identity"
+description = "Personal identity markers"
+regex = '''(YourGitHubUser|your\.name|@your-company\.com|@your-email\.co\.uk|Users/yourusername/)'''
+tags = ["personal"]
+
+[[rules]]
+id = "ssh-private-key"
+description = "SSH private key"
+regex = '''-----BEGIN.*PRIVATE KEY-----'''
+tags = ["secret"]
+
+# Global allowlist — files that necessarily contain the patterns being detected
+[allowlist]
+paths = [
+    '''.githooks/pre-commit''',
+    '''.gitleaks.toml''',
+    '''README.md''',
+    '''config.env.example''',
+]
