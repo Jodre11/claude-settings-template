@@ -1,0 +1,122 @@
+#!/bin/bash
+# md2clip - Convert Markdown to Teams-compatible HTML and copy to macOS clipboard.
+# Usage: md2clip <file.md>
+#        echo "**bold**" | md2clip
+#
+# Requires: pandoc (brew install pandoc)
+# Source:   ~/.claude/tools/md2clip (version-controlled)
+# Symlink:  ~/.local/bin/md2clip
+
+set -euo pipefail
+
+debug=false
+if [ "${1:-}" = "--debug" ]; then
+    debug=true
+    shift
+fi
+
+# --- Input -------------------------------------------------------------------
+
+tmp_file="$(mktemp /tmp/md2clip-XXXXXX.md)"
+trap 'rm -f "$tmp_file"' EXIT
+
+if [ $# -ge 1 ] && [ -f "$1" ]; then
+    cp "$1" "$tmp_file"
+else
+    cat > "$tmp_file"
+fi
+
+md_file="$tmp_file"
+
+# --- Sanitise Markdown --------------------------------------------------------
+
+# Replace em dashes (U+2014) with hyphens
+sed -i '' $'s/\xe2\x80\x94/-/g' "$md_file"
+
+# Replace smart quotes: U+2018, U+2019 -> ', U+201C, U+201D -> "
+sed -i '' $'s/\xe2\x80\x98/\'/g' "$md_file"
+sed -i '' $'s/\xe2\x80\x99/\'/g' "$md_file"
+sed -i '' $'s/\xe2\x80\x9c/"/g' "$md_file"
+sed -i '' $'s/\xe2\x80\x9d/"/g' "$md_file"
+
+# --- Convert to HTML ----------------------------------------------------------
+
+html=$(pandoc "$md_file" -f markdown -t html --ascii)
+
+# --- Post-process HTML for Teams ----------------------------------------------
+
+# 1. Replace non-breaking spaces pandoc inserts after abbreviations
+html=$(echo "$html" | sed 's/&#xA0;/ /g')
+
+# 2. Replace smart curly quotes
+html=$(echo "$html" | sed "s/&#x2019;/'/g")
+
+# 3. Join lines within <p> blocks (pandoc wraps long lines; Teams renders them
+#    as line breaks, splitting sentences mid-flow)
+html=$(echo "$html" | awk '
+    /<p>/ { in_p=1 }
+    in_p && /<\/p>/ {
+        in_p=0
+        buf = buf " " $0
+        gsub(/  +/, " ", buf)
+        print buf
+        buf=""
+        next
+    }
+    in_p {
+        if (buf == "") { buf = $0 } else { buf = buf " " $0 }
+        next
+    }
+    { print }
+')
+
+# 4. Strip <p> and </p> tags, then trim leading/trailing whitespace per line
+html=$(echo "$html" | sed 's/<p>//g; s/<\/p>//g; s/^[[:space:]]*//; s/[[:space:]]*$//')
+
+# 5. Insert blank line between content paragraphs for spacing
+html=$(echo "$html" | awk '
+    NR==1 { print; prev=$0; next }
+    {
+        # Insert blank line between content lines, but not before/after block elements
+        if (prev != "" && $0 != "" &&
+            prev !~ /^<(ul|ol|\/ul|\/ol|table|\/table|thead|\/thead|tbody|\/tbody|tr|\/tr|th|\/th|td|\/td|li|\/li)/ &&
+            $0 !~ /^<(ul|ol|\/ul|\/ol|table|\/table|thead|\/thead|tbody|\/tbody|tr|\/tr|th|\/th|td|\/td|li|\/li)/)
+            print ""
+        print
+        prev=$0
+    }
+')
+
+# 6. Replace pandoc code block wrappers with plain <code>
+html=$(echo "$html" | sed '
+    s/<div class="sourceCode"[^>]*>//g
+    s/<\/div>//g
+    s/<pre[^>]*><code[^>]*>/<code>/g
+    s/<\/code><\/pre>/<\/code>/g
+')
+
+# 7. Remove <br> immediately before <ul>/<ol> and after </ul>/<ol>
+html=$(echo "$html" | sed '
+    s/<br>[[:space:]]*<ul>/<ul>/g
+    s/<br>[[:space:]]*<ol>/<ol>/g
+    s/<\/ul>[[:space:]]*<br>/<\/ul>/g
+    s/<\/ol>[[:space:]]*<br>/<\/ol>/g
+')
+
+# --- Output -------------------------------------------------------------------
+
+if [ "$debug" = true ]; then
+    echo "$html"
+else
+    echo "$html" | osascript -l JavaScript -e '
+ObjC.import("AppKit");
+var input = $.NSFileHandle.fileHandleWithStandardInput;
+var data = input.readDataToEndOfFile;
+var html = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js;
+var pb = $.NSPasteboard.generalPasteboard;
+pb.clearContents;
+pb.setStringForType($(html), $.NSPasteboardTypeHTML);
+""
+'
+    >&2 echo "Rich text copied to clipboard."
+fi
