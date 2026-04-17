@@ -1,0 +1,63 @@
+# Private config (tracked in private repo, not in template)
+config.env
+
+# Generated files (produced by hydrate.sh from .tmpl templates)
+settings.json
+CLAUDE.md
+scripts/_aws-sso-common.sh
+skills/datadog-log-link/SKILL.md
+
+# Per-machine settings (written by scripts/setup-platform.sh)
+settings.local.json
+**/settings.local.json
+
+# Ephemeral session data
+history.jsonl
+sessions/
+session-env/
+shell-snapshots/
+debug/
+paste-cache/
+file-history/
+backups/
+plans/
+todos/
+tasks/
+downloads/
+ide/
+cache/
+
+# Plugin runtime data (not authored config)
+plugins/
+
+# MCP auth state
+mcp-needs-auth-cache.json
+
+# Telemetry and stats
+statsig/
+stats-cache.json
+
+# Per-session security warnings
+security_warnings_state_*.json
+
+# Session transcripts, tool results, and indexes inside projects
+projects/*/*.jsonl
+projects/*/sessions-index.json
+projects/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*/
+
+# Cached images
+image-cache/
+
+# Agent team runtime state
+teams/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
