@@ -1,0 +1,3 @@
+- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project bridging Workday provisioning groups to Entra AD
+- [Cookie cutter reference repos](reference_cookie_cutter_repos.md) — finance-erp-aot template locations for Lambda code and Terraform
+- [Agent tool Bedrock workaround](feedback_agent_dispatch_workaround.md) — use TeamCreate instead of Agent tool on Bedrock

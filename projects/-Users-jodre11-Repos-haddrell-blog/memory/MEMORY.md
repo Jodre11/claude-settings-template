@@ -1,0 +1,1 @@
+- [Trust reference artefacts over reconstruction](feedback_reference_artefacts.md) — use user-provided references as source of truth; trace, don't reverse-engineer

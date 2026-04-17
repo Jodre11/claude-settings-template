@@ -55,13 +55,20 @@ All spike/PoC work so far has been done in `workday-iac` — a repo originally c
 
 **How to apply:** When moving to implementation, create a new repo. The PoC code in `workday-iac` is reference material, not a starting point to build on in-place.
 
-## Architectural Decisions
+## Architectural Decisions (confirmed 2026-04-16)
 
-New standalone repo for Workday integrations — not within service-finance-erp-pipeline. May grow into a suite (AD, enableAccounts, potentially payroll). Exact repo strategy (monorepo vs repo-per-integration) is an open question on the ticket.
-
-**Why:** Separation of concerns; scope is broader than a single integration.
-
-**How to apply:** Plan for multiple Lambda functions. Each integration gets its own Lambda. Tech stack: .NET 10 / C#, AOT container Lambda on arm64, following the Finance Terraform repo pattern.
+- **Monorepo**: `lambda-haven-workday-integrations` (HavenEngineering/platform-github#1035)
+- **Terraform**: `workday-terraform` (HavenEngineering/platform-github#1036)
+- **Product tag**: `workday` — pending org owner adding the custom property value. Message sent to John Hegarty.
+- **Cookie cutter**: `finance-erp-aot-project-code-sync` in `lambda-finance-erp` and `finance-terraform` patterns
+- **Shared library**: `Haven.Workday.Client` — SOAP + REST/OAuth client, shared across Lambdas
+- **Auth**: OAuth for REST/WQL reads, SOAP WS-Security for provisioning writes only
+- **Secrets**: Strongbox in `workday-terraform` → Secrets Manager → Lambda reads at runtime
+- **Environments**: local (Aspire + MCP) / dev / staging / prod. Dev/staging → Workday sandbox, prod → production.
+- **Schedule**: EventBridge cron, configurable per environment. High-water-mark in SSM for incremental polling.
+- **Observability**: OTel sidecar extension → Datadog
+- **Workday has no webhooks** — polling is the only option (confirmed via research 2026-04-16)
+- **Design spec**: `workday-iac/docs/superpowers/specs/2026-04-16-workday-account-provisioning-design.md`
 
 New ISU: `ISU_Account_Provisioning` — do not reuse `ISU_IaC_PoC` (had problems).
 
@@ -102,11 +109,11 @@ Domain Security Policies granted to ISSG (all activated and confirmed working):
 - Worker Data: Employment Information (Get) — for hire dates
 - Person Data: Work Contact Information (Get) — for email addresses
 
-## Next Steps
+## Next Steps (updated 2026-04-16)
 
-1. Create provisioning groups in sandbox (names TBD)
-2. Test `Put_Provisioning_Group_Assignment` once groups exist
-3. Finalise provisioning groups vs custom IDs decision
-4. Resolve open questions on ticket (repo strategy, business logic details, deployment)
-5. Write implementation plan
-6. Implement the Lambda
+1. Get `workday` product custom property added by org owner (John Hegarty)
+2. Get platform-github PRs #1035 and #1036 approved and applied
+3. Create provisioning groups in sandbox (names TBD — "No Access", "Network Access" are working assumptions)
+4. Test `Put_Provisioning_Group_Assignment` once groups exist
+5. Write implementation plan from design spec
+6. Implement the Lambda following the cookie-cutter pattern

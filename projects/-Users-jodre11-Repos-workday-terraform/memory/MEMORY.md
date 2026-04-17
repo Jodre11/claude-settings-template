@@ -1,0 +1,1 @@
+- [Permission explainer workaround](project_permission_explainer_workaround.md) — permissionExplainerEnabled disabled due to agent team crash (#49253); check if fixed
