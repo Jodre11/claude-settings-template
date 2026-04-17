@@ -1,0 +1,146 @@
+{
+  "awsAuthRefresh": "__AWS_SSO_REFRESH_PATH__",
+  "env": {
+    "AWS_PROFILE": "__AWS_PROFILE__"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(playwright-cli *)",
+      "Bash(read-only commands)",
+      "Bash(jb inspectcode *)",
+      "Bash(terraform fmt *)",
+      "Bash(mkdir -p /tmp/claude-*)",
+      "Bash(cat /tmp/claude-*)",
+      "Bash(cat * > /tmp/claude-*)",
+      "Bash(rm /tmp/claude-*)",
+      "Bash(rm -f /tmp/claude-*)",
+      "Bash(rm -rf /tmp/claude-*)",
+      "Write(//tmp/claude-**)",
+      "Edit(//tmp/claude-**)",
+      "Read",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(brew info *)",
+      "Bash(grep *)",
+      "Bash(whisper-cli *)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet add *)",
+      "Bash(dotnet run *)",
+      "Bash(curl *)",
+      "Bash(dotnet list *)",
+      "Bash(dotnet nuget *)",
+      "Bash(dotnet package *)",
+      "Bash(cargo init *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo build *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(jq *)",
+      "Bash(cp *)",
+      "Bash(command claude *)",
+      "Read(~/.claude/commands/**)",
+      "Read(~/.claude/skills/**)",
+      "Read(~/.claude/agents/**)",
+      "Read(~/.claude/plugins/**)",
+      "Bash(chmod *)",
+      "Bash(python3 *)",
+      "Bash(tmux *)",
+      "Bash(aws sso *)",
+      "Bash(aws *)",
+      "Bash(md2clip *)",
+      "Bash(wc *)",
+      "Bash(tail *)",
+      "Bash(xxd *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(diff *)",
+      "Bash(file *)",
+      "Bash(ls *)",
+      "Bash(open *)"
+    ],
+    "deny": []
+  },
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] && [ -z \"$CLAUDE_CODE_USE_BEDROCK\" ] && tmux set status-style bg=colour218,fg=black; true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] && tmux set -u status-style; true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-permissions.sh",
+            "timeout": 5,
+            "statusMessage": "Checking allowed commands..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/bash-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking Bash rules..."
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent-mode-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking agent mode..."
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-write-permissions.sh",
+            "timeout": 5,
+            "statusMessage": "Checking write permissions..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/temp-path-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking temp path..."
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/scripts/statusline.sh"
+  },
+  "language": "English UK",
+  "showThinkingSummaries": true
+}
