@@ -1,0 +1,66 @@
+title = "claude-settings-template gitleaks config"
+
+# Org-specific rules (supplement the built-in rules)
+
+[[rules]]
+id = "haven-aws-account-id"
+description = "Haven AWS account ID"
+regex = '''(815359208046|471112640844|171547406407|317065479423|745662293263|484409793147)'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "haven-sso-url"
+description = "Haven SSO start URL"
+regex = '''havenholidays\.awsapps\.com'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "haven-ecr-registry"
+description = "AWS ECR registry URL"
+regex = '''\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "haven-bedrock-arn-fragment"
+description = "Bedrock inference profile ARN fragment"
+regex = '''(vwdly1cn4lu7|q7hly3nu4kxm|3mw1k7yfwfzy)'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "haven-ad-path"
+description = "Active Directory path"
+regex = '''DC=bourne-leisure'''
+tags = ["corporate"]
+
+[[rules]]
+id = "haven-org-name"
+description = "Haven organisation references"
+regex = '''(?i)(HavenEngineering|havenholidays|haven-leisure\.com|haven-stage\.com|havdevserv|havprodserv|havenleisureltd)'''
+tags = ["corporate"]
+
+[[rules]]
+id = "haven-internal-project"
+description = "Haven internal project names"
+regex = '''(?i)(Seaware|BLAPI|Plotbodge|ERPx|HAVENG_NUGET_PAT|s3search)'''
+tags = ["corporate"]
+
+[[rules]]
+id = "personal-identity"
+description = "Personal identity markers"
+regex = '''(Jodre11|christian\.haddrell|@haven\.com|@haddrell\.co\.uk|/Users/jodre11/)'''
+tags = ["personal"]
+
+[[rules]]
+id = "ssh-private-key"
+description = "SSH private key"
+regex = '''-----BEGIN.*PRIVATE KEY-----'''
+tags = ["secret"]
+
+# Global allowlist — files that necessarily contain the patterns being detected
+[allowlist]
+paths = [
+    '''.githooks/pre-commit''',
+    '''.gitleaks.toml''',
+    '''README.md''',
+    '''config.env.example''',
+]
