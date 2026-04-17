@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Pre-commit hook: blocks commits containing org-specific or personal sensitive patterns.
+# Escape hatch: SKIP_SECRET_SCAN=1 git commit
+set -euo pipefail
+
+if [ "${SKIP_SECRET_SCAN:-0}" = "1" ]; then
+    echo "⚠ SKIP_SECRET_SCAN=1 — bypassing secret scan" >&2
+    exit 0
+fi
+
+# --- Pattern scan (custom org/personal patterns) ---
+
+PATTERNS=(
+    # AWS account IDs
+    '815359208046'
+    '471112640844'
+    '171547406407'
+    '317065479423'
+    '745662293263'
+    '484409793147'
+
+    # SSO / infrastructure
+    'havenholidays\.awsapps\.com'
+    '[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'
+
+    # Bedrock inference profile ARN fragments
+    'vwdly1cn4lu7'
+    'q7hly3nu4kxm'
+    '3mw1k7yfwfzy'
+
+    # SSH private key markers
+    '-----BEGIN.*PRIVATE KEY-----'
+
+    # Active Directory
+    'DC=bourne-leisure'
+
+    # Organisation (case-insensitive handled by grep -i below)
+    'HavenEngineering'
+    'havenholidays'
+    'haven-leisure\.com'
+    'haven-stage\.com'
+    'havdevserv'
+    'havprodserv'
+    'havenleisureltd'
+    'Seaware'
+    'BLAPI'
+    'Plotbodge'
+    'ERPx'
+    'HAVENG_NUGET_PAT'
+    's3search'
+
+    # Personal
+    'Jodre11'
+    '@haven\.com'
+    '@haddrell\.co\.uk'
+    'christian\.haddrell'
+    '/Users/jodre11/'
+)
+
+# Build a combined regex from the pattern array
+COMBINED=""
+for p in "${PATTERNS[@]}"; do
+    if [ -z "$COMBINED" ]; then
+        COMBINED="$p"
+    else
+        COMBINED="$COMBINED|$p"
+    fi
+done
+
+# Scan staged file contents (not filenames) for matches
+STAGED_DIFF=$(git diff --cached --diff-filter=ACMR -U0 -- . ':!.githooks/pre-commit' ':!.gitleaks.toml' ':!README.md' ':!config.env.example' || true)
+
+if [ -n "$STAGED_DIFF" ]; then
+    MATCHES=$(echo "$STAGED_DIFF" | grep -inE "$COMBINED" || true)
+    if [ -n "$MATCHES" ]; then
+        echo "❌ Pre-commit: sensitive pattern detected in staged changes:" >&2
+        echo "" >&2
+        echo "$MATCHES" >&2
+        echo "" >&2
+        echo "If this is a false positive (e.g. documenting the guard patterns themselves):" >&2
+        echo "  SKIP_SECRET_SCAN=1 git commit" >&2
+        exit 1
+    fi
+fi
+
+# --- Gitleaks scan (generic secret detection) ---
+
+if command -v gitleaks &>/dev/null; then
+    if ! gitleaks protect --staged --no-banner --exit-code 1; then
+        echo "" >&2
+        echo "❌ Pre-commit: gitleaks detected secrets in staged changes." >&2
+        echo "Fix the issues above, or use SKIP_SECRET_SCAN=1 git commit to bypass." >&2
+        exit 1
+    fi
+else
+    echo "⚠ gitleaks not found — skipping generic secret scan. Install: brew install gitleaks" >&2
+fi
+
+echo "✔ Pre-commit: no sensitive patterns detected." >&2
