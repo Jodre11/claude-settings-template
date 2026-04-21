@@ -1,15 +1,19 @@
 ---
 name: Bedrock effortLevel 400 bug
-description: effortLevel in settings.json causes Bedrock 400 on Haiku subagents — reproduced and resolved 2026-04-16 by removing the setting (default is already "high")
+description: Claude Code sends output_config.effort to Haiku subagents on Bedrock causing 400; upstream issues #51377, #51059 elevated 2026-04-21
 type: project
 originSessionId: 586e5ced-8c69-4c15-aca5-cb5e8d881872
 ---
-When `effortLevel` is set in `settings.json` (e.g. `"high"`), Claude Code passes `output_config.effort` in API requests. Bedrock's Haiku endpoint rejects this with `400: output_config.effort: Extra inputs are not permitted`. Opus and Sonnet accept it without error.
+Claude Code sends `output_config.effort` unconditionally in API requests. Haiku on Bedrock rejects this with `400: output_config.effort: Extra inputs are not permitted`. Opus and Sonnet accept it.
 
-**Why:** Haiku does not support the `effort` parameter. Bedrock validates strictly and rejects unknown fields.
+**Why:** Haiku does not support the `effort` parameter. Bedrock validates strictly. This hits subagents dispatched with `model: haiku` — the parent Opus session works fine, but effort leaks through to the subagent's API call.
 
-**Status:** Reproduced and resolved 2026-04-16. Removed `effortLevel` from settings.json — the default is already `"high"`, so the setting was pointless. Additionally, the Bedrock model resolution bug (see `project_bedrock_subagent_bug.md`) already prevents Haiku subagents from spawning in practice, so this bug has no real-world impact under current workarounds.
+**Upstream issues (elevated 2026-04-21):**
+- **#51377** — the broadest open bug (effort sent unconditionally, breaks Bedrock). Commented with subagent reproduction path and upvoted.
+- **#51059** — feature request for `modelEffort` block in settings.json (per-model effort config). Upvoted.
+- **#30795** — older closed precedent (v2.1.68, Sonnet 4.5 on GovCloud).
 
 **How to apply:**
-- Do NOT re-add `effortLevel` to settings.json — it's redundant (default is "high") and breaks Haiku on Bedrock
-- If the Bedrock model resolution bug is fixed and Haiku subagents become viable again, this effortLevel bug will resurface — Claude Code should strip `output_config.effort` for Haiku
+- Do NOT add `effortLevel` to settings.json — it's redundant (default is "high") and worsens the problem
+- Avoid `model: haiku` in agent definitions until upstream fix ships; use Sonnet as the cost-optimised alternative
+- Monitor #51377 and #51059 for resolution

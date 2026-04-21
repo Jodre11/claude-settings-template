@@ -3,5 +3,5 @@
 - [Web search tool](reference_web_search.md) — ddgr (DuckDuckGo CLI) available for web searches; use web-search skill
 - [PR review verdict policy](project_pr_review_verdicts.md) — two verdicts only: approve-with-comments or request-changes; never bare comment
 - [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
-- [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — resolved: removed redundant setting; will resurface if Haiku subagents become viable
+- [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — active: effort leaks to Haiku subagents on Bedrock; upstream #51377 and #51059 elevated 2026-04-21
 - [Permission explainer workaround](project_permission_explainer_workaround.md) — resolved 2026-04-21; workaround removed (#49253 fixed in v2.1.114)
