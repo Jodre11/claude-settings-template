@@ -1,1 +1,2 @@
 - [Permission explainer workaround](project_permission_explainer_workaround.md) — permissionExplainerEnabled disabled due to agent team crash (#49253); check if fixed
+- [Strongbox CI setup](project_ci_keys_pending.md) — Strongbox configured; note manual encrypt workaround for future keyring updates

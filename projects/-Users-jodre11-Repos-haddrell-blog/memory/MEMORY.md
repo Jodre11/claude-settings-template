@@ -1,1 +1,5 @@
 - [Trust reference artefacts over reconstruction](feedback_reference_artefacts.md) — use user-provided references as source of truth; trace, don't reverse-engineer
+- [DNS migration to Cloudflare](project_dns_migration.md) — haddrell.co.uk moved from GoDaddy to Cloudflare on 2026-04-17; rollback nameservers preserved
+- [Cloudflare deployment details](reference_cloudflare.md) — worker URL, account, custom domain for haddrell-blog
+- [Site follow-ups deferred from build #001 post](project_site_followups.md) — DNS hygiene, DMARC escalation, future agentic-build post; about-page sparseness is intentional
+- [Default to PR workflow on protected branches](feedback_pr_workflow.md) — treat "push it" as "ship it via PR" when branch protection requires PRs; never silently bypass admin overrides

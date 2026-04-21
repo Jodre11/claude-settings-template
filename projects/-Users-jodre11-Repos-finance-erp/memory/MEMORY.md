@@ -1,0 +1,2 @@
+- [PR 527 review completed](project_pr527_review.md) — REQUEST_CHANGES submitted with 12 inline comments on the data preparation editor PR
+- [Code-review plugin lifecycle fix](project_code_review_plugin_lifecycle.md) — plan approved for fixing team shutdown/cleanup in the code-review plugin

@@ -4,4 +4,4 @@
 - [PR review verdict policy](project_pr_review_verdicts.md) — two verdicts only: approve-with-comments or request-changes; never bare comment
 - [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
 - [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — resolved: removed redundant setting; will resurface if Haiku subagents become viable
-- [Permission explainer workaround](project_permission_explainer_workaround.md) — permissionExplainerEnabled=false in ~/.claude.json; re-enable when #49253 is fixed
+- [Permission explainer workaround](project_permission_explainer_workaround.md) — resolved 2026-04-21; workaround removed (#49253 fixed in v2.1.114)

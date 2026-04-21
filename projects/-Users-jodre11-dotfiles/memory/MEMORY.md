@@ -20,3 +20,4 @@
 - [haddrell.co.uk DMARC rollout](project_haddrell_dmarc_rollout.md) — SPF-only alignment; cap at p=quarantine; never reach p=reject without DKIM
 - [haddrell.co.uk DKIM unavailable](project_haddrell_dkim_unavailable.md) — M365 Family SKU does not offer customer DKIM; re-check Apr 2027
 - [haddrell.co.uk consolidation deferred](project_haddrell_consolidation.md) — don't merge registrar/DNS/email now; wait for M365 Family custom-domain deprecation as forcing event
+- [Self-hosted email triage](project_email_triage_local.md) — n8n + Ollama pipeline for private inbox sorting; own-time project

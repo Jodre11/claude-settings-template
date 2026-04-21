@@ -4,21 +4,10 @@ description: Known Claude Code bug where subagents send normalised model IDs ins
 type: project
 ---
 
-Subagents (Agent tool, agent teams) fail on Bedrock with `400 The provided model identifier is invalid` when their agent definition frontmatter contains `model: sonnet` (or `opus`/`haiku`). Claude Code sends a normalised ID like `claude-sonnet-4-6` instead of resolving to the `ANTHROPIC_DEFAULT_SONNET_MODEL` inference profile ARN. The parent process resolves correctly; subagents do not.
+Subagents on Bedrock failed with `400 The provided model identifier is invalid` when agent definitions contained `model: sonnet`. Issues #25193, #29660, #32987 — all closed (as inactive, not with explicit fix confirmation).
 
-**Why:** Known Claude Code bug — open issues #25193, #29660, #32987. Present from at least v2.1.70 through v2.1.89.
+**Workaround applied 2026-04-01:** Removed `model:` lines from agent definitions so subagents inherited the parent model (Opus).
 
-**Workaround applied (2026-04-01):** Removed all `model:` lines from the 10 agent definitions in `~/.claude/agents/*.md`. Subagents now inherit the parent's model, which is already correctly resolved to the Bedrock ARN.
+**Model overrides restored 2026-04-21 (v2.1.116):** `model: sonnet` restored to 9 reviewer agents, `model: opus` to code-review-team, in `/Users/jodre11/Repos/claude-code-plugins/plugins/code-review/agents/`. Not yet verified with a live test — if subagents fail with 400 errors, revert by removing the `model:` lines again.
 
-**Trade-off:** All subagents run on the parent model (currently Opus). Cost optimisation of running review agents on Sonnet is lost until the upstream bug is fixed.
-
-**How to apply:**
-- Monitor issues #25193, #29660, #32987 for a fix in a future Claude Code release
-- When fixed, restore `model: sonnet` to the review agents (archaeology, code-analysis, consistency, correctness, efficiency, jbinspect, reuse, security, style) and `model: opus` to code-review-team
-- Do NOT hard-code Bedrock ARNs in `settings.json` — this would break the planned Bedrock/first-party API switching setup
-
-**Verification (next session):** Trigger a subagent (any Agent tool call or code review) and confirm it completes instead of dying instantly.
-
-**Related but separate:** Plan mode inheritance is a *different* subagent bug (see `project_subagent_plan_mode.md`). The Bedrock model bug fails at the API layer on the first call; the plan-mode bug causes hangs when subagents need Write/Edit tools. Both were fixed on 2026-04-01.
-
-**Debug logs:** `~/.claude/debug/` contains session logs (note: may have stopped writing after v2.1.70 upgrade). The Statsig failed logs at `~/.claude/statsig/statsig.failed_logs.*` also capture API errors.
+**How to apply:** On next code review run, confirm subagents complete successfully on Sonnet. If they fail, revert and reopen an issue.
