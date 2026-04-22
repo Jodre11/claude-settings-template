@@ -74,6 +74,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/session-init.sh",
+            "timeout": 5,
+            "statusMessage": "Initialising session..."
+          },
+          {
+            "type": "command",
             "command": "[ -n \"$TMUX\" ] && [ -z \"$CLAUDE_CODE_USE_BEDROCK\" ] && tmux set status-style bg=colour218,fg=black; true"
           }
         ]

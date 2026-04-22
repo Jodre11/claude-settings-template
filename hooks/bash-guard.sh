@@ -22,7 +22,7 @@ if [[ "$cmd" =~ ^git[[:space:]].*commit[[:space:]] ]]; then
 fi
 
 # ── Temp directory enforcement ──
-# Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use /tmp/claude-{session_name}/).
+# Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use $CLAUDE_TEMP_DIR).
 # $TMPDIR and /var/folders/ are always blocked (macOS expands $TMPDIR to /var/folders/).
 if mentions_temp_path "$cmd"; then
     # Always allow if command targets session-scoped temp
@@ -31,14 +31,14 @@ if mentions_temp_path "$cmd"; then
     fi
     # Always block $TMPDIR and /var/folders/ (no read exception)
     if [[ "$cmd" == *'$TMPDIR'* || "$cmd" == */var/folders/* ]]; then
-        hook_deny "TEMP DIRECTORY VIOLATION: Use /tmp/claude-{session_name}/ instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
+        hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
     fi
     # Allow read-only commands against bare /tmp/
     if [[ "$cmd" =~ ^(cat|ls|head|tail|wc|file|stat|diff|less|more|grep|rg|find|readlink)[[:space:]] ]]; then
         exit 0
     fi
     # Block everything else targeting bare /tmp/
-    hook_deny "TEMP DIRECTORY VIOLATION: Use /tmp/claude-{session_name}/ for writing to temp. See CLAUDE.md 'Temporary Files' section."
+    hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR for writing to temp. See CLAUDE.md 'Temporary Files' section."
 fi
 
 # Strip quoted strings and comments in one sed call (3 forks → 1)
