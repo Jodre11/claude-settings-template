@@ -64,4 +64,9 @@ paths = [
     '''README.md''',
     '''config.env.example''',
     '''projects/.*/memory/.*''',
+    '''settings\.json''',
+    '''settings\.local\.json''',
+    '''CLAUDE\.md''',
+    '''scripts/.*''',
+    '''teams/.*''',
 ]
