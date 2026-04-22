@@ -18,7 +18,7 @@ mkdir -p "$temp_dir"
 # Rename the tmux session to the first 8 chars of the UUID for readability.
 # Falls back silently if not running inside tmux.
 if [[ -n "${TMUX:-}" ]]; then
-    tmux rename-session -- "${session_id:0:8}" 2>/dev/null || true
+    tmux rename-session -- "claude-${session_id:0:8}" 2>/dev/null || true
 fi
 
 # Inject the temp path and session ID into conversation context.
