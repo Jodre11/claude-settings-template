@@ -28,6 +28,13 @@ be compiled and installed on a new machine:
 - `md2clip` — converts Markdown to Teams-compatible HTML and copies to macOS clipboard (used by
   `md-to-clipboard` skill). Install: `ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`
   (macOS only)
+- `aws-secret-field` — updates a single field in a JSON secret in AWS Secrets Manager. Optionally
+  writes the value to a local file (e.g. a Strongbox-encrypted `.secret` file). Requires
+  `--secret-id` or `AWS_SECRET_ID`; uses `--profile` or `AWS_PROFILE`. When providing the command
+  to the user, use `PASTE_VALUE_HERE` as the value placeholder — the user pastes the real value
+  in a separate terminal to keep secrets out of the conversation.
+  Install: `ln -sf ~/.claude/tools/aws-secret-field ~/.local/bin/aws-secret-field`
+  Usage: `aws-secret-field <field_name> "PASTE_VALUE_HERE" --secret-id <id> [--profile <p>] [--file <path>]`
 
 ## Related Repositories
 
@@ -82,16 +89,15 @@ be compiled and installed on a new machine:
 - Suggest keeping .md files up to date
 
 ## Temporary Files
-- Use `/tmp/claude-{session_name}/` for all temporary files (tool output, diffs, commit drafts, etc.)
-- The session name is a three-word slug (e.g. `modular-napping-aho`) visible in system context such
-  as plan file paths. It is NOT an environment variable — extract it from context once, then use it
-  as a literal string in all commands. When spawning subagents, pass the resolved path in the prompt
-  (e.g. `"use /tmp/claude-modular-napping-aho/ for temp files"`)
-- Create the directory with `mkdir -p /tmp/claude-{session_name}` before first use
+- A `SessionStart` hook injects `CLAUDE_TEMP_DIR` into conversation context — use this path for
+  all temporary files (tool output, diffs, commit drafts, etc.)
+- The path is `/tmp/claude-<session_id>/` where `session_id` is the stable UUID for this session
+- The directory is created automatically by the hook — no need to `mkdir -p`
+- When spawning subagents, pass the resolved `CLAUDE_TEMP_DIR` value in the prompt
+  (e.g. `"use /tmp/claude-5bf0f026-ba82-43b7-8c4d-4c116b4bebf7/ for temp files"`)
 - Files within don't need a session prefix — the directory is already session-scoped
-- This convention works in subagents (unlike `$PPID`, which resolves to a different PID per process)
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
-- NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-{session_name}` subdirectory
+- NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-<session_id>` subdirectory
 
 ## Agents
 - Always set `mode: "auto"` when dispatching agents — the interactive session uses plan mode
@@ -142,7 +148,7 @@ be compiled and installed on a new machine:
 ## Code Inspection (C#)
 - After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
   ```bash
-  jb inspectcode <solution> --output=/tmp/claude-{session_name}/inspectcode-output.xml --format=Xml --severity=WARNING
+  jb inspectcode <solution> --output=${CLAUDE_TEMP_DIR}/inspectcode-output.xml --format=Xml --severity=WARNING
   ```
 - Parse the XML output; fix any `<Issue>` elements before finishing
 
