@@ -1,11 +1,18 @@
 ---
-name: PR 527 review completed
-description: APPROVED on re-review after all blocking issues from initial REQUEST_CHANGES were fixed
+name: PR 527 review — approved fourth round
+description: APPROVED on fourth review round after all blocking issues resolved; 3 non-blocking follow-up comments left
 type: project
-originSessionId: 03bf2339-559b-41f5-806d-e69dc41bae15
+originSessionId: 76b1a624-ea9f-4cf5-a16e-d7b212ac74d6
 ---
-PR #527 by marlongillwork reviewed twice on 2026-04-21. Initial review: REQUEST_CHANGES with 12 inline comments (4 blocking). Re-review after "Bug Fixes post Review" and "Further fixes from Review" commits: APPROVED with 2 nitpick comments (SessionLogger guard condition, committed settings.local.json files).
+PR #527 by marlongillwork reviewed four times, approved on 2026-04-22.
 
-**Why:** Large PR (~11k additions) adding an Avalonia desktop editor for data preparation configs. All blocking issues (operator name mismatches, missing command names, duplicated BuildComposites logic, dead ApplyCriteriaToModel) were resolved correctly. Composite expansion extracted to shared `CompositeExpander.cs`, validator now sources names from engine constants.
+Fourth review: APPROVED after verifying all 3 blocking bugs from third round were fixed (crash guard, JsonSettings Include, Fody initialisers). All 38 review threads resolved across four rounds. Used 4-reviewer agent team (correctness, security, efficiency, consistency).
 
-**How to apply:** PR is approved and ready to merge. No further review action needed unless new commits are pushed.
+**Non-blocking follow-up comments left (3):**
+1. `ExecuteNextCommandSet` missing `NotLoaded`/`Error` state guard (pre-existing, same class as Bug #1)
+2. `Reset()` sets `_currentExecutionIndex = 0` instead of `-1` (pre-existing sentinel mismatch)
+3. `FileMaskToRegex` — unescaped metacharacters (ReDoS) and missing anchors (pre-existing, moved to shared helper)
+
+**Why:** Decided not to block a fourth round for pre-existing issues with low practical risk in a desktop app.
+
+**How to apply:** PR is approved and ready to merge. Follow-up items can be addressed in a subsequent PR if desired.

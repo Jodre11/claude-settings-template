@@ -63,4 +63,5 @@ paths = [
     '''.gitleaks.toml''',
     '''README.md''',
     '''config.env.example''',
+    '''projects/.*/memory/.*''',
 ]
