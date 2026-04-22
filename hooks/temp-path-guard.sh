@@ -18,7 +18,7 @@ fi
 
 # Block bare /tmp/ and /var/folders/
 if [[ "$file_path" == /tmp/* || "$file_path" == /var/folders/* ]]; then
-    hook_deny "TEMP DIRECTORY VIOLATION: Attempted to write to '$file_path'. Per CLAUDE.md 'Temporary Files': use /tmp/claude-{session_name}/ for ALL temp files. Create with 'mkdir -p /tmp/claude-{session_name}' before first use. NEVER use bare /tmp/, /var/folders/, or \$TMPDIR."
+    hook_deny "TEMP DIRECTORY VIOLATION: Attempted to write to '$file_path'. Per CLAUDE.md 'Temporary Files': use \$CLAUDE_TEMP_DIR for ALL temp files. The SessionStart hook creates the directory automatically. NEVER use bare /tmp/, /var/folders/, or \$TMPDIR."
 fi
 
 exit 0
