@@ -7,3 +7,7 @@
 *.toml text eol=lf
 *.py text eol=lf
 *.lua text eol=lf
+
+# Keep local version on merge from template — allowlist rules differ between public and private repos
+.gitleaks.toml merge=ours
+.gitleaksignore merge=ours
