@@ -1,12 +1,34 @@
 ---
 name: Workday sandbox validation status
-description: PoC test results against Workday sandbox — tracks which API operations work, domain security policies configured, and known WQL query issues
+description: PoC test results against Workday sandbox — tracks which API operations work, domain security policies configured, auth policy root cause, and known WQL query issues
 type: project
-originSessionId: 600d8b8d-a9d5-4ab7-936a-e343e6ded197
+originSessionId: f1a8a1e6-6ff0-406a-9647-c9b4227606b1
 ---
-## PoC Test Results (2026-04-21)
+## PoC Test Results (2026-04-22)
 
 ISU: `ISU_WD_Account_Provisioning`, Tenant: `havenleisureltd` (sandbox impl-services1.wd107)
+
+### Root Cause of 403 S22 Errors (resolved 2026-04-22)
+
+The ISSG `ISSG_WD_Account_Provisioning` was missing an **Authentication Policy** that permits
+"API Client" (OAuth2 bearer) authentication. Workday has three independent permission layers for
+REST API access:
+
+1. **OAuth scopes** (API client) — functional area access
+2. **Domain security policies** (ISSG) — what data the ISU can read/write
+3. **Authentication Policy** (ISSG) — how the ISU is allowed to authenticate
+
+We had 1 and 2 correct but layer 3 was never configured. New ISSGs do not automatically inherit
+an auth policy permitting API Client authentication. The S22 error is generic and does not
+distinguish between missing domain access and missing auth method.
+
+**How proved:** Adding the ISU to `ISSU_Fabric` (which inherited a working auth policy from
+production) immediately gave 200 on Workers/Jobs endpoints. No activation required.
+
+**Temporary workaround (in place):** ISU added to `ISSU_Fabric` to inherit its auth policy.
+
+**Permanent fix needed:** Colleague has raised this with the Workday API Authorization chat to
+get a proper auth policy configured for `ISSG_WD_Account_Provisioning` directly.
 
 ### Current ISSG Domain Security Policies (12 items)
 
@@ -30,26 +52,22 @@ ISU: `ISU_WD_Account_Provisioning`, Tenant: `havenleisureltd` (sandbox impl-serv
 - Scopes: Public Data, Staffing, System
 - Include Workday Owned Scope: **Yes**
 - Non-Expiring Refresh Tokens: Yes
-- **Issue**: Refresh token was generated before scope changes — must regenerate to pick up new scopes
+- Refresh token regenerated 2026-04-22 after scope changes
 
 ### Test Results
 
 | Test | Operation | Protocol | Result | Notes |
 |------|-----------|----------|--------|-------|
 | OAuth token exchange | `POST /ccx/oauth2/.../token` | REST | PASS | Token issued successfully |
-| WQL worker query | `POST /ccx/api/wql/v1/.../data` | REST | FAIL 403 S22 | Stale refresh token — scopes changed but token not regenerated |
-| WQL dataSources | `GET /ccx/api/wql/v1/.../dataSources` | REST | FAIL 403 S22 | Same stale token issue |
+| WQL worker query | `POST /ccx/api/wql/v1/.../data` | REST | FAIL 403 S22 → see auth policy fix | Was auth policy, not token/scope issue |
+| WQL dataSources | `GET /ccx/api/wql/v1/.../dataSources` | REST | FAIL 403 S22 → see auth policy fix | Same root cause |
 | Get_Workers | SOAP HR endpoint | SOAP | PASS | Returns 206 workers with hire dates |
-| Get_Provisioning_Groups | SOAP HR endpoint | SOAP | Not re-tested | Previously failed, Account Provisioning domain now added |
+| Get_Provisioning_Groups | SOAP HR endpoint | SOAP | Not re-tested | Account Provisioning domain now added |
 | Put_Provisioning_Group_Assignment | SOAP HR endpoint | SOAP | Not re-tested | Account Provisioning domain now added |
 
-### Blocking Issues
+### WQL Query Issues (code changes still needed)
 
-1. **Refresh token must be regenerated** — via "Generate Refresh Token for Integrations" in Workday GUI, then update `oauth_refresh_token` in Secrets Manager secret `workday/account-provisioning-credentials`
-
-### WQL Query Issues (code changes needed)
-
-The current query is invalid:
+The current query in `WorkdayRestClient.cs:24` is invalid:
 ```sql
 SELECT workdayID, employeeID, fullName, hireDate, provisioningGroup
 FROM allActiveEmployees WHERE lastModified >= '...'
@@ -67,7 +85,3 @@ FROM allActiveEmployees
 ```
 - Use `FROM allActiveEmployees(entryMoment >= "2026-04-20T00:00:00Z")` for incremental
 - Provisioning group assignments must be read/written via SOAP separately
-
-**Why:** WQL is a reporting/query layer over Workday data sources. Provisioning groups are not exposed as WQL fields. The architecture needs splitting into WQL reads (worker data) + SOAP writes (provisioning assignments).
-
-**How to apply:** Fix the WQL query in WorkdayRestClient.cs, regenerate refresh token, then re-test.

@@ -8,6 +8,7 @@
 
 - [Subagent permissions](feedback_subagent_permissions.md) — allow-permission hooks workaround applied; maintain allowlist in two places
 - [Temp directory convention](feedback_temp_directory_convention.md) — use session ID not $PPID; cross-platform considerations
+- [CRITICAL: Haiku agent workaround](feedback_agent_haiku_model_workaround.md) — always set model: "sonnet" on Haiku agents (effort flag bug)
 
 # Preferences
 

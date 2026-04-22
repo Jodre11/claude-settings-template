@@ -21,7 +21,7 @@
 ## Project Structure
 - `payroll-workday-generate-import-file/` — Core library + console app (net10.0)
 - `PayrollWorkdayGenerateImportFile.Avalonia/` — Cross-platform GUI (net10.0)
-- `PayrollWorkdayGenerateImportFile.Tests/` — xUnit v3 test project (693 tests)
+- `PayrollWorkdayGenerateImportFile.Tests/` — xUnit v3 test project (737 tests)
 - `PayrollWorkdayGenerateImportFile.Avalonia.Tests/` — Avalonia headless E2E tests (87 tests)
 - `PayrollWorkdayGenerateImportFile.Appium.Tests/` — Appium smoke tests (3, CI-excluded)
 
@@ -83,3 +83,5 @@
 - [Install FOSS tools](feedback_install_foss_tools.md) — use brew install rather than workarounds; remind to regenerate Brewfile
 - [TransId static is intentional](feedback_transid_static.md) — _transId is deliberately static; real bugs are double-increment and redundant LoadReferenceData
 - [Issue content inline](feedback_issue_content_inline.md) — put full spec content on the issue body, don't link to a repo file
+- [CRITICAL: Haiku agent workaround](feedback_agent_haiku_model_workaround.md) — always set model: "sonnet" on Haiku agents (effort flag bug)
+- [Pre-commit checklist](feedback_pre_commit_checklist.md) — run InspectCode + update CLAUDE.md counts before committing

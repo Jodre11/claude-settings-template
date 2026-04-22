@@ -15,5 +15,5 @@ Claude Code sends `output_config.effort` unconditionally in API requests. Haiku 
 
 **How to apply:**
 - Do NOT add `effortLevel` to settings.json — it's redundant (default is "high") and worsens the problem
-- Avoid `model: haiku` in agent definitions until upstream fix ships; use Sonnet as the cost-optimised alternative
+- Avoid `model: haiku` in agent definitions until upstream fix ships; use `model: "sonnet"` as the cost-optimised alternative (confirmed working for built-in agent types like `claude-code-guide`, `Explore`, etc.)
 - Monitor #51377 and #51059 for resolution

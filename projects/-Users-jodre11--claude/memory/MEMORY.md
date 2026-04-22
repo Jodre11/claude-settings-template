@@ -5,3 +5,4 @@
 - [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
 - [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — active: effort leaks to Haiku subagents on Bedrock; upstream #51377 and #51059 elevated 2026-04-21
 - [Permission explainer workaround](project_permission_explainer_workaround.md) — resolved 2026-04-21; workaround removed (#49253 fixed in v2.1.114)
+- [Session init hook](project_session_init_hook.md) — SessionStart hook injects CLAUDE_TEMP_DIR and session ID; replaces three-word-slug convention and pane-title tmux naming
