@@ -1,3 +1,8 @@
-- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project bridging Workday provisioning groups to Entra AD
+- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project, architecture redesign needed (WQL reads + SOAP writes)
+- [Workday sandbox validation](project_workday_sandbox_validation.md) — PoC test results, 12 ISSG domains configured, stale refresh token blocking WQL
+- [Workday WQL documentation](reference_workday_wql_documentation.md) — official WQL syntax, REST endpoints, security model, field discovery, known limitations
+- [Setup guide corrections](project_setup_guide_corrections.md) — wrong domain name, missing policies, missing token regen step in docs
+- [Workday OAuth tokens are scope-bound](feedback_workday_oauth_tokens.md) — refresh tokens must be regenerated after scope changes, cost hours debugging
 - [Cookie cutter reference repos](reference_cookie_cutter_repos.md) — finance-erp-aot template locations for Lambda code and Terraform
 - [Agent tool Bedrock workaround](feedback_agent_dispatch_workaround.md) — use TeamCreate instead of Agent tool on Bedrock
+- [Aspire MCP workflow](reference_aspire_mcp_workflow.md) — start AppHost, query telemetry via MCP, resource naming quirks, shutdown
