@@ -170,13 +170,24 @@
     "csharp-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true
+    "frontend-design@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "code-review@jodre11-plugins": true,
+    "web-search@jodre11-plugins": true,
+    "playwright-cli@jodre11-plugins": true,
+    "md-to-clipboard@jodre11-plugins": true
   },
   "extraKnownMarketplaces": {
     "claude-code-plugins": {
       "source": {
         "source": "github",
         "repo": "anthropics/claude-code"
+      }
+    },
+    "jodre11-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "Jodre11/claude-code-plugins"
       }
     }
   },
