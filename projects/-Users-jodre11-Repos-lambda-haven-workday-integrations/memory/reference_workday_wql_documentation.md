@@ -92,3 +92,5 @@ From official examples:
 5. Refresh tokens must be regenerated after changing API client scopes
 6. "Include Workday Owned Scope" must be Yes for WQL access
 7. `Convert Report to WQL` task in Workday GUI generates valid WQL from existing reports — useful for discovering correct field aliases
+8. **GET works, POST may not** — confirmed 2026-04-23 that `GET /data?query=...` returns 200 while `POST /data` returns 403 S22 with the same query and token. POST may require View and Modify (not just View Only) on the Workday Query Language domain. Use GET for queries under 2,048 characters.
+9. WQL ISU setup requires **Workday Query Language** domain plus potentially **Manage: All Custom Reports** and **Custom Report Administration** domains in the System functional area (from Workday docs AI-generated answer — official docs only explicitly require WQL domain)

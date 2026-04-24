@@ -1,8 +1,12 @@
-- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project, architecture redesign needed (WQL reads + SOAP writes)
-- [Workday sandbox validation](project_workday_sandbox_validation.md) — PoC test results, 12 ISSG domains configured, stale refresh token blocking WQL
-- [Workday WQL documentation](reference_workday_wql_documentation.md) — official WQL syntax, REST endpoints, security model, field discovery, known limitations
-- [Setup guide corrections](project_setup_guide_corrections.md) — wrong domain name, missing policies, missing token regen step in docs
+- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project, code quality pass complete, next: Aspire harness exercise
+- [Workday sandbox validation](project_workday_sandbox_validation.md) — WQL works, SOAP needs External Account Provisioning domain (not Provisioning Group Administration)
+- [Workday SOAP domain security mapping](reference_workday_soap_domain_security.md) — use "View Security for Securable Item" report, not third-party docs
+- [Workday WQL documentation](reference_workday_wql_documentation.md) — official WQL syntax, REST endpoints, security model, GET vs POST gotcha
+- [Workday API setup wiki](reference_workday_wiki.md) — canonical guide lives in GitHub Wiki, not docs/ in the repo
 - [Workday OAuth tokens are scope-bound](feedback_workday_oauth_tokens.md) — refresh tokens must be regenerated after scope changes, cost hours debugging
+- [Don't blame JWT act.sub](feedback_dont_blame_jwt_actsub.md) — empty act.sub is not the cause if other endpoints work with the same token
 - [Cookie cutter reference repos](reference_cookie_cutter_repos.md) — finance-erp-aot template locations for Lambda code and Terraform
-- [Agent tool Bedrock workaround](feedback_agent_dispatch_workaround.md) — use TeamCreate instead of Agent tool on Bedrock
+- [Haiku agents Bedrock workaround](feedback_agent_dispatch_workaround.md) — any Haiku-default agent fails with output_config.effort on Bedrock, use model: "sonnet"
 - [Aspire MCP workflow](reference_aspire_mcp_workflow.md) — start AppHost, query telemetry via MCP, resource naming quirks, shutdown
+- [Try features before dismissing](feedback_try_before_dismissing.md) — don't assume a language feature won't work, try it and let the compiler decide
+- [Verify in tenant not docs](feedback_verify_in_tenant_not_docs.md) — when multiple Workday domains are candidates, check the tenant's own security report first, don't rely on third-party docs to choose

@@ -1,11 +1,11 @@
 ---
-name: Agent tool fails on Bedrock — use TeamCreate instead
-description: The Agent tool returns 400 errors on Bedrock due to output_config.effort — use TeamCreate for parallel agent dispatch
+name: Haiku agents fail on Bedrock — use Sonnet override
+description: Any agent type that defaults to Haiku returns 400 output_config.effort on Bedrock — set model to sonnet to avoid the error
 type: feedback
 originSessionId: 4e150787-3352-4765-a4ee-f7fd9e15058d
 ---
-The Agent tool fails on Bedrock with a 400 error related to `output_config.effort` / `effortLevel`. Use TeamCreate to dispatch parallel agents instead.
+Agent tool calls that use the Haiku model fail on Bedrock with `400 output_config.effort: Extra inputs are not permitted`. Claude Code passes an effort parameter by default, and Bedrock Haiku does not accept it. Sonnet and Opus are unaffected.
 
-**Why:** Bedrock runtime does not support the effort parameter that Claude Code sends with Agent tool calls.
+**Why:** This is a Bedrock API problem — the Bedrock runtime rejects `output_config.effort` for Haiku but not for Sonnet or Opus. Haiku agents may work fine on the Anthropic API or other providers. There is an open issue on the Claude Code GitHub repo tracking this — the workaround may become unnecessary once it's fixed.
 
-**How to apply:** Whenever parallel agents are needed, use TeamCreate rather than the Agent tool. This applies to all sessions on this Bedrock-backed environment.
+**How to apply:** When dispatching any agent type that defaults to Haiku (e.g. Explore), set `model: "sonnet"`. Agent types that already default to Sonnet or Opus need no override.

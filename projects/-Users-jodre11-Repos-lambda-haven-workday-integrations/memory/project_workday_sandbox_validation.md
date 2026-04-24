@@ -1,87 +1,118 @@
 ---
 name: Workday sandbox validation status
-description: PoC test results against Workday sandbox — tracks which API operations work, domain security policies configured, auth policy root cause, and known WQL query issues
+description: PoC test results against Workday sandbox — tracks which API operations work, domain security policies configured, auth issues, and known WQL query issues
 type: project
-originSessionId: f1a8a1e6-6ff0-406a-9647-c9b4227606b1
+originSessionId: 6788a956-c34a-4742-8036-079485c5a47d
 ---
-## PoC Test Results (2026-04-22)
+## PoC Test Results (updated 2026-04-23)
 
 ISU: `ISU_WD_Account_Provisioning`, Tenant: `havenleisureltd` (sandbox impl-services1.wd107)
 
-### Root Cause of 403 S22 Errors (resolved 2026-04-22)
+### Current Status: WQL GET works, SOAP Put_Provisioning_Group_Assignment — wrong domain fixed, correct domain identified, pending grant
 
-The ISSG `ISSG_WD_Account_Provisioning` was missing an **Authentication Policy** that permits
-"API Client" (OAuth2 bearer) authentication. Workday has three independent permission layers for
-REST API access:
+### What Works (confirmed 2026-04-23)
 
-1. **OAuth scopes** (API client) — functional area access
-2. **Domain security policies** (ISSG) — what data the ISU can read/write
-3. **Authentication Policy** (ISSG) — how the ISU is allowed to authenticate
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| OAuth token exchange | 200 | Token issued, scopes correct |
+| WQL dataSources (metadata) | 200 | 63 data sources visible |
+| WQL query via **GET** `/data?query=...` | 200 | Confirmed working |
+| Workers REST (`/api/v1/.../workers`) | 200 | 11,301 workers returned |
+| Staffing REST (`/api/staffing/v6/.../workers`) | 200 | 11,301 workers returned |
+| SOAP Get_Workers | 200 | Previously confirmed |
 
-We had 1 and 2 correct but layer 3 was never configured. New ISSGs do not automatically inherit
-an auth policy permitting API Client authentication. The S22 error is generic and does not
-distinguish between missing domain access and missing auth method.
+### What Fails
 
-**How proved:** Adding the ISU to `ISSU_Fabric` (which inherited a working auth policy from
-production) immediately gave 200 on Workers/Jobs endpoints. No activation required.
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| WQL query via **POST** `/data` | 403 S22 | Same query works via GET. Likely Workday maps POST to Modify permission. |
+| SOAP Put_Provisioning_Group_Assignment | 500 "task submitted is not authorized" | Root cause identified — see below. |
 
-**Temporary workaround (in place):** ISU added to `ISSU_Fabric` to inherit its auth policy.
+### SOAP Put_Provisioning_Group_Assignment — Correct Fix (2026-04-23)
 
-**Permanent fix needed:** Colleague has raised this with the Workday API Authorization chat to
-get a proper auth policy configured for `ISSG_WD_Account_Provisioning` directly.
+**Root cause:** The operation is governed by 3 domain security policies (confirmed via
+**View Security for Securable Item** report). Our ISSG has permissions on none of them.
 
-### Current ISSG Domain Security Policies (12 items)
+**Authoritative finding (View Security for Securable Item):**
+
+| Domain Security Policy | Functional Area | Required | Currently Permitted |
+|---|---|---|---|
+| iLoad Web Services | Implementation | Put | Implementers |
+| **External Account Provisioning** | **System** | **Put** | Implementers, ISSG INT002 Azure Active Directory |
+| Special OX Web Services | Implementation | Put | Implementers |
+
+**What needs to happen:**
+1. Add `ISSG_WD_Account_Provisioning` to **External Account Provisioning** domain with Get and Put
+   under Integration Permissions (and optionally View/Modify under Report/Task Permissions)
+2. Activate Pending Security Policy Changes
+3. Retest
+
+**Previous wrong fix:** We added the ISSG to "Provisioning Group Administration" based on Okta/
+Microsoft Entra third-party docs. This was the wrong domain — it does not govern
+`Put_Provisioning_Group_Assignment` at all. The ISSG permissions on that domain are harmless but
+unnecessary.
+
+**Lesson learned:** Always use Workday's own **View Security for Securable Item** report to
+identify governing domains. Third-party integration docs are unreliable for this.
+
+### Domain Security Policies (18 items after both additions, confirmed 2026-04-23)
+
+**Report/Task Permissions (View/Modify) — for REST:**
 
 | Domain Security Policy | Access | Functional Area |
 |---|---|---|
-| Person Data: Personal Data | Get Only | Personal Data |
+| Person Data: Personal Data | View Only | Personal Data |
+| Set Up: User Provisioning | View and Modify | System, User Provisioning |
+| Workday Query Language | View Only | System |
+| Worker Data: Employment Data | View Only | Staffing |
+| Worker Data: Workers | View Only | Staffing |
+| Workday Accounts | View Only | System |
+| Worker Data: All Positions | View Only | Staffing |
+| Worker Data: Current Staffing Information | View Only | Staffing |
+| Worker Data: Public Worker Reports | View Only | Staffing |
+| Worker Data: Organization Information | View Only | Staffing |
+| Person Data: Name | View Only | Contact Information |
+| Account Provisioning | View and Modify | System |
+| Manage: All Custom Reports | View and Modify | System |
+| Custom Report Administration | View and Modify | System |
+| Provisioning Group Administration | View and Modify | System |
+
+**Integration Permissions (Get/Put) — for SOAP:**
+
+| Domain Security Policy | Access | Functional Area |
+|---|---|---|
 | Set Up: User Provisioning | Get and Put | System, User Provisioning |
-| Workday Query Language | Get Only | System |
-| Worker Data: Employment Data | Get Only | Staffing |
-| Worker Data: Workers | Get Only | Staffing |
-| Workday Accounts | Get Only | System |
-| Worker Data: All Positions | Get Only | Staffing |
-| Worker Data: Current Staffing Information | Get Only | Staffing |
-| Worker Data: Public Worker Reports | Get Only | Staffing |
-| Worker Data: Organization Information | Get Only | Staffing |
-| Person Data: Name | Get Only | Contact Information |
 | Account Provisioning | Get and Put | System |
+| Provisioning Group Administration | Get and Put | System |
+
+**Still needed:** External Account Provisioning with Get and Put under Integration Permissions.
 
 ### OAuth API Client: WD_Account_Provisioning_REST
 
 - Scopes: Public Data, Staffing, System
 - Include Workday Owned Scope: **Yes**
 - Non-Expiring Refresh Tokens: Yes
-- Refresh token regenerated 2026-04-22 after scope changes
+- Refresh token regenerated 2026-04-23 with ISU correctly selected
 
-### Test Results
+### JWT Token State
 
-| Test | Operation | Protocol | Result | Notes |
-|------|-----------|----------|--------|-------|
-| OAuth token exchange | `POST /ccx/oauth2/.../token` | REST | PASS | Token issued successfully |
-| WQL worker query | `POST /ccx/api/wql/v1/.../data` | REST | FAIL 403 S22 → see auth policy fix | Was auth policy, not token/scope issue |
-| WQL dataSources | `GET /ccx/api/wql/v1/.../dataSources` | REST | FAIL 403 S22 → see auth policy fix | Same root cause |
-| Get_Workers | SOAP HR endpoint | SOAP | PASS | Returns 206 workers with hire dates |
-| Get_Provisioning_Groups | SOAP HR endpoint | SOAP | Not re-tested | Account Provisioning domain now added |
-| Put_Provisioning_Group_Assignment | SOAP HR endpoint | SOAP | Not re-tested | Account Provisioning domain now added |
+`act.sub` is present but **empty string**. This does not affect functionality — all working
+endpoints return 200 regardless.
 
-### WQL Query Issues (code changes still needed)
+### WQL Query — Correct Syntax (confirmed from docs and testing)
 
-The current query in `WorkdayRestClient.cs:24` is invalid:
-```sql
-SELECT workdayID, employeeID, fullName, hireDate, provisioningGroup
-FROM allActiveEmployees WHERE lastModified >= '...'
-```
-
-Problems:
-1. `provisioningGroup` is NOT a valid WQL field — provisioning data only available via SOAP
-2. `lastModified` is NOT a valid WQL filter — must use `entryMoment` in FROM clause
-3. `fullName` is valid (confirmed in official Workday docs)
-
-Correct approach:
 ```sql
 SELECT workdayID, employeeID, fullName, hireDate
-FROM allActiveEmployees
+FROM allActiveEmployees(entryMoment = "2026-04-20T00:00:00Z")
 ```
-- Use `FROM allActiveEmployees(entryMoment >= "2026-04-20T00:00:00Z")` for incremental
-- Provisioning group assignments must be read/written via SOAP separately
+- `entryMoment` is a FROM-clause parameter, not WHERE
+- FROM-clause parameters only support `=` operator — `>=` returns 400 Bad Request
+- `provisioningGroup` is NOT a WQL field — only available via SOAP
+- `fullName` is valid (confirmed)
+- For first run (no watermark), omit the parameter: `FROM allActiveEmployees`
+
+### Key Finding: GET vs POST
+
+WQL `GET /data?query=...` works. `POST /data` with same query returns 403. The docs say POST
+is for queries over 2,048 characters. Our queries are well under that, so GET is sufficient.
+POST may require View and Modify on the WQL domain (currently View Only) — not tested.

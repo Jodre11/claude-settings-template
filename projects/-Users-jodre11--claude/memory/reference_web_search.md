@@ -1,13 +1,16 @@
 ---
 name: web-search-tool
-description: ddgr (DuckDuckGo CLI) is available for web searches — installed via Homebrew, used by the web-search skill
+description: web-search uses a local SearXNG instance (Docker, port 8888) — self-hosted metasearch, used by the web-search skill
 type: reference
-originSessionId: 7aef9fa4-e54b-4074-a9e9-ee74800040d5
 ---
-`ddgr` is installed on macOS via Homebrew and provides web search from the CLI. No API key or
-tracking. Used by the `web-search` skill at `~/.claude/skills/web-search/SKILL.md`.
+`web-search` is a caching Python wrapper around a local SearXNG instance running in Docker on
+port 8888. No API key, no tracking, no rate limiting. SearXNG aggregates results from Google,
+Bing, DuckDuckGo, Brave, Wikipedia, and GitHub.
 
-**Quick usage:** `ddgr --json --np -n 5 "search query"`
+**Quick usage:** `web-search -n 5 "search query"`
 
-**When to use:** Any time you need URLs, documentation links, error message lookups, or current
-information. Prefer this over guessing URLs or telling the user you can't search.
+**If SearXNG is not running:** `searxng-ctl.sh start` (requires Docker Desktop).
+
+**Plugin source:** `~/Repos/claude-code-plugins/plugins/web-search/`
+**SearXNG config:** `~/.local/share/searxng/` (docker-compose.yml + settings.yml, stowed from dotfiles)
+**Cache:** `~/.cache/web-search/cache.db` (SQLite, 1 hour TTL)
