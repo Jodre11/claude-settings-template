@@ -1,6 +1,7 @@
 - [Bedrock subagent model bug](project_bedrock_subagent_bug.md) — workaround applied 2026-04-01; monitor upstream issues for fix, then restore model overrides
 - [Subagent plan-mode stall](project_subagent_plan_mode.md) — subagents inherit plan mode and hang on Write/Edit; fixed 2026-04-01 via `mode: "auto"` directive
-- [Web search tool](reference_web_search.md) — ddgr (DuckDuckGo CLI) available for web searches; use web-search skill
+- [Web search tool](reference_web_search.md) — local SearXNG instance (Docker, port 8888); use web-search skill
+- [Plugin cache paths](reference_plugin_cache_paths.md) — GitHub-sourced personal plugins live under marketplaces/ not cache/
 - [PR review verdict policy](project_pr_review_verdicts.md) — two verdicts only: approve-with-comments or request-changes; never bare comment
 - [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
 - [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — active: effort leaks to Haiku subagents on Bedrock; upstream #51377 and #51059 elevated 2026-04-21

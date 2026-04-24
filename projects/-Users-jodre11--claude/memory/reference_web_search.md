@@ -12,5 +12,6 @@ Bing, DuckDuckGo, Brave, Wikipedia, and GitHub.
 **If SearXNG is not running:** `searxng-ctl.sh start` (requires Docker Desktop).
 
 **Plugin source:** `~/Repos/claude-code-plugins/plugins/web-search/`
+**Installed path:** `~/.claude/plugins/marketplaces/jodre11-plugins/plugins/web-search/`
 **SearXNG config:** `~/.local/share/searxng/` (docker-compose.yml + settings.yml, stowed from dotfiles)
-**Cache:** `~/.cache/web-search/cache.db` (SQLite, 1 hour TTL)
+**Result cache:** `~/.cache/web-search/cache.db` (SQLite, 1 hour TTL)
