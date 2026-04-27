@@ -84,7 +84,7 @@ be compiled and installed on a new machine:
 ## Behavior
 - Don't guess. If unsure, search using MCPs, the `web-search` skill, or ask the user
 - When you need URLs, documentation, or current information: use the `web-search` skill rather
-  than guessing or declining. It queries a local SearXNG instance — self-hosted, no API key, no tracking.
+  than guessing or declining. It queries a private search provider — no API key, no tracking.
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 
