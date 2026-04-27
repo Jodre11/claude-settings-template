@@ -2,7 +2,7 @@
   "env": {
     "AWS_PROFILE": "claude-code",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "WEB_SEARCH_URL": "https://searxng.taild2db48.ts.net"
+    "SEARXNG_URL": "https://searxng.taild2db48.ts.net"
   },
   "permissions": {
     "allow": [
