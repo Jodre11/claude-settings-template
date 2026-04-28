@@ -25,6 +25,7 @@ plugins/
 mcp-needs-auth-cache.json
 
 # Telemetry and stats
+telemetry/
 statsig/
 stats-cache.json
 

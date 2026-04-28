@@ -1,1 +1,2 @@
 - [OCI account and deployment setup](project_oci_setup.md) — Oracle Cloud free-tier ARM instance, eu-stockholm-1, credentials in Bitwarden
+- [Mullvad + Tailscale DNS conflict](project_mullvad_tailscale.md) — Mullvad kills Tailscale DNS on macOS; WireGuard AllowedIPs carve-out is the fix

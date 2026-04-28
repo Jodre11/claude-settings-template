@@ -1,5 +1,5 @@
-- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — multi-repo Lambda project, code quality pass complete, next: Aspire harness exercise
-- [Workday sandbox validation](project_workday_sandbox_validation.md) — WQL works, SOAP needs External Account Provisioning domain (not Provisioning Group Administration)
+- [Workday Account Provisioning Lambda](project_workday_account_provisioning.md) — end-to-end validated (AD integration reads provisioning groups), awaiting PR review and v0.1.0 release
+- [Workday sandbox validation](project_workday_sandbox_validation.md) — all operations working including SOAP writes, ~11K employees processed
 - [Workday SOAP domain security mapping](reference_workday_soap_domain_security.md) — use "View Security for Securable Item" report, not third-party docs
 - [Workday WQL documentation](reference_workday_wql_documentation.md) — official WQL syntax, REST endpoints, security model, GET vs POST gotcha
 - [Workday API setup wiki](reference_workday_wiki.md) — canonical guide lives in GitHub Wiki, not docs/ in the repo
@@ -8,5 +8,7 @@
 - [Cookie cutter reference repos](reference_cookie_cutter_repos.md) — finance-erp-aot template locations for Lambda code and Terraform
 - [Haiku agents Bedrock workaround](feedback_agent_dispatch_workaround.md) — any Haiku-default agent fails with output_config.effort on Bedrock, use model: "sonnet"
 - [Aspire MCP workflow](reference_aspire_mcp_workflow.md) — start AppHost, query telemetry via MCP, resource naming quirks, shutdown
+- [Get-group endpoint blocked on security](project_get_group_verification.md) — /get-group built, needs ISU added to AD ISSG + activation, Monday 2026-04-28
+- [NO ACCESS bug from Jon White](project_no_access_bug.md) — RESOLVED, AD integration confirmed working (2026-04-28)
 - [Try features before dismissing](feedback_try_before_dismissing.md) — don't assume a language feature won't work, try it and let the compiler decide
-- [Verify in tenant not docs](feedback_verify_in_tenant_not_docs.md) — when multiple Workday domains are candidates, check the tenant's own security report first, don't rely on third-party docs to choose
+- [Verify in tenant not docs](feedback_verify_in_tenant_not_docs.md) — when multiple Workday domains are candidates, check the tenant's own security report first

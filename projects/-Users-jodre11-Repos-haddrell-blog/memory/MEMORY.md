@@ -3,3 +3,4 @@
 - [Cloudflare deployment details](reference_cloudflare.md) — worker URL, account, custom domain for haddrell-blog
 - [Site follow-ups deferred from build #001 post](project_site_followups.md) — DNS hygiene, DMARC escalation, future agentic-build post; about-page sparseness is intentional
 - [Default to PR workflow on protected branches](feedback_pr_workflow.md) — treat "push it" as "ship it via PR" when branch protection requires PRs; never silently bypass admin overrides
+- [Squash-only merge policy](feedback_merge_policy.md) — every repo should have squash-only merge with PR title+description and auto-delete branches; configure via gh repo edit
