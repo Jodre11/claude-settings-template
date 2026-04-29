@@ -5,6 +5,8 @@
 - [All config in source control](feedback_source_control_config.md) — never use GitHub Environment variables for non-secret config
 - [My Apps portal checklist](feedback_myapps_portal.md) — display name, homepage URL, logo for Entra ID apps
 - [No demo offers](feedback_no_demos.md) — never volunteer user for demos in drafted messages
+- [BST timezone awareness](feedback_bst_timezone.md) — AWS uses UTC; user is UK (BST = UTC+1 in summer). Always convert explicitly.
+- [AWS CLI pagination](feedback_aws_pagination.md) — AWS CLI silently truncates results. Always paginate through nextToken.
 
 ## Current State (2026-04-09)
 

@@ -6,7 +6,6 @@
 - [Workday OAuth tokens are scope-bound](feedback_workday_oauth_tokens.md) — refresh tokens must be regenerated after scope changes, cost hours debugging
 - [Don't blame JWT act.sub](feedback_dont_blame_jwt_actsub.md) — empty act.sub is not the cause if other endpoints work with the same token
 - [Cookie cutter reference repos](reference_cookie_cutter_repos.md) — finance-erp-aot template locations for Lambda code and Terraform
-- [Haiku agents Bedrock workaround](feedback_agent_dispatch_workaround.md) — any Haiku-default agent fails with output_config.effort on Bedrock, use model: "sonnet"
 - [Aspire MCP workflow](reference_aspire_mcp_workflow.md) — start AppHost, query telemetry via MCP, resource naming quirks, shutdown
 - [Get-group endpoint blocked on security](project_get_group_verification.md) — /get-group built, needs ISU added to AD ISSG + activation, Monday 2026-04-28
 - [NO ACCESS bug from Jon White](project_no_access_bug.md) — RESOLVED, AD integration confirmed working (2026-04-28)
