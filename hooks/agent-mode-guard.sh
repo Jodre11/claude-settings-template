@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # agent-mode-guard.sh — PreToolUse hook for Agent calls
 #
-# Three guards:
+# Two guards:
 # 1. Denies Agent tool calls that don't set an autonomous mode, preventing
 #    subagents from inheriting defaultMode: "plan" from settings.json.
-# 2. Blocks model: "haiku" — Bedrock rejects output_config.effort for Haiku.
-#    Remove when upstream #51377 is fixed.
-# 3. In plan mode, only allows read-only agent types (allowlist). Writing
+# 2. In plan mode, only allows read-only agent types (allowlist). Writing
 #    agents would inherit plan mode and stall on Write/Edit/Bash.
 #
 # Related upstream bug: https://github.com/anthropics/claude-code/issues/4462
@@ -30,12 +28,7 @@ if [[ "$mode" != "auto" && "$mode" != "bypassPermissions" && "$mode" != "dontAsk
     hook_deny "AGENT MODE GUARD: Agent tool call missing or has restrictive mode (got: \"${mode:-<unset>}\"). Set mode: \"auto\" to prevent subagents inheriting defaultMode: \"plan\" from settings.json. See CLAUDE.md 'Agents' section."
 fi
 
-# Guard 2: Block Haiku — Bedrock rejects output_config.effort for Haiku (upstream #51377)
-if [[ "$model" == "haiku" ]]; then
-    hook_deny "AGENT MODEL GUARD: model: \"haiku\" blocked — Haiku on Bedrock rejects the effort parameter (400: output_config.effort not permitted). Use model: \"sonnet\" instead. Tracking: anthropics/claude-code#51377."
-fi
-
-# Guard 3: In plan mode, only allow read-only agent types
+# Guard 2: In plan mode, only allow read-only agent types
 if [[ "$permission_mode" == "plan" ]]; then
     # Allowlist of agent types that only read (no Write/Edit/Bash needed)
     case "$subagent_type" in
