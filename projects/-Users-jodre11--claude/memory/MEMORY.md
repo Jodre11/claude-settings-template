@@ -1,9 +1,9 @@
-- [Bedrock subagent model bug](project_bedrock_subagent_bug.md) — workaround applied 2026-04-01; monitor upstream issues for fix, then restore model overrides
-- [Subagent plan-mode stall](project_subagent_plan_mode.md) — subagents inherit plan mode and hang on Write/Edit; fixed 2026-04-01 via `mode: "auto"` directive
+- [Role and organisational context](user_role_and_context.md) — contractor/Product Engineer at Haven; Finance (ERPx), HRIS (Workday), AI adoption
+- [Use office skills not Python](feedback_office_skills_not_python.md) — prefer office-* skills over Python for .docx/.xlsx/.pptx/.pdf
+- [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — active: effort leaks to Haiku subagents on Bedrock; upstream #51377 and #51059 elevated 2026-04-21
+- [Bedrock subagent model bug](project_bedrock_subagent_bug.md) — workaround applied 2026-04-01; model overrides restored 2026-04-21, not yet verified
+- [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
+- [PR review verdict policy](project_pr_review_verdicts.md) — two verdicts only: approve-with-comments or request-changes; never bare comment
+- [Session init hook](project_session_init_hook.md) — SessionStart hook injects CLAUDE_TEMP_DIR and session ID; replaces three-word-slug convention
 - [Web search tool](reference_web_search.md) — local SearXNG instance (Docker, port 8888); use web-search skill
 - [Plugin cache paths](reference_plugin_cache_paths.md) — GitHub-sourced personal plugins live under marketplaces/ not cache/
-- [PR review verdict policy](project_pr_review_verdicts.md) — two verdicts only: approve-with-comments or request-changes; never bare comment
-- [Graph app registration blocked](project_graph_app_registration.md) — PR #799 closed; branch ready to reopen once John Hegarty resolves security restriction
-- [Bedrock effortLevel 400 bug](project_bedrock_effort_bug.md) — active: effort leaks to Haiku subagents on Bedrock; upstream #51377 and #51059 elevated 2026-04-21
-- [Permission explainer workaround](project_permission_explainer_workaround.md) — resolved 2026-04-21; workaround removed (#49253 fixed in v2.1.114)
-- [Session init hook](project_session_init_hook.md) — SessionStart hook injects CLAUDE_TEMP_DIR and session ID; replaces three-word-slug convention and pane-title tmux naming
