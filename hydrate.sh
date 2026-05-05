@@ -11,9 +11,19 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 
-# Source config.env (provides all __PLACEHOLDER__ values)
-# shellcheck source=/dev/null
-source "$CONFIG_FILE"
+# Parse config.env as key=value pairs (does not execute arbitrary shell code)
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+        key="${BASH_REMATCH[1]}"
+        val="${BASH_REMATCH[2]}"
+        val="${val#\"}"
+        val="${val%\"}"
+        val="${val#\'}"
+        val="${val%\'}"
+        export "$key=$val"
+    fi
+done < "$CONFIG_FILE"
 
 # Replace __PLACEHOLDER__ tokens in a .tmpl file and write the output (without .tmpl extension).
 # Usage: hydrate_template <template_file>
