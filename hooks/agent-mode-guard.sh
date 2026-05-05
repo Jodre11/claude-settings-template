@@ -14,6 +14,7 @@ source "$(dirname "$0")/_lib.sh"
 hook_read_input
 
 # Extract all needed fields in one jq call (TSV)
+# shellcheck disable=SC2034  # model extracted for positional completeness
 IFS=$'\t' read -r mode permission_mode subagent_type model <<< "$(
     jq -r '[
         .tool_input.mode // "",
