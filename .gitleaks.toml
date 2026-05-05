@@ -47,7 +47,7 @@ tags = ["corporate"]
 [[rules]]
 id = "personal-identity"
 description = "Personal identity markers"
-regex = '''(YourGitHubUser|your\.name|@your-company\.com|@your-email\.co\.uk|Users/yourusername/)'''
+regex = '''(YourGitHubUser|your\.name|@your-company\.com|@your-email\.co\.uk|/Users/yourusername/)'''
 tags = ["personal"]
 
 [[rules]]
