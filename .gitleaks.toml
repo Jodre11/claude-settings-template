@@ -4,8 +4,8 @@ title = "claude-settings-template gitleaks config"
 
 [[rules]]
 id = "org-aws-account-id"
-description = "Organisation AWS account ID"
-regex = '''(123456789012|234567890123|345678901234)'''
+description = "AWS account ID in context (ARN, SSO config, ECR)"
+regex = '''(?:arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:|sso_account_id\s*=\s*|account[_-]?id["'\s:=]+)\d{12}'''
 tags = ["corporate", "aws"]
 
 [[rules]]
@@ -23,7 +23,7 @@ tags = ["corporate", "aws"]
 [[rules]]
 id = "org-bedrock-arn-fragment"
 description = "Bedrock inference profile ARN fragment"
-regex = '''(your-profile-id-1|your-profile-id-2|your-profile-id-3)'''
+regex = '''application-inference-profile/[a-z0-9]{10,16}'''
 tags = ["corporate", "aws"]
 
 [[rules]]
@@ -61,6 +61,5 @@ tags = ["secret"]
 paths = [
     '''.githooks/pre-commit''',
     '''.gitleaks.toml''',
-    '''README.md''',
     '''config.env.example''',
 ]
