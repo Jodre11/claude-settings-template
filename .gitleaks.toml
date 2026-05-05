@@ -5,7 +5,7 @@ title = "claude-settings-template gitleaks config"
 [[rules]]
 id = "org-aws-account-id"
 description = "Organisation AWS account ID"
-regex = '''(123456789012|123456789012|123456789012|123456789012|123456789012|123456789012)'''
+regex = '''(123456789012|234567890123|345678901234)'''
 tags = ["corporate", "aws"]
 
 [[rules]]
@@ -23,7 +23,7 @@ tags = ["corporate", "aws"]
 [[rules]]
 id = "org-bedrock-arn-fragment"
 description = "Bedrock inference profile ARN fragment"
-regex = '''(your-profile-id|your-profile-id|your-profile-id)'''
+regex = '''(your-profile-id-1|your-profile-id-2|your-profile-id-3)'''
 tags = ["corporate", "aws"]
 
 [[rules]]
