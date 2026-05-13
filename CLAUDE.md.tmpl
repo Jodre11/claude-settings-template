@@ -1,3 +1,24 @@
+# CRITICAL VOCABULARY — Read Before Responding
+
+**"the template repo" is NOT the same as "the .tmpl file". Do not conflate them.**
+
+| Phrase | Refers to |
+|---|---|
+| "the template repo", "at the template level", "in the template", "to the template" | this repo — the **public upstream `claude-settings-template`** at `~/Repos/claude-settings-template/`, independent git remote, the seed that other people / future machines clone. |
+| "the .tmpl file", "the template file", "in the .tmpl" | a hydration source file (`*.tmpl`) inside *any* repo — e.g. `settings.json.tmpl`, `CLAUDE.md.tmpl`. Source consumed by `hydrate.sh`. |
+
+**Default interpretation: "template" = this repo, NOT a file.**
+
+When the user asks "should this go in the template?" they are asking whether the change
+belongs in this public seed repo so it ships to anyone provisioning from it — they are NOT
+asking whether to edit a `.tmpl` file in some other repo.
+
+A change can need to land in **both**: the user's personal `claude-settings`/`.claude/`
+clone (so it hydrates locally) AND this template repo (so the public seed ships with it).
+These are two distinct edits in two distinct git repos with two distinct push targets.
+
+If genuinely ambiguous, ASK. Do not assume.
+
 # Global Settings
 
 This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when
