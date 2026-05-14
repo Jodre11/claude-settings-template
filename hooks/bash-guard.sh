@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # bash-guard.sh — PreToolUse hook for Bash calls
-# Warns (does not block) when a command violates CLAUDE.md Bash rules:
-#   1. Compound operators: && || ;
+# Denies commands that violate CLAUDE.md Bash rules:
+#   1. Compound operators: && || ; or newline separators
 #   2. Command substitution: $(...) or backticks
+#   3. Process substitution: <(...) or >(...)
+#   4. Control-flow loops (for/while/until) and case statements
+#   5. Temp-directory write policy
 #
-# Strips single-quoted and double-quoted strings before checking,
+# Strips single-quoted/double-quoted strings and comments before checking,
 # so patterns inside string literals don't trigger false positives.
 
 set -euo pipefail
@@ -22,23 +25,19 @@ if [[ "$cmd" =~ ^git[[:space:]].*commit[[:space:]] ]]; then
 fi
 
 # ── Temp directory enforcement ──
-# Allow reads from anywhere in /tmp/. Block writes to bare /tmp/ (must use $CLAUDE_TEMP_DIR).
-# $TMPDIR and /var/folders/ are always blocked (macOS expands $TMPDIR to /var/folders/).
+# Block $TMPDIR / /var/folders/ unconditionally. Block bare /tmp/ writes (must use $CLAUDE_TEMP_DIR).
+# Session-scoped /tmp/claude-* paths are exempt from temp-write policy, but DO fall through
+# to the syntax checks below — referencing a session temp path must not bypass other rules.
 if mentions_temp_path "$cmd"; then
-    # Always allow if command targets session-scoped temp
-    if cmd_mentions_session_temp "$cmd"; then
-        exit 0
-    fi
-    # Always block $TMPDIR and /var/folders/ (no read exception)
     if [[ "$cmd" == *'$TMPDIR'* || "$cmd" == */var/folders/* ]]; then
         hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
     fi
-    # Allow read-only commands against bare /tmp/
-    if [[ "$cmd" =~ ^(cat|ls|head|tail|wc|file|stat|diff|less|more|grep|rg|find|readlink)[[:space:]] ]]; then
-        exit 0
+    if ! cmd_mentions_session_temp "$cmd"; then
+        # Allow read-only commands against bare /tmp/, deny anything else writing there
+        if ! [[ "$cmd" =~ ^(cat|ls|head|tail|wc|file|stat|diff|less|more|grep|rg|find|readlink)[[:space:]] ]]; then
+            hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR for writing to temp. See CLAUDE.md 'Temporary Files' section."
+        fi
     fi
-    # Block everything else targeting bare /tmp/
-    hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR for writing to temp. See CLAUDE.md 'Temporary Files' section."
 fi
 
 # Strip quoted strings and comments in one sed call (3 forks → 1)
@@ -61,14 +60,36 @@ if [[ "$stripped" == *';'* ]]; then
     warnings="${warnings}  - compound operator ';' detected (use separate Bash calls)\n"
 fi
 
+# Check for newline command separators (functionally equivalent to ;)
+if [[ "$stripped" == *$'\n'* ]]; then
+    warnings="${warnings}  - newline command separator detected (use separate Bash calls)\n"
+fi
+
 # Check for $(...) command substitution
 if [[ "$stripped" == *'$('* ]]; then
     warnings="${warnings}  - command substitution '\$(...)' detected (capture output from separate Bash calls)\n"
 fi
 
+# Check for <(...) or >(...) process substitution
+if [[ "$stripped" == *'<('* || "$stripped" == *'>('* ]]; then
+    warnings="${warnings}  - process substitution '<(...)'/'>(...)' detected (capture output from separate Bash calls)\n"
+fi
+
 # Check for backtick command substitution
 if [[ "$stripped" == *'`'* ]]; then
     warnings="${warnings}  - backtick command substitution detected (capture output from separate Bash calls)\n"
+fi
+
+# Check for control-flow loops: for/while/until ... do
+if [[ "$stripped" =~ (^|[[:space:]])(for|while|until)[[:space:]] ]] \
+   && [[ "$stripped" =~ [[:space:]]do([[:space:]]|$) ]]; then
+    warnings="${warnings}  - control-flow loop detected (unroll into separate Bash calls or use the Write tool)\n"
+fi
+
+# Check for case statements: case ... in
+if [[ "$stripped" =~ (^|[[:space:]])case[[:space:]] ]] \
+   && [[ "$stripped" =~ [[:space:]]in([[:space:]]|$) ]]; then
+    warnings="${warnings}  - control-flow 'case' detected (unroll into separate Bash calls)\n"
 fi
 
 if [[ -n "$warnings" ]]; then
