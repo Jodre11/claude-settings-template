@@ -1,5 +1,11 @@
 title = "claude-settings-template gitleaks config"
 
+# Extend the built-in ruleset (AWS access keys, GitHub PATs, Anthropic API keys,
+# private keys, etc.) so we catch real secrets in addition to the corporate
+# fingerprints defined below.
+[extend]
+useDefault = true
+
 # Org-specific rules (supplement the built-in rules)
 
 [[rules]]
