@@ -65,10 +65,15 @@ cp config.env.example config.env
 ### 3. Hydrate templates
 
 ```bash
-./hydrate.sh
+./hydrate.sh           # interactive: preview diffs, confirm before writing
+./hydrate.sh --diff    # preview only, write nothing
+./hydrate.sh --force   # write without confirmation
 ```
 
 This generates real config files from `.tmpl` templates using your `config.env` values.
+For `settings.json`, `hydrate.sh` **merges** template defaults into the existing file rather
+than overwriting — your local additions to `permissions.allow`, `enabledPlugins`, `env`, etc.
+are preserved across template updates.
 
 ### 4. Run platform setup
 
@@ -79,7 +84,18 @@ bash scripts/setup-platform.sh
 This writes the platform-specific `awsAuthRefresh` path into `settings.json` and applies
 `skip-worktree` to hide the local modification from git.
 
-### 5. Install tools
+### 5. Re-applying template changes later
+
+After pulling new template changes, re-run the merge with platform settings preserved:
+
+```bash
+bash scripts/apply-settings.sh
+```
+
+This lifts `skip-worktree`, runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to
+re-inject the platform `awsAuthRefresh` and re-apply `skip-worktree`.
+
+### 6. Install tools
 
 ```bash
 # md2clip (macOS only)
