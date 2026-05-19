@@ -3,11 +3,12 @@
 #
 # Two guards:
 # 1. Denies Agent tool calls that don't set an autonomous mode, preventing
-#    subagents from inheriting defaultMode: "plan" from settings.json.
+#    subagents from inheriting plan mode from the parent's runtime state
+#    (Shift+Tab toggle) or from permissions.defaultMode if ever set.
 # 2. In plan mode, only allows read-only agent types (allowlist). Writing
 #    agents would inherit plan mode and stall on Write/Edit/Bash.
 #
-# Related upstream bug: https://github.com/anthropics/claude-code/issues/4462
+# Related upstream bug: https://github.com/anthropics/claude-code/issues/18950
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -26,7 +27,7 @@ IFS=$'\t' read -r mode permission_mode subagent_type model <<< "$(
 
 # Guard 1: Require autonomous mode on all Agent dispatches
 if [[ "$mode" != "auto" && "$mode" != "bypassPermissions" && "$mode" != "dontAsk" && "$mode" != "acceptEdits" ]]; then
-    hook_deny "AGENT MODE GUARD: Agent tool call missing or has restrictive mode (got: \"${mode:-<unset>}\"). Set mode: \"auto\" to prevent subagents inheriting defaultMode: \"plan\" from settings.json. See CLAUDE.md 'Agents' section."
+    hook_deny "AGENT MODE GUARD: Agent tool call missing or has restrictive mode (got: \"${mode:-<unset>}\"). Set mode: \"auto\" to prevent subagents inheriting plan mode from the parent session. See CLAUDE.md 'Agents' section."
 fi
 
 # Guard 2: In plan mode, only allow read-only agent types

@@ -32,6 +32,14 @@ hook_allow() {
     exit 0
 }
 
+# Emit a PreToolUse "ask" decision (forces permission prompt with reason) and exit.
+hook_ask() {
+    local r
+    r=$(_json_escape "$1")
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}' "$r"
+    exit 0
+}
+
 # Emit a PreToolUse "deny" decision and exit.
 hook_deny() {
     local r

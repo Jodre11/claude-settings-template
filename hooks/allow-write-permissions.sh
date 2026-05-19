@@ -18,6 +18,13 @@ if [[ -z "$file_path" ]]; then
     exit 0
 fi
 
+# Force explicit decision when editing settings.json directly.
+# The source of truth for shared settings is settings.json.tmpl — direct edits to
+# settings.json are valid for local testing but should be a conscious choice.
+if [[ "$file_path" == *"/.claude/settings.json" && "$file_path" != *".tmpl" ]]; then
+    hook_ask "settings.json has skip-worktree — edits here are local-only and will be lost on next hydrate. For permanent changes, edit settings.json.tmpl and run apply-settings.sh. Proceed only if testing locally."
+fi
+
 # Allow session-scoped temp directory (mirrors Write(//tmp/claude-**) and Edit(//tmp/claude-**))
 if [[ "$file_path" == "/tmp/claude-"* ]]; then
     hook_allow "Allowed by allow-write-permissions hook (mirrors settings.json permissions.allow)"
