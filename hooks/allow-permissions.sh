@@ -23,6 +23,12 @@ read -r base _ <<< "$cmd"
 
 REASON="Allowed by allow-permissions hook (mirrors settings.json permissions.allow)"
 
+# Path-prefix matches (must run before the basename case below — these
+# invocations look like absolute paths to the hook, not bare command names).
+if [[ "$base" == */node_modules/.bin/eslint || "$base" == */node_modules/.bin/biome ]]; then
+    hook_allow "$REASON"
+fi
+
 case "$base" in
     # Version control and GitHub CLI
     git|gh)         hook_allow "$REASON" ;;
@@ -36,6 +42,11 @@ case "$base" in
     # Code inspection
     jb)             hook_allow "$REASON" ;;
 
+    # Static-analysis tools dispatched by code-review specialists.
+    # Reviewer agents invoke these in the user's target repo, so they must be
+    # allowed regardless of cwd. Project-local node_modules paths handled above.
+    ruff|nbqa|trivy|eslint|biome) hook_allow "$REASON" ;;
+
     # Rich text clipboard pipeline
     md2clip)        hook_allow "$REASON" ;;
 
@@ -44,7 +55,7 @@ case "$base" in
                     hook_allow "$REASON" ;;
 
     # Read-only utilities used by code reviewers
-    wc|tail|xxd|find|head|sort|uniq|diff|file)
+    wc|tail|xxd|find|head|sort|uniq|diff|file|echo|awk)
                     hook_allow "$REASON" ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
