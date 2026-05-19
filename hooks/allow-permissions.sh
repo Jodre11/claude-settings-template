@@ -55,7 +55,7 @@ case "$base" in
                     hook_allow "$REASON" ;;
 
     # Read-only utilities used by code reviewers
-    wc|tail|xxd|find|head|sort|uniq|diff|file)
+    wc|tail|xxd|find|head|sort|uniq|diff|file|echo|awk)
                     hook_allow "$REASON" ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
