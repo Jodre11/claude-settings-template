@@ -109,7 +109,10 @@ if [ -n "$STAGED_DIFF" ]; then
             next
         }
         /^(---|\+\+\+|@@|index )/ { next }
-        /^[+-]/ {
+        /^\+/ {
+            # Only scan added lines. Removed lines (`-`) carry secrets that are
+            # leaving the working tree; flagging them blocks legitimate redaction
+            # commits without preventing any leak (history retains them either way).
             if (always_re != "" && tolower($0) ~ tolower(always_re)) {
                 print path ": " $0
                 next
