@@ -9,15 +9,33 @@ if [ "${SKIP_SECRET_SCAN:-0}" = "1" ]; then
 fi
 
 # --- Pattern scan (custom org/personal patterns) ---
+#
+# Two pattern sets:
+#   ALWAYS_PATTERNS    — secret-shaped values (account IDs, ARN fragments, ECR
+#                        domains, private-key markers, PATs). Bite everywhere,
+#                        including projects/**/memory/**.
+#   IDENTITY_PATTERNS  — org/brand/personal identity markers (organisation
+#                        names, SSO URL, AD DC, personal usernames/emails,
+#                        absolute /Users/ paths). Bite outside the memory dir
+#                        but are exempt inside projects/**/memory/**, where
+#                        rich org-specific context is the whole point.
+#
+# Rationale: Claude Code accrues per-project memory under projects/**/memory/**
+# referencing real org/repo names. Stripping that detail would gut the value
+# of the auto-memory system; leaking secret-shaped values matters even in a
+# private repo. The split keeps both rules intact.
+#
+# Customise the IDENTITY_PATTERNS placeholders for your org. ALWAYS_PATTERNS
+# are generally safe to keep verbatim — extend with anything specific to your
+# infrastructure (Bedrock profiles, custom token names, etc.).
 
-PATTERNS=(
+ALWAYS_PATTERNS=(
     # AWS account IDs (contextual — catches IDs in ARNs, SSO config, etc.)
     'arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}:'
     'sso_account_id\s*=\s*[0-9]{12}'
     'account[_-]?id.*[0-9]{12}'
 
-    # SSO / infrastructure
-    'yourorg\.awsapps\.com'
+    # ECR registry hostnames
     '[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'
 
     # Bedrock inference profile ARN fragments
@@ -26,10 +44,18 @@ PATTERNS=(
     # SSH private key markers
     '-----BEGIN.*PRIVATE KEY-----'
 
+    # Tokens / PATs
+    'YOUR_NUGET_PAT'
+)
+
+IDENTITY_PATTERNS=(
+    # SSO portal
+    'yourorg\.awsapps\.com'
+
     # Active Directory
     'DC=your-domain'
 
-    # Organisation (case-insensitive handled by grep -i below)
+    # Organisation
     'YourOrgEngineering'
     'yourorg'
     'your-company\.com'
@@ -41,7 +67,6 @@ PATTERNS=(
     'internal-project-2'
     'internal-project-3'
     'internal-project-4'
-    'YOUR_NUGET_PAT'
     'internal-project-5'
 
     # Personal
@@ -52,21 +77,48 @@ PATTERNS=(
     '/Users/yourusername/'
 )
 
-# Build a combined regex from the pattern array
-COMBINED=""
-for p in "${PATTERNS[@]}"; do
-    if [ -z "$COMBINED" ]; then
-        COMBINED="$p"
-    else
-        COMBINED="$COMBINED|$p"
-    fi
-done
+join_patterns() {
+    local combined=""
+    local p
+    for p in "$@"; do
+        if [ -z "$combined" ]; then
+            combined="$p"
+        else
+            combined="$combined|$p"
+        fi
+    done
+    printf '%s' "$combined"
+}
 
-# Scan staged file contents (not filenames) for matches
+ALWAYS_RE=$(join_patterns "${ALWAYS_PATTERNS[@]}")
+IDENTITY_RE=$(join_patterns "${IDENTITY_PATTERNS[@]}")
+
+# Scan staged file contents (not filenames) for matches.
+# `git diff --cached -U0` includes a path header (`diff --git a/... b/...`) for
+# each file, so we can split the diff per-file and apply different rule sets.
 STAGED_DIFF=$(git diff --cached --diff-filter=ACMR -U0 -- . ':!.githooks/pre-commit' ':!.gitleaks.toml' ':!README.md' ':!config.env.example' || true)
 
 if [ -n "$STAGED_DIFF" ]; then
-    MATCHES=$(echo "$STAGED_DIFF" | grep -inE "$COMBINED" || true)
+    MATCHES=$(printf '%s\n' "$STAGED_DIFF" | awk -v always_re="$ALWAYS_RE" -v identity_re="$IDENTITY_RE" '
+        BEGIN { path = ""; in_memory = 0 }
+        /^diff --git / {
+            # Capture the b/<path> half of the diff header
+            path = $0
+            sub(/^.* b\//, "", path)
+            in_memory = (path ~ /^projects\/.+\/memory\//) ? 1 : 0
+            next
+        }
+        /^(---|\+\+\+|@@|index )/ { next }
+        /^[+-]/ {
+            if (always_re != "" && tolower($0) ~ tolower(always_re)) {
+                print path ": " $0
+                next
+            }
+            if (!in_memory && identity_re != "" && tolower($0) ~ tolower(identity_re)) {
+                print path ": " $0
+            }
+        }
+    ')
     if [ -n "$MATCHES" ]; then
         echo "❌ Pre-commit: sensitive pattern detected in staged changes:" >&2
         echo "" >&2
