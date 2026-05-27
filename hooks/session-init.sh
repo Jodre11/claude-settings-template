@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # session-init.sh — SessionStart hook
 # Reads session_id from stdin JSON, creates the session-scoped temp directory,
-# renames the tmux session, and injects the temp path into conversation context.
+# resolves the slug (c-<abbrev>-<4hex>), and emits hookSpecificOutput with
+# sessionTitle + additionalContext.
+#
+# Slug source of truth:
+#   - Inside tmux: the tmux session name set by the zsh wrapper. The wrapper
+#     computes the slug at launch time using scripts/derive-claude-slug.sh so
+#     the session is born with the right name; the hook just reads it back.
+#   - Outside tmux: derived ad-hoc by the hook.
 
 set -euo pipefail
 
@@ -15,13 +22,24 @@ fi
 temp_dir="/tmp/claude-${session_id}"
 mkdir -p "$temp_dir"
 
-# Rename the tmux session to the first 8 chars of the UUID for readability.
-# Falls back silently if not running inside tmux.
+slug=""
 if [[ -n "${TMUX:-}" ]]; then
-    tmux rename-session -- "claude-${session_id:0:8}" 2>/dev/null || true
+    candidate=$(tmux display-message -p '#S' 2>/dev/null || true)
+    # Honour the wrapper's name only if it looks like our slug format
+    # (c-…-…). A user-renamed session keeps its name and we don't override
+    # the title from a stale slug.
+    if [[ "$candidate" =~ ^[a-z]-[a-z0-9]+-[0-9a-f]{4}$ ]]; then
+        slug="$candidate"
+    fi
 fi
 
-# Inject the temp path and session ID into conversation context.
+if [[ -z "$slug" ]]; then
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    suffix_hex="${session_id//-/}"
+    slug=$("$script_dir/scripts/derive-claude-slug.sh" "${suffix_hex:0:4}")
+fi
+
 jq -n \
     --arg ctx "CLAUDE_SESSION_ID=${session_id} CLAUDE_TEMP_DIR=${temp_dir}" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+    --arg title "$slug" \
+    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx, sessionTitle: $title}}'
