@@ -15,8 +15,8 @@ sensitive values out of version control.
 | `allow-permissions.sh` | Mirrors `settings.json` permission patterns for subagents |
 | `allow-write-permissions.sh` | Mirrors Write/Edit permissions for subagents |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
+| `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
-| `tmux-sanitise-name.sh` | Auto-abbreviates tmux session names |
 
 ### Scripts
 
