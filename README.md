@@ -116,6 +116,40 @@ are `.gitignore`d in the template repo.
 | `scripts/_aws-sso-common.sh.tmpl` | `scripts/_aws-sso-common.sh` | `__AWS_PROFILE__`, `__SSO_START_URL__` |
 | `skills/datadog-log-link/SKILL.md.tmpl` | `skills/datadog-log-link/SKILL.md` | `__DATADOG_SITE__`, `__DATADOG_EXAMPLE_SERVICE__` |
 
+### C# language server
+
+The template ships an `enabledPlugins` block that **disables** the official
+`csharp-lsp@claude-plugins-official` plugin and enables `roslyn-lsp@jodre11-plugins` in its
+place. Two reasons:
+
+- The official plugin uses `csharp-ls` (deprecated SofusA/razzmatazz server) — it works on a
+  per-file basis only, so `findReferences` and `goToDefinition` return file-scoped results on
+  multi-project solutions.
+- The replacement uses Microsoft's `Microsoft.CodeAnalysis.LanguageServer` (Roslyn) via the
+  [`ClaudeCodeRoslynLspProxy`](https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy) shim. The
+  proxy injects the Roslyn-specific `solution/open` notification that Claude Code's built-in
+  LSP client omits, returning solution-wide results.
+
+Both plugins claim `.cs`. If both are enabled, whichever the LSP resolver picks first wins and
+the other is silently inert — typically `csharp-ls` wins, which is the wrong default. Disabling
+the official plugin removes the conflict.
+
+`hydrate.sh` merges `enabledPlugins` with **existing wins** semantics, so this default only
+takes effect on fresh clones. Existing machines need a one-time edit to flip
+`csharp-lsp@claude-plugins-official` from `true` to `false` in their personal
+`~/.claude/settings.json`.
+
+To use the replacement on a new machine, install the proxy alongside the Roslyn server:
+
+```bash
+dotnet tool install --global roslyn-language-server --prerelease
+dotnet tool install --global ClaudeCodeRoslynLspProxy
+```
+
+The plugin lives in [`Jodre11/claude-code-plugins`](https://github.com/Jodre11/claude-code-plugins);
+register that marketplace via `extraKnownMarketplaces` in your personal `settings.json` (or
+fork to your own marketplace and edit accordingly).
+
 ## Secret Scanning
 
 Three layers of protection prevent leaking sensitive data:
