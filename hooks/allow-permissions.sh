@@ -45,7 +45,7 @@ case "$base" in
     # Static-analysis tools dispatched by code-review specialists.
     # Reviewer agents invoke these in the user's target repo, so they must be
     # allowed regardless of cwd. Project-local node_modules paths handled above.
-    ruff|nbqa|trivy|eslint|biome) hook_allow "$REASON" ;;
+    ruff|nbqa|trivy|eslint|biome|housekeeper-freshness) hook_allow "$REASON" ;;
 
     # Rich text clipboard pipeline
     md2clip)        hook_allow "$REASON" ;;
