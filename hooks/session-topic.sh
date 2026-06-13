@@ -58,19 +58,28 @@ dir_name="${cwd##*/}"
 (
     # First user prompt: 32 KiB head slice (the first prompt lives at the start),
     # string-type user content only, skipping harness tag-wrapper lines.
+    # `|| true`: the 32 KiB byte-slice cuts the final JSON line mid-object, so jq
+    # exits non-zero (parse error on the partial tail) even though every complete
+    # line parsed; and `head -1` closes the pipe early, which can SIGPIPE jq. Under
+    # `set -euo pipefail` either status would abort this subshell before the rename.
+    # The genuinely-empty case is still caught by the `[[ -z "$prompt" ]]` guard.
     prompt=$(head -c 32768 "$transcript_path" \
         | jq -rc 'select(.type=="user") | .message.content | select(type=="string")' 2>/dev/null \
         | grep -vE '^[[:space:]]*</?[A-Za-z]' \
-        | head -1)
+        | head -1 || true)
     [[ -z "$prompt" ]] && exit 0
     prompt="${prompt:0:500}"
 
     sys="You name Claude Code coding sessions. Given the user's first message and the project directory name, reply with a 2-4 word lowercase topic label with no punctuation. Examples: fix auth bug, add dark mode, refactor feed parser. Reply with ONLY the label."
 
+    # `|| true`: if `claude -p` emits more than one line, `head -1` closes the pipe
+    # early and SIGPIPEs claude (exit 141); pipefail would propagate it and abort
+    # the subshell before the rename. The `[[ -z "$topic" ]]` guard below still
+    # handles a genuinely empty guess.
     topic=$(printf 'project: %s\nfirst message: %s' "$dir_name" "$prompt" \
         | CLAUDE_TOPIC_GUESS=1 claude -p --model haiku --system-prompt "$sys" 2>/dev/null \
         | head -1 \
-        | tr '[:upper:]' '[:lower:]')
+        | tr '[:upper:]' '[:lower:]' || true)
     # Normalise: strip anything but lowercase/digits/space, collapse + trim spaces.
     topic=$(printf '%s' "$topic" | sed -E 's/[^a-z0-9 ]//g; s/  +/ /g; s/^ +//; s/ +$//')
     [[ -z "$topic" ]] && exit 0
