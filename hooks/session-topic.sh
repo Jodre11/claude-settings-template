@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # session-topic.sh — Stop hook. Once per session, guesses a short topic from the
-# first user prompt + cwd basename and renames the tmux session to it. The topic
-# propagates to the terminal window title, the OS window switcher, and any tool
-# (e.g. a status dropdown) that reads the tmux session name — via tmux title
-# propagation, no other wiring.
+# first user prompt + cwd basename and stores it on the tmux session as a custom
+# `@topic` option. A tmux set-titles-string of `#{?@topic,#{@topic},#T}` (see the
+# paired tmux config) surfaces it to the terminal window title and OS window
+# switcher, and any tool that reads tmux options (e.g. a status dropdown) can pick
+# it up. The tmux session keeps its slug NAME and the pane_title is untouched —
+# the hook never renames the session.
 #
-# Gating (stateless — no flag files):
-#   - CLAUDE_TOPIC_GUESS set  → exit (we are the nested `claude -p`; avoid recursion)
-#   - agent_id/agent_type set → exit (subagent turn; don't rename the session)
-#   - $TMUX unset             → exit (not in tmux; nothing to rename)
-#   - tmux name not an auto-slug → exit (already titled, or manually renamed)
-# Only when the name still matches the auto-slug grammar does it guess. The
-# guessed topic contains spaces and so can never re-match the grammar, so the
-# guess happens exactly once and a manual rename always wins.
+# Gating (stateless — no flag files; the `@topic` option IS the once-marker):
+#   - CLAUDE_TOPIC_GUESS set   → exit (we are the nested `claude -p`; avoid recursion)
+#   - agent_id/agent_type set  → exit (subagent turn; not the main session)
+#   - $TMUX unset              → exit (not in tmux; nothing to title)
+#   - tmux name not an auto-slug → exit (manually renamed; respect the human name)
+#   - @topic already set       → exit (topic already guessed; guess exactly once)
 #
-# The `claude -p` call + rename run backgrounded so the hook returns with no
-# user-visible latency. `claude -p` inherits the session env, so model/auth
-# resolves the same way the parent session does — no provider branching here.
+# The `claude -p` call + `tmux set-option` run backgrounded so the hook returns
+# with no user-visible latency. `claude -p` inherits the session env, so model/
+# auth resolves the same way the parent session does — no provider branching here.
 
 set -euo pipefail
 
@@ -28,21 +28,22 @@ fi
 
 input=$(cat)
 
-# Subagent turns carry agent_id / agent_type — never rename on those.
+# Subagent turns carry agent_id / agent_type — never guess on those.
 agent_id=$(jq -r '.agent_id // empty' <<< "$input")
 agent_type=$(jq -r '.agent_type // empty' <<< "$input")
 if [[ -n "$agent_id" || -n "$agent_type" ]]; then
     exit 0
 fi
 
-# Not in tmux → nothing to rename.
+# Not in tmux → nothing to title.
 if [[ -z "${TMUX:-}" ]]; then
     exit 0
 fi
 
 session=$(tmux display-message -p '#S' 2>/dev/null || true)
 # Auto-slug grammar guard: act only on an un-renamed slug name. The single-letter
-# prefix matches any origin convention (e.g. c-/p- for work/personal).
+# prefix matches any origin convention (e.g. c-/p- for work/personal). A manual
+# rename produces a non-matching name; we respect it and never write a topic.
 if [[ ! "$session" =~ ^[a-z]-[a-z0-9]+-[0-9a-f]{4}$ ]]; then
     exit 0
 fi
@@ -54,6 +55,14 @@ if [[ -z "$transcript_path" || ! -f "$transcript_path" ]]; then
 fi
 dir_name="${cwd##*/}"
 
+# Once-only guard: a non-empty `@topic` means we already guessed for this tmux
+# session. Resume-safe — a resumed session reattaches to the same tmux session,
+# whose `@topic` is already set, so we skip.
+existing_topic=$(tmux show-options -t "$session" -qv @topic 2>/dev/null || true)
+if [[ -n "$existing_topic" ]]; then
+    exit 0
+fi
+
 # Everything below runs backgrounded so the Stop hook returns immediately.
 (
     # First user prompt: 32 KiB head slice (the first prompt lives at the start),
@@ -61,7 +70,7 @@ dir_name="${cwd##*/}"
     # `|| true`: the 32 KiB byte-slice cuts the final JSON line mid-object, so jq
     # exits non-zero (parse error on the partial tail) even though every complete
     # line parsed; and `head -1` closes the pipe early, which can SIGPIPE jq. Under
-    # `set -euo pipefail` either status would abort this subshell before the rename.
+    # `set -euo pipefail` either status would abort this subshell before the write.
     # The genuinely-empty case is still caught by the `[[ -z "$prompt" ]]` guard.
     prompt=$(head -c 32768 "$transcript_path" \
         | jq -rc 'select(.type=="user") | .message.content | select(type=="string")' 2>/dev/null \
@@ -74,7 +83,7 @@ dir_name="${cwd##*/}"
 
     # `|| true`: if `claude -p` emits more than one line, `head -1` closes the pipe
     # early and SIGPIPEs claude (exit 141); pipefail would propagate it and abort
-    # the subshell before the rename. The `[[ -z "$topic" ]]` guard below still
+    # the subshell before the write. The `[[ -z "$topic" ]]` guard below still
     # handles a genuinely empty guess.
     topic=$(printf 'project: %s\nfirst message: %s' "$dir_name" "$prompt" \
         | CLAUDE_TOPIC_GUESS=1 claude -p --model haiku --system-prompt "$sys" 2>/dev/null \
@@ -84,7 +93,10 @@ dir_name="${cwd##*/}"
     topic=$(printf '%s' "$topic" | sed -E 's/[^a-z0-9 ]//g; s/  +/ /g; s/^ +//; s/ +$//')
     [[ -z "$topic" ]] && exit 0
 
-    tmux rename-session -t "$session" "$topic" 2>/dev/null || true
+    # Store the topic on the tmux session. set-titles-string surfaces it to the
+    # window title; any tmux-options reader (e.g. a status dropdown) can read it.
+    # A single atomic tmux write — no temp file, no half-read race.
+    tmux set-option -t "$session" @topic "$topic" 2>/dev/null || true
 ) >/dev/null 2>&1 &
 
 exit 0
