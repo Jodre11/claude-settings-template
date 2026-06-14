@@ -7,11 +7,18 @@
 # it up. The tmux session keeps its slug NAME and the pane_title is untouched —
 # the hook never renames the session.
 #
+# It also mirrors a manual `/rename` into `@topic`: `/rename` sets Claude Code's
+# session title (a transcript `custom-title` record) but never touches tmux, so
+# the window title and any @topic reader would miss it. Every turn the hook takes
+# the latest NON-slug custom-title and, if it differs, writes it to `@topic` — so
+# a manual name wins over the guess and reaches the window title.
+#
 # Gating (stateless — no flag files; the `@topic` option IS the once-marker):
 #   - CLAUDE_TOPIC_GUESS set   → exit (we are the nested `claude -p`; avoid recursion)
 #   - agent_id/agent_type set  → exit (subagent turn; not the main session)
 #   - $TMUX unset              → exit (not in tmux; nothing to title)
 #   - tmux name not an auto-slug → exit (manually renamed; respect the human name)
+#   - manual rename present    → mirror it into @topic, then exit (manual wins)
 #   - @topic already set       → exit (topic already guessed; guess exactly once)
 #
 # The `claude -p` call + `tmux set-option` run backgrounded so the hook returns
@@ -55,10 +62,31 @@ if [[ -z "$transcript_path" || ! -f "$transcript_path" ]]; then
 fi
 dir_name="${cwd##*/}"
 
+existing_topic=$(tmux show-options -t "$session" -qv @topic 2>/dev/null || true)
+
+# Manual-rename sync: `/rename` writes a `custom-title` record to the transcript
+# (it sets Claude Code's session title) but never touches tmux, so the window
+# title — which reads `@topic` — would otherwise miss it. Mirror the latest *real*
+# rename into `@topic` so a manual name wins over the guess and reaches the title.
+#
+# A SessionStart hook that emits `sessionTitle=<slug>` (e.g. to seed the slug)
+# leaves slug-valued custom-title records on every start/resume, so take the
+# latest NON-slug custom-title, never a slug, or a resume would clobber the user's
+# rename. `jq -R fromjson?` tolerates the truncated first line of the tail slice.
+manual=$(tail -c 65536 "$transcript_path" 2>/dev/null \
+    | jq -Rr 'fromjson? | select(.type=="custom-title") | .customTitle // empty' 2>/dev/null \
+    | grep -vE '^[a-z]-[a-z0-9]+-[0-9a-f]{4}$' \
+    | tail -1 || true)
+if [[ -n "$manual" ]]; then
+    if [[ "$manual" != "$existing_topic" ]]; then
+        tmux set-option -t "$session" @topic "$manual" 2>/dev/null || true
+    fi
+    exit 0
+fi
+
 # Once-only guard: a non-empty `@topic` means we already guessed for this tmux
 # session. Resume-safe — a resumed session reattaches to the same tmux session,
 # whose `@topic` is already set, so we skip.
-existing_topic=$(tmux show-options -t "$session" -qv @topic 2>/dev/null || true)
 if [[ -n "$existing_topic" ]]; then
     exit 0
 fi
