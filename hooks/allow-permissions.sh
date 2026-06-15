@@ -18,6 +18,25 @@ if [[ -z "$cmd" ]]; then
     exit 0
 fi
 
+# ── Read-only reviewer guard ──
+# Code-review-suite reviewer subagents are READ-ONLY by contract: they run
+# analysis tools and read-only git, but must never mutate the repo. Issue
+# anthropics/claude-code#18950 means subagents do NOT inherit settings.json
+# permissions.deny, so this guard is the only enforcement point. The PreToolUse
+# payload carries `agent_type` only for subagents (absent for the main session),
+# so this denial is scoped to reviewers and never touches the main conversation.
+# agent_type arrives namespaced (e.g. code-review-suite:jbinspect-reviewer); strip
+# any prefix before matching so bare and namespaced forms both hit.
+agent_type=$(hook_field '.agent_type')
+reviewer_type="${agent_type##*:}"
+case "$reviewer_type" in
+    *-reviewer|code-analysis|review-synthesiser)
+        if is_mutating_git "$cmd"; then
+            hook_deny "READ-ONLY REVIEWER VIOLATION: \"${reviewer_type}\" is a code-review specialist and MUST NOT mutate the repository. Blocked mutating git command. Reviewers report findings only — describe the change in the finding's 'Suggested fix:' field; never apply it. See includes/specialist-context.md 'READ-ONLY MANDATE'."
+        fi
+        ;;
+esac
+
 # Extract the base command (first word)
 read -r base _ <<< "$cmd"
 

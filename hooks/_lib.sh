@@ -48,6 +48,38 @@ hook_deny() {
     exit 0
 }
 
+# Returns 0 if the command is a git invocation whose subcommand mutates the
+# working tree, index, refs, or history. Skips git global options (-C <path>,
+# -c <kv>, --git-dir/--work-tree/--namespace and their =forms, -p/--paginate/
+# --no-pager, etc.) to locate the real subcommand. Dual-mode read commands the
+# review pipeline relies on are deliberately NOT treated as mutating:
+# diff/log/show/status/rev-parse/symbolic-ref (read form)/hash-object/branch/tag/
+# config — these are read-only in their pipeline usage and excluding them avoids
+# false-positive denials that would break a reviewer's base-branch resolution.
+is_mutating_git() {
+    local c="$1"
+    local -a toks
+    read -ra toks <<< "$c"
+    [[ "${toks[0]:-}" == git ]] || return 1
+    local i=1 n=${#toks[@]} sub="" t
+    while (( i < n )); do
+        t="${toks[i]}"
+        case "$t" in
+            -C|-c|--git-dir|--work-tree|--namespace)
+                (( i += 2 )); continue ;;
+            --git-dir=*|--work-tree=*|--namespace=*|-p|--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--no-optional-locks)
+                (( i += 1 )); continue ;;
+            -*) (( i += 1 )); continue ;;
+            *)  sub="$t"; break ;;
+        esac
+    done
+    case "$sub" in
+        commit|add|rm|mv|push|reset|checkout|switch|restore|stash|rebase|merge|revert|cherry-pick|clean|am|apply|update-ref|update-index|write-tree|commit-tree|fast-import|filter-branch|gc|prune|repack|fetch|pull)
+            return 0 ;;
+        *)  return 1 ;;
+    esac
+}
+
 # Returns 0 if the path starts with /tmp/claude- (for file_path arguments).
 is_session_temp_file() {
     [[ "$1" == /tmp/claude-* ]]
