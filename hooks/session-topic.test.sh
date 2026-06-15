@@ -49,13 +49,19 @@ make_tmux() {
     {
         echo '#!/usr/bin/env bash'
         echo "if [ \"\$1\" = display-message ]; then echo \"$sname\"; fi"
-        # show-options -t <s> -qv @topic → emit the existing topic (may be empty)
+        # show-options -t <s> -qv @topic → emit the existing topic (may be empty).
+        # @topic_provisional is always unset for t1-t9 (none exercise it) — answer
+        # that query with nothing, matching real tmux for an unset option.
         echo 'if [ "$1" = show-options ]; then'
-        echo "  printf '%s' \"$topicval\""
+        echo "  if [[ \"\$*\" == *@topic_provisional* ]]; then :"
+        echo "  elif [[ \"\$*\" == *@topic* ]]; then printf '%s' \"$topicval\""
+        echo '  fi'
         echo 'fi'
-        # set-option -t <s> @topic <value> → record (arg 5 is the value)
+        # set-option -t <s> @topic <value> → record (arg 5 is the value). The
+        # @topic_provisional flag clear (`set-option -u ... @topic_provisional`)
+        # is not a topic write — skip it so these tests assert on @topic alone.
         echo 'if [ "$1" = set-option ]; then'
-        echo "  echo \"TOPIC \${5}\" >> \"$dir/setopt\""
+        echo "  if [[ \"\$*\" != *@topic_provisional* ]]; then echo \"TOPIC \${5}\" >> \"$dir/setopt\"; fi"
         echo 'fi'
     } > "$dir/tmux"
     chmod +x "$dir/tmux"
@@ -209,7 +215,70 @@ t9() {
     rm -rf "$d"
 }
 
-t1; t2; t3; t4; t5; t6; t7; t8; t9
+# Test 10: @topic set BUT @topic_provisional=1 → Stop falls through, writes
+# Haiku guess, clears the flag.
+t10() {
+    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t10.XXXX")
+    # The fake tmux must report @topic="fix broken auth token" and
+    # @topic_provisional="1" from show-options.
+    {
+        echo '#!/usr/bin/env bash'
+        echo "if [ \"\$1\" = display-message ]; then echo \"c-cf-3a9f\"; fi"
+        echo 'if [ "$1" = show-options ]; then'
+        echo "  if [[ \"\$*\" == *@topic_provisional* ]]; then printf '1'"
+        echo "  elif [[ \"\$*\" == *@topic* ]]; then printf 'fix broken auth token'"
+        echo '  fi'
+        echo 'fi'
+        echo 'if [ "$1" = set-option ]; then'
+        echo "  echo \"\$3 \$4 \$5\" >> \"$d/setopt\""
+        echo 'fi'
+    } > "$d/tmux"
+    chmod +x "$d/tmux"
+    make_claude "$d" "Refactor Auth Flow"
+    make_transcript "$d/transcript.jsonl"
+    printf '{"session_id":"s10","transcript_path":"%s","cwd":"/Users/me/Repos/claude-fleet"}' "$d/transcript.jsonl" \
+        | TMUX=fake PATH="$d:$PATH" "$HOOK"
+    sleep 2
+    if [ ! -f "$d/setopt" ]; then bad "provisional @topic should fall through to Haiku guess"; return; fi
+    local got; got=$(cat "$d/setopt")
+    # Expect: @topic set to the normalised Haiku guess + flag unset (-u)
+    if echo "$got" | grep -q '@topic refactor auth flow' && echo "$got" | grep -q '@topic_provisional'; then
+        ok "provisional @topic upgraded + flag cleared"
+    else bad "provisional upgrade wrong: '$got'"; fi
+    rm -rf "$d"
+}
+
+# Test 11: manual /rename with provisional flag → mirror rename + clear flag.
+t11() {
+    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t11.XXXX")
+    {
+        echo '#!/usr/bin/env bash'
+        echo "if [ \"\$1\" = display-message ]; then echo \"c-cf-3a9f\"; fi"
+        echo 'if [ "$1" = show-options ]; then'
+        echo "  if [[ \"\$*\" == *@topic_provisional* ]]; then printf '1'"
+        echo "  elif [[ \"\$*\" == *@topic* ]]; then printf 'fix broken auth token'"
+        echo '  fi'
+        echo 'fi'
+        echo 'if [ "$1" = set-option ]; then'
+        echo "  echo \"\$1 \$2 \$3 \$4 \$5\" >> \"$d/setopt\""
+        echo 'fi'
+    } > "$d/tmux"
+    chmod +x "$d/tmux"
+    make_claude "$d" "should not run"
+    make_transcript "$d/transcript.jsonl" "$(ctitle c-cf-3a9f)" "$(ctitle "my auth work")"
+    printf '{"session_id":"s11","transcript_path":"%s","cwd":"/a/b"}' "$d/transcript.jsonl" \
+        | TMUX=fake PATH="$d:$PATH" "$HOOK"
+    sleep 1
+    if [ -f "$d/called" ]; then bad "rename+provisional: claude should not run"; return; fi
+    if [ ! -f "$d/setopt" ]; then bad "rename+provisional: nothing written"; return; fi
+    local got; got=$(cat "$d/setopt")
+    if echo "$got" | grep -q 'my auth work' && echo "$got" | grep -q '@topic_provisional'; then
+        ok "manual rename mirrored + provisional flag cleared"
+    else bad "rename+provisional wrong: '$got'"; fi
+    rm -rf "$d"
+}
+
+t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

@@ -19,7 +19,7 @@
 #   - $TMUX unset              → exit (not in tmux; nothing to title)
 #   - tmux name not an auto-slug → exit (manually renamed; respect the human name)
 #   - manual rename present    → mirror it into @topic, then exit (manual wins)
-#   - @topic already set       → exit (topic already guessed; guess exactly once)
+#   - @topic already set AND @topic_provisional unset → exit (final topic; guess once)
 #
 # The `claude -p` call + `tmux set-option` run backgrounded so the hook returns
 # with no user-visible latency. `claude -p` inherits the session env, so model/
@@ -63,6 +63,7 @@ fi
 dir_name="${cwd##*/}"
 
 existing_topic=$(tmux show-options -t "$session" -qv @topic 2>/dev/null || true)
+provisional=$(tmux show-options -t "$session" -qv @topic_provisional 2>/dev/null || true)
 
 # Manual-rename sync: `/rename` writes a `custom-title` record to the transcript
 # (it sets Claude Code's session title) but never touches tmux, so the window
@@ -81,13 +82,14 @@ if [[ -n "$manual" ]]; then
     if [[ "$manual" != "$existing_topic" ]]; then
         tmux set-option -t "$session" @topic "$manual" 2>/dev/null || true
     fi
+    tmux set-option -u -t "$session" @topic_provisional 2>/dev/null || true
     exit 0
 fi
 
 # Once-only guard: a non-empty `@topic` means we already guessed for this tmux
 # session. Resume-safe — a resumed session reattaches to the same tmux session,
 # whose `@topic` is already set, so we skip.
-if [[ -n "$existing_topic" ]]; then
+if [[ -n "$existing_topic" && -z "$provisional" ]]; then
     exit 0
 fi
 
@@ -125,6 +127,7 @@ fi
     # window title; any tmux-options reader (e.g. a status dropdown) can read it.
     # A single atomic tmux write — no temp file, no half-read race.
     tmux set-option -t "$session" @topic "$topic" 2>/dev/null || true
+    tmux set-option -u -t "$session" @topic_provisional 2>/dev/null || true
 ) >/dev/null 2>&1 &
 
 exit 0
