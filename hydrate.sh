@@ -163,6 +163,19 @@ hydrate_settings_json() {
             )
         )
 
+        # sandbox: existing wins for scalar/object sub-keys (e.g. a locally-set
+        # enabled/filesystem must not be clobbered by the template, which leaves
+        # enabled unset), but sandbox.allowedDomains is a union (template + existing,
+        # deduplicated) so local domain additions survive and template additions land.
+        | .sandbox = (
+            (($tmpl.sandbox // {}) + ($existing.sandbox // {}))
+            | .allowedDomains = (
+                ($existing.sandbox.allowedDomains // []) + (
+                    ($tmpl.sandbox.allowedDomains // []) - ($existing.sandbox.allowedDomains // [])
+                )
+            )
+        )
+
         # Scalar keys: take existing if set, otherwise template
         | .model = ($existing.model // $tmpl.model)
         | .language = ($existing.language // $tmpl.language)
