@@ -102,6 +102,18 @@ be compiled and installed on a new machine:
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 
+## Handover workflow
+- When a superpowers phase completes (the end of brainstorming, planning, or an
+  implementation phase) and it is a natural point to reset context, proactively
+  offer `/handover` — do not offer it at arbitrary stopping points, only at these
+  phase seams.
+- `/handover` writes a handover artifact (status/mode/fingerprint + done/next/
+  verify) and pauses for the user to review before they `/clear` or restart.
+- A SessionStart hook detects an active handover for the cwd and instructs the
+  fresh session to `/rehydrate`: read it, reconcile against the working tree, and
+  resume on a clean match or ask on contradiction. Never resume on the handover's
+  say-so without reconciling — the repo is ground truth, the handover is a snapshot.
+
 ## Temporary Files
 - A `SessionStart` hook injects `CLAUDE_TEMP_DIR` into conversation context — use this path for
   all temporary files (tool output, diffs, commit drafts, etc.)
