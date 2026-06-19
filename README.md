@@ -16,6 +16,7 @@ sensitive values out of version control.
 | `allow-write-permissions.sh` | Mirrors Write/Edit permissions for subagents |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
+| `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
 
 ### Scripts
@@ -28,12 +29,22 @@ sensitive values out of version control.
 | `setup-platform.sh` | Configure platform-specific settings (macOS/Linux/WSL/Windows) |
 | `sso-cache-check.py` | AWS SSO cache walker for token validity checks |
 | `statusline.sh` | ANSI-coloured status line renderer |
+| `handover-path.sh` | Resolves the handover-artifact path for the cwd (git root or cwd key); shared by the hook and commands |
 
 ### Skills
 
 | Skill | Purpose |
 |---|---|
 | `datadog-log-link` | Generate Datadog Log Explorer URLs from natural language queries |
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `/handover` | Write a phase-handover artifact so a fresh session can resume the work |
+| `/rehydrate` | Resume from a handover, reconciling it against the repo before acting |
+
+See [Handover workflow](#handover-workflow) for how these fit together.
 
 ### Tools
 
@@ -102,6 +113,39 @@ re-inject the platform `awsAuthRefresh` and re-apply `skip-worktree`.
 mkdir -p ~/.local/bin
 ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip
 ```
+
+## Handover workflow
+
+For long pieces of work that pass through natural phase seams (brainstorm →
+plan → implement), the cleanest context hygiene is to reset the session at each
+seam rather than carry an ever-growing transcript. This harness supports that
+with a write-once / verify-on-resume handover:
+
+1. **At a phase seam**, run `/handover`. It writes an artifact to
+   `~/.claude/handovers/<repo>-<hash>.md` recording what's done, what's next,
+   and a **fingerprint** of the repo state it was written against (branch, HEAD,
+   and `git status --porcelain` — the dirty tree matters, because a whole phase
+   can pass with no commit). It then pauses for you to review the draft.
+2. **Reset**: `/clear` for a clean context (the working tree is untouched), or
+   restart Claude Code to also pick up an update.
+3. **On the fresh session**, the `handover-detect.sh` SessionStart hook spots the
+   active handover and prompts `/rehydrate`. Rehydrate reads the artifact,
+   recomputes the fingerprint, and **reconciles against the working tree**:
+   - clean match → resume;
+   - drift that's consistent with the handover → resume;
+   - drift that contradicts it (work already done, tests now green) → stop and
+     ask. It always discloses which reconciliation mode it used.
+
+**Reconciliation modes.** Inside a git repo the key is the repo root and
+reconciliation is the working-tree fingerprint check. Outside a repo (a parent
+dir like `~/Repos`, or `$HOME`) the key is the cwd path and reconciliation
+degrades to trust-the-file — rehydrate reads the files the handover names and
+sanity-checks them, but can't give the strong guarantee.
+
+**Cleanup.** The handovers directory is self-limiting: `/rehydrate` marks a
+finished handover `consumed`, and the SessionStart hook sweeps consumed files
+plus anything older than `HANDOVER_MAX_AGE_DAYS` (default 30) as a backstop for
+handovers abandoned without an explicit retire.
 
 ## Template Strategy
 
