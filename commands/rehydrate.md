@@ -16,6 +16,15 @@ Read the file at that path. If it does not exist, tell the user there is no
 handover for this directory and stop. If its front-matter `status` is not
 `active`, say so and ask whether to proceed anyway.
 
+Once you have read it, name the session window from the handover's subject so a
+long resume isn't labelled "rehydrate". Take the text of the `# Handover: <…>`
+title line and pass it to the helper (no-ops cleanly outside tmux or on a
+manually-renamed window):
+
+```bash
+~/.claude/scripts/set-session-topic.sh "<the handover title text>"
+```
+
 ## 2. Reconcile — the load-bearing step
 
 Recompute the fingerprint and compare it to what the handover recorded. **A
