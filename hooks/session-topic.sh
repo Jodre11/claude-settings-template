@@ -109,6 +109,14 @@ fi
     [[ -z "$prompt" ]] && exit 0
     prompt="${prompt:0:500}"
 
+    # Note on slash commands: a /command first prompt is stored in the transcript
+    # only as `<command-name>…</command-name>` wrapper lines, which the tag-skip
+    # filter above strips — so `$prompt` is empty for them and we have already
+    # exited. Slash-command naming is therefore owned entirely by the submit-time
+    # provisional hook (PR-title fetch for /review-gh-pr & /shakedown) and by the
+    # commands themselves (/rehydrate, /shakedown set @topic directly). The Stop
+    # hook only ever Haiku-guesses genuine free-text first prompts.
+
     sys="You name Claude Code coding sessions. Given the user's first message and the project directory name, reply with a 2-4 word lowercase topic label with no punctuation. Examples: fix auth bug, add dark mode, refactor feed parser. Reply with ONLY the label."
 
     # `|| true`: if `claude -p` emits more than one line, `head -1` closes the pipe
