@@ -90,6 +90,15 @@ cmd_mentions_session_temp() {
     [[ "$1" == *"/tmp/claude-"* ]]
 }
 
+# Returns 0 if the string references a code-review ephemeral worktree path, i.e.
+# a `review-worktrees/wt-…` segment. These worktrees are created by the
+# code-review pipeline / standalone helpers and may legitimately land under
+# /var/folders/ when a session temp dir cannot be resolved; commands operating on
+# them must be exempted from the temp-write policy (see bash-guard.sh).
+cmd_mentions_review_worktree() {
+    [[ "$1" == *"/review-worktrees/wt-"* ]]
+}
+
 # Returns 0 if the string contains any temp-like directory reference:
 # bare /tmp/, /var/folders/, or $TMPDIR. Includes session-scoped paths —
 # callers must carve out the exception via is_session_temp_file/cmd_mentions_session_temp.
