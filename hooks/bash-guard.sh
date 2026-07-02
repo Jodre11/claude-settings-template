@@ -28,7 +28,14 @@ fi
 # Block $TMPDIR / /var/folders/ unconditionally. Block bare /tmp/ writes (must use $CLAUDE_TEMP_DIR).
 # Session-scoped /tmp/claude-* paths are exempt from temp-write policy, but DO fall through
 # to the syntax checks below — referencing a session temp path must not bypass other rules.
-if mentions_temp_path "$cmd"; then
+#
+# Carve-out: code-review ephemeral worktrees (…/review-worktrees/wt-…) may land under
+# /var/folders/ when no session temp dir can be resolved (e.g. the standalone /shakedown
+# path). Commands operating on such a worktree are legitimate and must not be denied by the
+# unconditional /var/folders/ block below — otherwise the worktree is unusable and teardown
+# falls back to an in-place delete. They still fall through to the syntax checks. Any other
+# /var/folders/ or $TMPDIR reference remains blocked.
+if mentions_temp_path "$cmd" && ! cmd_mentions_review_worktree "$cmd"; then
     if [[ "$cmd" == *'$TMPDIR'* || "$cmd" == */var/folders/* ]]; then
         hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
     fi
