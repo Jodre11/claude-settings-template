@@ -2,7 +2,8 @@
   "awsAuthRefresh": "__AWS_SSO_REFRESH_PATH__",
   "env": {
     "API_TIMEOUT_MS": "1200000",
-    "AWS_PROFILE": "__AWS_PROFILE__"
+    "AWS_PROFILE": "__AWS_PROFILE__",
+    "SEARXNG_URL": "__SEARXNG_URL__"
   },
   "permissions": {
     "allow": [
@@ -31,7 +32,6 @@
       "Read",
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(brew info *)",
-      "Bash(grep *)",
       "Bash(whisper-cli *)",
       "Bash(dotnet build *)",
       "Bash(dotnet add *)",
@@ -75,16 +75,10 @@
       "Bash(aws bedrock-runtime *)",
       "Bash(aws ecr get-login-password *)",
       "Bash(md2clip *)",
-      "Bash(wc *)",
-      "Bash(tail *)",
       "Bash(xxd *)",
-      "Bash(find *)",
-      "Bash(head *)",
       "Bash(sort *)",
       "Bash(uniq *)",
-      "Bash(diff *)",
       "Bash(file *)",
-      "Bash(ls *)",
       "Bash(open *)",
       "Bash(printf *)"
     ],
