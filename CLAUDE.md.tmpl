@@ -96,9 +96,9 @@ be compiled and installed on a new machine:
 - I am an experienced expert software engineer
 
 ## Behavior
-- Don't guess. If unsure, search using MCPs, the `web-search` skill (`ddgr`), or ask the user
+- Don't guess. If unsure, search using MCPs, the `web-search` skill, or ask the user
 - When you need URLs, documentation, or current information: use the `web-search` skill rather
-  than guessing or declining. It uses `ddgr` (DuckDuckGo CLI) — no API key, no tracking.
+  than guessing or declining. It queries a SearXNG instance (set SEARXNG_URL — see README) — no API key, no tracking.
 - Suggest adding tests for core functionality
 - Suggest keeping .md files up to date
 
@@ -114,6 +114,25 @@ be compiled and installed on a new machine:
   resume on a clean match or ask on contradiction. Never resume on the handover's
   say-so without reconciling — the repo is ground truth, the handover is a snapshot.
 
+## Repo Housekeeping (always while we're here)
+
+When working on any of my repos, treat dependency, action, runner, and IaC-vulnerability
+freshness as part of the job — surface it during brainstorming/design, not as an afterthought.
+In design discussions, ask up front whether the housekeeping ships in the same PR as the
+feature or as a separate small PR landing first (default: separate first).
+
+- **NuGet (or other package manager) dependencies** — bump everything to the latest GA. Use
+  `dotnet list package --outdated` (or the equivalent) rather than guessing. Check
+  `Directory.Packages.props` (CPM) first if it exists, otherwise scan all `*.csproj`.
+- **GitHub Actions** — audit `.github/workflows/*.yml` for pinned old majors and bump
+  `uses: org/action@vN` to the latest stable major.
+- **Workflow runners** — move `runs-on:` to the latest supported (`ubuntu-24.04`,
+  `windows-2025`, etc.).
+- **Trivy / IaC** — fix outstanding findings on Dockerfiles, Terraform, Kubernetes/Helm, and
+  CFN. The `code-review-suite:trivy-reviewer` agent or `trivy config` is the source of truth.
+
+Keep the housekeeping focused — don't silently include unrelated refactors.
+
 ## Temporary Files
 - A `SessionStart` hook injects `CLAUDE_TEMP_DIR` into conversation context — use this path for
   all temporary files (tool output, diffs, commit drafts, etc.)
@@ -125,9 +144,18 @@ be compiled and installed on a new machine:
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
 - NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-<session_id>` subdirectory
 
+## Modes & long-running tasks
+- The interactive session has three modes (toggled with Shift+Tab): **default** (prompts on each
+  tool use), **accept-edits** (auto-approves Write/Edit), and **plan** (read-only, no Write/Edit/Bash).
+  Plan mode is the default I usually start in — Shift+Tab cycles through modes
+- Subagents inherit the parent's mode unless an explicit override is set (see Agents below)
+- For long-running Bash commands or Agent dispatches that don't gate the next step, prefer
+  `run_in_background: true` — the system notifies on completion so I don't have to poll. Reserve
+  foreground execution for cases where the result must inform the very next tool call
+
 ## Agents
-- Always set `mode: "auto"` when dispatching agents — the interactive session uses plan mode
-  (`defaultMode: "plan"` in settings.json), but subagents inherit this and stall when they need
+- Always set `mode: "auto"` when dispatching agents — when the interactive session is in
+  plan mode (entered via Shift+Tab), subagents inherit it and stall when they need
   Write/Edit tools. `"auto"` lets subagents execute autonomously while the parent retains
   plan-mode control
 - Always set the `name` parameter when dispatching agents via the Agent tool
@@ -147,10 +175,19 @@ be compiled and installed on a new machine:
 - Never use subshells or grouping (`(...)`, `{ ...; }`) — use separate Bash calls
 - Prefer dedicated tools or separate Bash calls over piping (`|`) where possible
 - Prefer dedicated tools or separate Bash calls over redirection (`>`, `>>`) where possible; `2>&1` is acceptable when capturing stderr
+- **Carve-out:** the `git commit -m "$(cat <<'EOF' … EOF\n)"` HEREDOC is permitted — it
+  carries a literal multi-line commit message that the rules above would otherwise force
+  into a clumsy temp-file handoff. This is the ONLY exemption `bash-guard.sh` recognises.
+  For PR bodies always use `gh ... --body-file <path>` (write the body to
+  `${CLAUDE_TEMP_DIR}/pr-body.md` first).
+- These Bash rules are load-bearing, not stylistic: `hooks/allow-permissions.sh`
+  auto-allows subagent commands by first-word matching, which is only sound because
+  `bash-guard.sh` guarantees single simple commands. Never relax one without the other.
 
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision
 - Fall back to Grep/Glob for discovery, broad text searches, config files, and non-code files
+- Languages with LSP support enabled in this stack: **C#** (`csharp-lsp` or `roslyn-lsp`), **TypeScript/JavaScript** (`typescript-lsp`), **Python** (`pyright-lsp`), **Lua** (`lua-lsp`). Other languages fall back to Grep/Glob
 - If LSP calls fail or no language server is available for the current language, inform the user and suggest installing one (e.g. `dotnet tool install --global csharp-ls` for .NET)
 
 ## Playwright
