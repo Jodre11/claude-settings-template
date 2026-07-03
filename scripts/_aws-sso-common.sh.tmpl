@@ -2,6 +2,9 @@
 # _aws-sso-common.sh — Shared constants for AWS SSO scripts.
 # Source this at the top of aws-sso-preflight.sh and aws-sso-refresh.sh.
 
+# shellcheck disable=SC2034  # sourced library: these constants are consumed by
+# the scripts that source this file (aws-sso-preflight.sh, aws-sso-refresh.sh),
+# not within this file itself.
 PROFILE="__AWS_PROFILE__"
 SSO_START_URL="__SSO_START_URL__"
 CACHE_DIR="$HOME/.aws/sso/cache"

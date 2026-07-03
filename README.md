@@ -86,6 +86,9 @@ For `settings.json`, `hydrate.sh` **merges** template defaults into the existing
 than overwriting — your local additions to `permissions.allow`, `enabledPlugins`, `env`, etc.
 are preserved across template updates.
 
+The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL` at it
+(self-hosted Docker or a cloud deployment).
+
 ### 4. Run platform setup
 
 ```bash
@@ -155,7 +158,7 @@ are `.gitignore`d in the template repo.
 
 | Template | Generated | Placeholders |
 |---|---|---|
-| `settings.json.tmpl` | `settings.json` | `__AWS_SSO_REFRESH_PATH__`, `__AWS_PROFILE__` |
+| `settings.json.tmpl` | `settings.json` | `__AWS_SSO_REFRESH_PATH__`, `__AWS_PROFILE__`, `__SEARXNG_URL__` |
 | `CLAUDE.md.tmpl` | `CLAUDE.md` | `__DOTFILES_REPO_URL__`, `__CLAUDE_SETTINGS_REPO_URL__` |
 | `scripts/_aws-sso-common.sh.tmpl` | `scripts/_aws-sso-common.sh` | `__AWS_PROFILE__`, `__SSO_START_URL__` |
 | `skills/datadog-log-link/SKILL.md.tmpl` | `skills/datadog-log-link/SKILL.md` | `__DATADOG_SITE__`, `__DATADOG_EXAMPLE_SERVICE__` |

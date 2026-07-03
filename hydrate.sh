@@ -40,6 +40,7 @@ substitute_placeholders() {
     # settings.json
     content="${content//__AWS_SSO_REFRESH_PATH__/${AWS_SSO_REFRESH_PATH:-}}"
     content="${content//__AWS_PROFILE__/${AWS_PROFILE:-}}"
+    content="${content//__SEARXNG_URL__/${SEARXNG_URL:-}}"
 
     # _aws-sso-common.sh
     content="${content//__SSO_START_URL__/${SSO_START_URL:-}}"
@@ -142,8 +143,11 @@ hydrate_settings_json() {
     merged=$(jq -s '
         .[0] as $tmpl | .[1] as $existing |
 
-        # Start with existing as the base (preserves all local additions)
-        $existing
+        # Base: template + existing, shallow-merged — existing wins on shared
+        # top-level keys (preserves all local additions), and tmpl-only keys
+        # (new scalars like preferredNotifChannel) land instead of being
+        # silently dropped. Structured keys are re-merged explicitly below.
+        ($tmpl + $existing)
 
         # Merge env: template provides defaults, existing overrides
         | .env = ($tmpl.env // {} | to_entries) + ($existing.env // {} | to_entries)
