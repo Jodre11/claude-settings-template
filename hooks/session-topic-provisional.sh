@@ -65,9 +65,17 @@ fi
 # @topic from it; for any other command, write nothing and let the command name
 # itself (or stay empty for the Stop hook to handle).
 if [[ "$prompt" == /* ]]; then
-    cmd="${prompt%% *}"          # e.g. /review-gh-pr
+    cmd="${prompt%% *}"          # e.g. /review-gh-pr or /code-review-suite:review-gh-pr
     rest="${prompt#"$cmd"}"      # args after the command
     rest="${rest# }"
+    # Strip an optional /plugin-name: namespace prefix. Claude Code prepends it
+    # when a command name collides across installed plugins (e.g. two review
+    # plugins), so the live prompt is /code-review-suite:review-gh-pr, not the
+    # bare /review-gh-pr. A command name cannot contain a colon, so the segment
+    # after the last colon is the bare command; guard the no-colon case to avoid //.
+    if [[ "$cmd" == *:* ]]; then
+        cmd="/${cmd##*:}"
+    fi
     case "$cmd" in
         /review-gh-pr|/shakedown|/review|/review-pr)
             # Extract a PR reference: a bare number, #123, or a PR URL ending /pull/123.

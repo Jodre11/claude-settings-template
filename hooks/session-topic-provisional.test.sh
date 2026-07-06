@@ -213,7 +213,27 @@ t13() {
     rm -rf "$d"
 }
 
-t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13
+# Test 14: plugin-namespaced /code-review-suite:review-gh-pr <n> → still matched.
+# Claude Code prefixes the plugin namespace when a command name collides across
+# installed plugins (e.g. two review plugins), so the live prompt is
+# `/code-review-suite:review-gh-pr 76`, not the bare `/review-gh-pr 76`.
+t14() {
+    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/prov-t14.XXXX")
+    make_tmux "$d" "c-cf-3a9f" "" ""
+    make_gh "$d" "Add retry backoff to ingest worker"
+    printf '{"session_id":"s14","transcript_path":"/x","cwd":"/a/b","prompt":"/code-review-suite:review-gh-pr 4321"}' \
+        | TMUX=fake PATH="$d:$PATH" "$HOOK"
+    sleep 2
+    if [ ! -f "$d/gh-called" ]; then bad "namespaced /review-gh-pr: gh never called"; rm -rf "$d"; return; fi
+    if [ -f "$d/setopt" ]; then
+        local got; got=$(head -1 "$d/setopt")
+        if printf '%s' "$got" | grep -qE '^@topic add retry backoff to ingest$'; then ok "namespaced /review-gh-pr → PR-title topic (got: '$got')"
+        else bad "namespaced /review-gh-pr wrong topic: '$got'"; fi
+    else bad "namespaced /review-gh-pr: @topic never set"; fi
+    rm -rf "$d"
+}
+
+t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13; t14
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]
