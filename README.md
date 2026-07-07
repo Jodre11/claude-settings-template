@@ -12,6 +12,7 @@ sensitive values out of version control.
 |---|---|
 | `_lib.sh` | Shared helpers for all hooks (input parsing, allow/deny decisions) |
 | `agent-mode-guard.sh` | Prevents subagents inheriting `defaultMode: "plan"` |
+| `api-failure-log.sh` | StopFailure/PostToolUseFailure: appends provider/tool errors to `telemetry/api-failures.jsonl` |
 | `allow-permissions.sh` | Mirrors `settings.json` permission patterns for subagents |
 | `allow-write-permissions.sh` | Mirrors Write/Edit permissions for subagents |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
@@ -149,6 +150,54 @@ sanity-checks them, but can't give the strong guarantee.
 finished handover `consumed`, and the SessionStart hook sweeps consumed files
 plus anything older than `HANDOVER_MAX_AGE_DAYS` (default 30) as a backstop for
 handovers abandoned without an explicit retire.
+
+## Local API-error telemetry
+
+Main-inference API errors (Bedrock/Anthropic 429s, 500s, connection failures) are retried
+inside the Claude Code client and **never** reach the `StopFailure`/`PostToolUseFailure`
+hooks — so `api-failure-log.sh` alone cannot see them. The only reliable local source of the
+status-code split is the OpenTelemetry `claude_code.api_error` event.
+
+This harness captures that split locally, at **zero token/API cost** (telemetry sends nothing
+extra to the model; the only cost is local disk), by exporting the event to a file via a local
+OpenTelemetry collector. A `filter` processor keeps only `api_error`-class events so the file
+stays small and greppable.
+
+**1. Install the collector** (`otelcol-contrib` — the `file` exporter is contrib-only, not in
+core `otelcol`; it is a single static binary, not a Homebrew formula):
+
+```bash
+# Pick the latest version and your platform's asset from:
+#   https://github.com/open-telemetry/opentelemetry-collector-releases/releases
+VER=0.155.0   # check for a newer release
+mkdir -p ~/.claude/bin
+curl -fsSL "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${VER}/otelcol-contrib_${VER}_darwin_arm64.tar.gz" \
+  | tar -xz -C ~/.claude/bin otelcol-contrib
+~/.claude/bin/otelcol-contrib --version
+```
+
+**2. Config** — ships at `telemetry/otelcol-config.yaml` (OTLP receiver on `localhost:4317`
+→ `file` exporter to `~/.claude/telemetry/otel-api-errors.jsonl`, filtered to error events).
+No edits needed; the output path uses `${env:HOME}`.
+
+**3. Run it** — a macOS LaunchAgent (`launchagents/com.claude.otelcol.plist`) runs the
+collector always-on (starts at login, restarts on crash). It uses a `$HOME` exec wrapper so it
+carries no hardcoded username:
+
+```bash
+cp launchagents/com.claude.otelcol.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.claude.otelcol.plist
+lsof -nP -iTCP:4317 -sTCP:LISTEN   # confirm it is listening
+```
+
+**4. Enable telemetry** — the OTEL env vars are already in `settings.json.tmpl`
+(`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=none`,
+`OTEL_EXPORTER_OTLP_PROTOCOL=grpc`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`), so
+`hydrate.sh` installs them. **Start the collector (step 3) before the next `claude` launch**,
+or the exporter emits connection-refused noise. Env changes take effect on the next launch,
+not the live session.
+
+Inspect captured errors with `jq` over `~/.claude/telemetry/otel-api-errors.jsonl`.
 
 ## Template Strategy
 

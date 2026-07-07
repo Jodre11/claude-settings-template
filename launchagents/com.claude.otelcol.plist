@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS LaunchAgent for the local OpenTelemetry collector (Claude Code API errors).
+     Runs otelcol-contrib always-on: starts at login (RunAtLoad) and restarts on
+     crash (KeepAlive). The /bin/bash -c 'exec …' wrapper expands $HOME so this
+     plist carries no hardcoded username — copy it verbatim to
+     ~/Library/LaunchAgents/ and `launchctl load -w` it. See README. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.otelcol</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>exec "$HOME/.claude/bin/otelcol-contrib" --config "$HOME/.claude/telemetry/otelcol-config.yaml"</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/claude-otelcol.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claude-otelcol.log</string>
+</dict>
+</plist>

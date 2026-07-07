@@ -1,0 +1,42 @@
+# Local OpenTelemetry collector for Claude Code API errors.
+#
+# Purpose: capture the status-code split (429 vs 500 vs connection failures) of
+# main-inference API errors, which are retried inside the client and never reach
+# the PostToolUse/Stop failure hooks. The claude_code.api_error OTEL event is the
+# only reliable local source of that split.
+#
+# No token/API cost: telemetry sends nothing extra to the model. The filter
+# processor keeps only error-class events so the on-disk file stays small.
+#
+# Requires the otelcol-contrib distro (the `file` exporter is contrib-only, not
+# in core otelcol). See README "Local API-error telemetry" for install/run.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: localhost:4317
+
+processors:
+  # Drop every log record that is NOT an api_error-class event. Conditions here
+  # specify what to DROP; the nil-guard short-circuits before IsMatch so records
+  # without event.name never raise an OTTL error.
+  filter/apierrors:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'attributes["event.name"] == nil or not IsMatch(attributes["event.name"], "api_error|api_retries_exhausted")'
+
+exporters:
+  file:
+    path: ${env:HOME}/.claude/telemetry/otel-api-errors.jsonl
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [filter/apierrors]
+      exporters: [file]
+  telemetry:
+    logs:
+      level: warn
