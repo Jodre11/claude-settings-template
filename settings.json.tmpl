@@ -4,6 +4,11 @@
     "API_TIMEOUT_MS": "1200000",
     "AWS_PROFILE": "__AWS_PROFILE__",
     "CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF": "1",
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_METRICS_EXPORTER": "none",
     "SEARXNG_URL": "__SEARXNG_URL__"
   },
   "permissions": {
@@ -196,6 +201,28 @@
             "command": "~/.claude/hooks/temp-path-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking temp path..."
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/api-failure-log.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/api-failure-log.sh",
+            "timeout": 5
           }
         ]
       }

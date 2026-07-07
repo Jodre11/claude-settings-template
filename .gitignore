@@ -36,6 +36,12 @@ mcp-needs-auth-cache.json
 # Telemetry and stats
 statsig/
 stats-cache.json
+# Local API-error telemetry: track the collector config, ignore its runtime output.
+telemetry/*.jsonl
+telemetry/otelcol.log
+
+# Local binaries (platform-specific, installed per machine — e.g. otelcol-contrib)
+bin/
 
 # Per-session security warnings
 security_warnings_state_*.json
