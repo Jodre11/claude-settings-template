@@ -1,8 +1,40 @@
 # Secret Context Firewall — Design
 
 **Date:** 2026-07-12
-**Status:** Approved design, pre-implementation
+**Status:** Implemented 2026-07-12. See **Implementation findings** below — the Layer 2
+`updatedToolOutput` redaction does NOT take effect on the shipped Claude Code version, so the
+delivered feature is a **detector + alarm + on-disk scrub**, not a pre-egress preventer. Layer 1
+(block-before-execution) is verified working and IS true prevention.
 **Repos:** `~/.claude` (claude-settings, via `.tmpl` hydration) **and** `~/Repos/claude-settings-template/` (public seed) — ship to both.
+
+## Implementation findings (2026-07-12, live-verified on Claude Code 2.1.207)
+
+The design below was sound against the documented hook API, but live testing after wiring the
+hooks in revealed one load-bearing assumption does not hold on this Claude Code version. Recorded
+honestly here so the design is not read as delivering more than it does:
+
+- **Layer 2 `updatedToolOutput` does NOT redact the result the model sees (CC 2.1.207).** A
+  controlled single-`Bash` probe emitting a dummy AWS-key-shaped value showed the raw value still
+  reaching the model, while the `additionalContext` breach alarm from the *same* hook JSON object
+  *was* applied. Our emitted JSON matches the documented schema exactly
+  (`hookSpecificOutput.updatedToolOutput`), and the docs state it applies to all tools — so this
+  is a **platform limitation on this version, not a hook defect**. Net effect: Layer 2 is a loud
+  **detector**, not the "linchpin preventer" the design called it. The prior-turn/next-turn
+  Bedrock egress of a captured value is therefore NOT closed by Layer 2 here.
+- **Layer 1 IS true prevention and is verified live:** `Read` and `cat` of `**/secrets/**` denied;
+  bare `aws secretsmanager get-secret-value` denied; the same redirected to `/tmp/claude-*`
+  allowed (reached the AWS CLI). These block *before* the value is ever read — the genuine
+  guarantee now rests here.
+- **Layer 3 works:** breach ledger (class + source only, no raw value), macOS notification, and
+  in-conversation `additionalContext` alarm all fire. The on-disk transcript scrub is the
+  after-the-fact backstop and is now the *primary* redaction mechanism given the Layer 2 gap.
+- **Pattern change:** the `bedrock-arn` content pattern was **removed** — it flagged the user's own
+  `modelOverrides` inference-profile ARNs (an identifier, not a regenerable credential) as a breach
+  on every config read. False-positive noise that would train the alarm to be ignored.
+- **Follow-ups:** (a) re-test `updatedToolOutput` after any CC upgrade — if a later version honours
+  it, Layer 2 becomes true prevention as originally designed; (b) consider `suppressOutput` as a
+  partial mitigation; (c) worth an upstream bug report (docs say all-tools; 2.1.207 ignores it for
+  Bash while honouring `additionalContext`).
 
 ## Problem
 
@@ -24,9 +56,11 @@ egresses**, with detection/alarm as the residual-risk net. This is not an alarm-
 
 - `PreToolUse` → `hookSpecificOutput.permissionDecision: "deny"` blocks a tool call before it
   executes. (Already used by this repo's `_lib.sh` `hook_deny`.)
-- `PostToolUse` → `hookSpecificOutput.updatedToolOutput` **replaces the tool result before the
-  model sees it.** This is the linchpin: a secret-shaped value in a result can be scrubbed to a
-  redaction marker *before it reaches Bedrock on the next turn*.
+- `PostToolUse` → `hookSpecificOutput.updatedToolOutput` is **documented** to replace the tool
+  result before the model sees it. This was intended as the linchpin. **NOTE (see Implementation
+  findings): on Claude Code 2.1.207 this field is not applied for Bash results in practice, so the
+  redaction does not actually reach the model — Layer 2 degrades to detection + alarm on this
+  version.**
 - `PostToolUse`/`PreToolUse`/`UserPromptSubmit` → `additionalContext` injects text the model
   reads (used for the loud alarm).
 - `UserPromptSubmit` → `decision: "block"` blocks (and erases) a prompt; it **cannot** rewrite
@@ -34,12 +68,15 @@ egresses**, with detection/alarm as the residual-risk net. This is not an alarm-
 
 ## Honest certainty boundary
 
-- **Known secret shapes and known secret-bearing paths → prevented deterministically** (Layers 1–2).
-- **Novel-shaped secret from an unexpected source → caught-and-scrubbed at the last local moment
-  by the `PostToolUse` scanner, then alarmed loudly.** Scrub happens before Bedrock egress.
-- **Irreducible gap:** a secret whose shape no pattern recognises at all will pass. We minimise
-  this gap (broad high-precision pattern set) but do not claim to eliminate it. This is stated
-  so "high certainty" is not oversold.
+- **Known secret-bearing paths / secret-emitting commands → prevented deterministically by Layer 1**
+  (block before execution). Verified live. This is the real guarantee.
+- **A secret that appears in a tool result (not caught by Layer 1) → detected and alarmed by the
+  `PostToolUse` scanner, and scrubbed from the on-disk transcript.** On CC 2.1.207 it is **NOT**
+  scrubbed from the copy the model/Bedrock see (the `updatedToolOutput` gap) — so for this class,
+  the design delivers *fast detection + regenerate-me alarm*, not prevention of the next-turn
+  egress. Do not oversell this as prevention on the current version.
+- **Irreducible gap:** a secret whose shape no pattern recognises at all will pass Layer 2 entirely
+  (no detection). Layer 1 still prevents it if it lives on a known path / behind a known command.
 
 ## Architecture — three layers + cross-cutting
 
@@ -98,15 +135,18 @@ once shipped, adding the runtime-fetch guard + output scrubber the deny list can
 Scan the submitted prompt against the secret-shape patterns; `decision: "block"` + reason if a
 live credential shape is present, so a pasted key never enters context.
 
-### Layer 2 — Scrub before egress (linchpin)
+### Layer 2 — Scrub before egress (intended linchpin; detector-only on CC 2.1.207)
 
 **`PostToolUse` (all tools)** (`hooks/secret-output-scrubber.sh`):
 Scan `tool_response` against **secret-shape patterns only** (high precision — the
 `ALWAYS_PATTERNS` set, NOT the identity/org patterns, which would be noisy and are a git-time
 concern). On match:
 1. Emit `hookSpecificOutput.updatedToolOutput` with each matched span replaced by
-   `[REDACTED-SECRET-BREACH:<class>]`. The model/Bedrock never receive the raw value.
-2. Trigger Layer 3 (breach response).
+   `[REDACTED-SECRET-BREACH:<class>]`. **Intended:** the model/Bedrock never receive the raw
+   value. **Actual on CC 2.1.207:** the field is not applied, so the raw value still reaches the
+   model — the redaction only lands in the on-disk transcript scrub (Layer 3.4). Re-test after CC
+   upgrades.
+2. Trigger Layer 3 (breach response) — this is what actually fires on this version.
 
 Because Claude Code hooks are global, this also covers **MCP tool results and subagent tool
 calls** — satisfying the subagent/MCP propagation surface.
@@ -198,7 +238,9 @@ Following repo convention (`*.test.sh` next to each hook, e.g. `bash-guard.test.
 
 1. Novel-shaped secret unseen by patterns → passes. Mitigation: broad high-precision set;
    loud alarm on any recognised shape; periodic pattern review.
-2. `updatedToolOutput` timing vs. transcript persistence → transcript scrub is the backstop;
-   confirm behaviour empirically before relying on it.
+2. `updatedToolOutput` **not applied on CC 2.1.207** (confirmed empirically, not just a timing
+   risk) → the on-disk transcript scrub is now the *primary*, not backup, redaction; the model
+   still sees the raw value in-turn. Re-test on CC upgrade; if honoured, Layer 2 becomes true
+   prevention. Consider an upstream bug report.
 3. Prior-turn Bedrock egress cannot be recalled → the alarm's job is speed of regeneration,
    which the design maximises. This is inherent, not a defect.

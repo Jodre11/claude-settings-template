@@ -12,7 +12,6 @@ SECRET_CONTENT_PATTERNS=(
     'github-pat|ghp_[0-9A-Za-z]{36}'
     'github-fine-pat|github_pat_[0-9A-Za-z_]{82}'
     'slack-token|xox[baprs]-[0-9A-Za-z-]{10,}'
-    'bedrock-arn|application-inference-profile/[a-z0-9]{10,16}'
 )
 
 # Secret-bearing path globs (bash `case` patterns). '*/secrets/*' matches the
@@ -44,13 +43,6 @@ SECRET_PATH_ALLOW=(
     '*config.env.example'
     '*.example'
 )
-
-# Combined ERE of just the regex halves, cached on first use.
-_secret_combined_re() {
-    local entry parts=()
-    for entry in "${SECRET_CONTENT_PATTERNS[@]}"; do parts+=("${entry#*|}"); done
-    local IFS='|'; printf '%s' "${parts[*]}"
-}
 
 # scan_content_for_secrets [text]: reads $1 or stdin. Prints matched class per
 # line. Returns 0 if any secret found, 1 if clean.

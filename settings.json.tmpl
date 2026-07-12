@@ -153,6 +153,12 @@
             "command": "~/.claude/hooks/session-topic-provisional.sh",
             "timeout": 5,
             "statusMessage": "Setting provisional topic..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/secret-prompt-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Screening prompt for secrets..."
           }
         ]
       }
@@ -182,6 +188,23 @@
             "command": "~/.claude/hooks/bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking Bash rules..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/secret-bash-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Screening for secrets..."
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/secret-path-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking secret paths..."
           }
         ]
       },
@@ -210,6 +233,18 @@
             "command": "~/.claude/hooks/temp-path-guard.sh",
             "timeout": 5,
             "statusMessage": "Checking temp path..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/secret-output-scrubber.sh",
+            "timeout": 5,
+            "statusMessage": "Scrubbing tool output for secrets..."
           }
         ]
       }

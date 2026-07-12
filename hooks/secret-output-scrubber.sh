@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # secret-output-scrubber.sh — PostToolUse hook (all tools). Scans the tool
-# result for secret value shapes; if any are present, replaces them with a
-# marker via updatedToolOutput (before the model sees the result) and fires the
-# breach responder. Fail SAFE: if the result cannot be parsed but the raw hook
-# input contains a secret shape, redact the whole result.
+# result for secret value shapes; if any are present, emits a redacted result
+# via updatedToolOutput and fires the breach responder. Fail SAFE: if the result
+# cannot be parsed but the raw hook input contains a secret shape, redact the
+# whole result.
+#
+# KNOWN LIMITATION (Claude Code 2.1.207, verified 2026-07-12): updatedToolOutput
+# is NOT applied to the result the model sees on this version (the additionalContext
+# alarm from the same JSON IS applied). So in practice this hook DETECTS + ALARMS +
+# triggers the on-disk transcript scrub, but does NOT redact the in-turn result the
+# model/Bedrock receive. Re-test after CC upgrades; if honoured, this becomes true
+# pre-egress prevention as designed. See docs/superpowers/specs/2026-07-12-*.md.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
