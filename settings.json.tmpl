@@ -88,7 +88,16 @@
       "Bash(open *)",
       "Bash(printf *)"
     ],
-    "deny": []
+    "deny": [
+      "Read(**/secrets/**)",
+      "Read(**/.strongbox-keyid)",
+      "Read(~/.strongbox_keyring)",
+      "Read(**/*.secret)",
+      "Bash(cat **/secrets/**)",
+      "Bash(strings **/secrets/**)",
+      "Bash(xxd **/secrets/**)",
+      "Bash(*strongbox_keyring*)"
+    ]
   },
   "sandbox": {
     "allowedDomains": [

@@ -77,12 +77,22 @@ high-precision with zero false positives. Add to the denylist:
 The public template ships this as a commented placeholder showing where an org plugs in its own
 secret-path convention; the concrete the organisation entries stay in `~/.claude` only.
 
-**Interim stopgap already applied (2026-07-12):** pending the hook rollout, a `permissions.deny`
-block was added to `internal-repo-g/.claude/settings.local.json` and
-`internal-repo-f/.claude/settings.local.json` denying `Read`/`cat`/`strings`/`xxd` of
-`**/secrets/**` and the strongbox key files. These `settings.local.json` files are git-ignored, so
-the deny lives per-checkout; the hook-based firewall supersedes them once shipped (user-level,
-repo-independent, and covers the runtime-fetch + scrub surfaces the deny list cannot).
+**Scale finding (2026-07-12):** `~/Repos/<checkout>` holds ~37 repos; **7** use the strongbox
+`**/secrets/**` filter (`internal-repo-a`, `internal-repo-b`, `internal-repo-c`,
+`internal-repo-d`, `internal-repo-e`, `internal-repo-f`, `internal-repo-g`),
+with **~180 `secrets/` directories** across the working trees — each decrypted plaintext, each a
+read-into-context risk. This scale rules out per-repo `settings.local.json` deny blocks (they don't
+cover future clones or worktrees and guarantee gaps).
+
+**Interim stopgap applied (2026-07-12) — user-level, global:** the denylist was promoted to the
+**user-level `permissions.deny`** in `~/.claude/settings.json` (immediate effect) and its hydration
+source `~/.claude/settings.json.tmpl`, plus the paired public template's `settings.json.tmpl`:
+`Read(**/secrets/**)`, `Read(**/.strongbox-keyid)`, `Read(**/*.secret)`,
+`Bash(cat|strings|xxd **/secrets/**)` (the existing `~/.strongbox_keyring` entries were retained).
+This one config covers all 7 strongbox repos, all ~180 dirs, and every future clone — in every
+repo, not just the organisation (global scope chosen deliberately: defensive by default). The two per-repo
+blocks initially added were reverted as redundant. The hook-based firewall supersedes this stopgap
+once shipped, adding the runtime-fetch guard + output scrubber the deny list cannot provide.
 
 **`UserPromptSubmit` — inbound prompt scan** (`hooks/secret-prompt-guard.sh`):
 Scan the submitted prompt against the secret-shape patterns; `decision: "block"` + reason if a
