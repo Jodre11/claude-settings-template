@@ -48,6 +48,28 @@ hook_deny() {
     exit 0
 }
 
+# Emit a PostToolUse decision that REPLACES the tool result the model sees, and
+# optionally injects additionalContext (the breach alarm). Exits 0.
+hook_post_redact() {
+    local updated ctx
+    updated=$(_json_escape "$1")
+    if [[ -n "${2:-}" ]]; then
+        ctx=$(_json_escape "$2")
+        printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"%s","additionalContext":"%s"}}' "$updated" "$ctx"
+    else
+        printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"%s"}}' "$updated"
+    fi
+    exit 0
+}
+
+# Emit a UserPromptSubmit block decision (top-level decision, per docs). Exits 0.
+hook_prompt_block() {
+    local r
+    r=$(_json_escape "$1")
+    printf '{"decision":"block","reason":"%s"}' "$r"
+    exit 0
+}
+
 # Returns 0 if the command is a git invocation whose subcommand mutates the
 # working tree, index, refs, or history. Skips git global options (-C <path>,
 # -c <kv>, --git-dir/--work-tree/--namespace and their =forms, -p/--paginate/
