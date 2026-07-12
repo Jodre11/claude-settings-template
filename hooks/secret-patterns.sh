@@ -19,6 +19,7 @@ SECRET_CONTENT_PATTERNS=(
 # the organisation strongbox convention (files decrypted to plaintext in the working tree).
 SECRET_PATH_GLOBS=(
     '*/secrets/*'
+    '*/secrets'
     '*.secret'
     '*.pem'
     '*.p12'
