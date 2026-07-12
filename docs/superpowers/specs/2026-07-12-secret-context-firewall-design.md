@@ -66,6 +66,24 @@ Deny reads of secret-bearing paths. Initial denylist:
 `*.tfvars` containing secrets, `credentials.json`, `.npmrc` (auth token), `.pgpass`.
 `config.env.example` and `*.tmpl` are allowlisted (placeholders, not real values).
 
+**the organisation org-specific convention (local `.tmpl` only — placeholder slot in the public template):**
+the organisation repos encrypt secrets at rest in git via [Strongbox](https://github.com/uw-labs/strongbox),
+keyed on a `**/secrets/**` directory convention (`.gitattributes`: `**/secrets/** filter=strongbox`).
+Critically, **strongbox protects secrets in git, not in the working tree** — the checked-out copy is
+decrypted plaintext, so a `Read`/`cat` of a file under `**/secrets/**` pulls the decrypted secret
+straight into context. This is a deterministic **path** convention (not a value shape), so it is
+high-precision with zero false positives. Add to the denylist:
+`**/secrets/**`, `**/.strongbox-keyid`, `**/.strongbox_keyring`, `*.secret`.
+The public template ships this as a commented placeholder showing where an org plugs in its own
+secret-path convention; the concrete the organisation entries stay in `~/.claude` only.
+
+**Interim stopgap already applied (2026-07-12):** pending the hook rollout, a `permissions.deny`
+block was added to `internal-repo-g/.claude/settings.local.json` and
+`internal-repo-f/.claude/settings.local.json` denying `Read`/`cat`/`strings`/`xxd` of
+`**/secrets/**` and the strongbox key files. These `settings.local.json` files are git-ignored, so
+the deny lives per-checkout; the hook-based firewall supersedes them once shipped (user-level,
+repo-independent, and covers the runtime-fetch + scrub surfaces the deny list cannot).
+
 **`UserPromptSubmit` — inbound prompt scan** (`hooks/secret-prompt-guard.sh`):
 Scan the submitted prompt against the secret-shape patterns; `decision: "block"` + reason if a
 live credential shape is present, so a pasted key never enters context.
@@ -147,8 +165,10 @@ Following repo convention (`*.test.sh` next to each hook, e.g. `bash-guard.test.
 - `secret-bash-guard.test.sh` — denies `cat .env`, `env`, `echo $AWS_SECRET`,
   `aws secretsmanager get-secret-value` (bare); allows redirect-to-`/tmp/claude-*` and pipe forms;
   allows benign `cat README.md`.
-- `secret-path-guard.test.sh` — denies `.env`/`*.pem`/`~/.aws/credentials`; allows
-  `config.env.example`, `*.pub`, `*.tmpl`.
+- `secret-path-guard.test.sh` — denies `.env`/`*.pem`/`~/.aws/credentials` and the the organisation
+  `**/secrets/**` convention (incl. `.strongbox-keyid`, `.strongbox_keyring`, `*.secret`);
+  allows `config.env.example`, `*.pub`, `*.tmpl`, and a benign `secrets.md` doc that is not under
+  a `secrets/` directory (guard against over-matching).
 - `secret-prompt-guard.test.sh` — blocks a prompt containing an `AKIA…` key; passes clean prose.
 - `secret-output-scrubber.test.sh` — given a `tool_response` with an AWS key / private-key header,
   asserts `updatedToolOutput` contains the marker and not the raw value; asserts the alarm fires;
