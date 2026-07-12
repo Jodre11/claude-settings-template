@@ -91,10 +91,13 @@ redact_secrets() {
 # path_is_secret <path>: 0 if secret-bearing and not allowlisted, else 1.
 path_is_secret() {
     local p="$1" g
+    # $g is an intentional glob pattern here — do NOT quote it (SC2254).
     for g in "${SECRET_PATH_ALLOW[@]}"; do
+        # shellcheck disable=SC2254
         case "$p" in $g) return 1 ;; esac
     done
     for g in "${SECRET_PATH_GLOBS[@]}"; do
+        # shellcheck disable=SC2254
         case "$p" in $g) return 0 ;; esac
     done
     return 1
@@ -108,6 +111,7 @@ path_is_scan_exempt() {
     local p="$1" g
     [[ -z "$p" ]] && return 1
     for g in "${SECRET_SCAN_SKIP_PATHS[@]}"; do
+        # shellcheck disable=SC2254
         case "$p" in $g) return 0 ;; esac
     done
     return 1

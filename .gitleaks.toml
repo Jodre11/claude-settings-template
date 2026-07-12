@@ -68,4 +68,11 @@ paths = [
     '''.githooks/pre-commit''',
     '''.gitleaks.toml''',
     '''config.env.example''',
+    # Secret context firewall: the recognition library defines the secret-shape
+    # regexes it hunts for, its tests embed dummy example vectors, and the design
+    # doc quotes the pattern strings — all necessarily contain the patterns being
+    # detected. None hold a real credential.
+    '''hooks/secret-patterns\.sh''',
+    '''hooks/secret-.*\.test\.sh''',
+    '''docs/superpowers/specs/.*secret-context-firewall.*\.md''',
 ]
