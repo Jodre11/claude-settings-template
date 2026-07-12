@@ -19,6 +19,8 @@ SECRET_CONTENT_PATTERNS=(
 SECRET_PATH_GLOBS=(
     '*/secrets/*'
     '*/secrets'
+    'secrets/*'
+    'secrets'
     '*.secret'
     '*.pem'
     '*.p12'
@@ -42,6 +44,23 @@ SECRET_PATH_ALLOW=(
     '*.tmpl'
     '*config.env.example'
     '*.example'
+)
+
+# Self-referential paths whose CONTENTS legitimately embed secret-shaped example
+# vectors: the pattern library itself, the firewall tests, the design docs, and
+# the SDD scratch dir (diffs/reports). The PostToolUse scrubber skips scanning a
+# tool result whose target is one of these — otherwise every Read/Grep/cat of the
+# firewall's own source fires a false breach alarm, training the alarm to be
+# ignored. This is a PATH skip, NOT a content allowlist: a real secret in any
+# ordinary file is still detected; only the firewall's own definition/test/doc
+# files are exempt. Kept tight so collision with a genuine secret file is
+# implausible; Layer 1 still guards the original source reads regardless.
+SECRET_SCAN_SKIP_PATHS=(
+    '*/hooks/secret-patterns.sh'
+    '*/hooks/secret-*.test.sh'
+    '*secret-context-firewall*'
+    '*/breach-ledger.log'
+    '*/.superpowers/*'
 )
 
 # scan_content_for_secrets [text]: reads $1 or stdin. Prints matched class per
@@ -76,6 +95,19 @@ path_is_secret() {
         case "$p" in $g) return 1 ;; esac
     done
     for g in "${SECRET_PATH_GLOBS[@]}"; do
+        case "$p" in $g) return 0 ;; esac
+    done
+    return 1
+}
+
+# path_is_scan_exempt <path>: 0 if the path is a firewall self-definition/test/
+# doc file whose contents legitimately embed example secret vectors (so the
+# output scrubber should NOT scan a result targeting it), else 1. Empty path
+# (many tools carry no path) is never exempt.
+path_is_scan_exempt() {
+    local p="$1" g
+    [[ -z "$p" ]] && return 1
+    for g in "${SECRET_SCAN_SKIP_PATHS[@]}"; do
         case "$p" in $g) return 0 ;; esac
     done
     return 1

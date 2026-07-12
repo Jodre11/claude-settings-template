@@ -23,5 +23,14 @@ fi
 out=$(jq -nc '{tool_name:"Read",transcript_path:"",tool_response:"nothing secret here"}' | "$HOOK")
 if [[ -z "$out" ]]; then ok "clean result passes through"; else bad "clean result wrongly modified"; fi
 
+# Finding B: a Read whose target is a firewall self-definition file is scan-exempt
+# even though its result embeds a vector -> no alarm, no output (pass-through).
+out=$(jq -nc '{tool_name:"Read",transcript_path:"",tool_input:{file_path:"x/hooks/secret-patterns.sh"},tool_response:"line AKIAIOSFODNN7EXAMPLE end"}' | "$HOOK")
+if [[ -z "$out" ]]; then ok "scan-exempt path not alarmed"; else bad "scan-exempt path wrongly scanned"; fi
+
+# Finding B negative: same vector in an ORDINARY file's result is still scanned.
+out=$(jq -nc '{tool_name:"Read",transcript_path:"",tool_input:{file_path:"src/config.js"},tool_response:"key AKIAIOSFODNN7EXAMPLE end"}' | "$HOOK")
+if [[ "$out" == *'"additionalContext"'* ]]; then ok "ordinary file still scanned"; else bad "ordinary file wrongly exempted"; fi
+
 rm -rf "$TMP"
 echo "-----"; echo "passed: $pass  failed: $fail"; [ "$fail" -eq 0 ]
