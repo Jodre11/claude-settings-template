@@ -43,7 +43,7 @@ if classes=$(scan_content_for_secrets "$scan_target"); then
         redacted="[REDACTED-SECRET-BREACH: tool result withheld — a secret value ($csv) was detected and could not be selectively redacted]"
     fi
 
-    alarm="⛔ SECRET BREACH: a value matching [$csv] was found in the result of ${tool} and REDACTED before reaching the model. This credential may be exposed — REGENERATE IT NOW. Logged to ~/.claude/breach-ledger.log."
+    alarm="⛔ SECRET BREACH: a value matching [$csv] was detected in the result of ${tool} and logged. Depending on the Claude Code version, the raw value may still be present in this turn's context — treat it as exposed and REGENERATE IT NOW. Logged to ~/.claude/breach-ledger.log."
     hook_post_redact "$redacted" "$alarm"
 fi
 exit 0
