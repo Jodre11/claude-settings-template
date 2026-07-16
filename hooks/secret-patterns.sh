@@ -14,8 +14,8 @@ SECRET_CONTENT_PATTERNS=(
     'slack-token|xox[baprs]-[0-9A-Za-z-]{10,}'
 )
 
-# Secret-bearing path globs (bash `case` patterns). '*/secrets/*' matches the
-# the organisation strongbox convention (files decrypted to plaintext in the working tree).
+# Secret-bearing path globs (bash `case` patterns). '*/secrets/*' matches an
+# at-rest git-filter convention (files decrypted to plaintext in the working tree).
 SECRET_PATH_GLOBS=(
     '*/secrets/*'
     '*/secrets'

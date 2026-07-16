@@ -103,33 +103,32 @@ Deny reads of secret-bearing paths. Initial denylist:
 `*.tfvars` containing secrets, `credentials.json`, `.npmrc` (auth token), `.pgpass`.
 `config.env.example` and `*.tmpl` are allowlisted (placeholders, not real values).
 
-**the organisation org-specific convention (local `.tmpl` only — placeholder slot in the public template):**
-the organisation repos encrypt secrets at rest in git via [Strongbox](https://github.com/uw-labs/strongbox),
-keyed on a `**/secrets/**` directory convention (`.gitattributes`: `**/secrets/** filter=strongbox`).
-Critically, **strongbox protects secrets in git, not in the working tree** — the checked-out copy is
-decrypted plaintext, so a `Read`/`cat` of a file under `**/secrets/**` pulls the decrypted secret
-straight into context. This is a deterministic **path** convention (not a value shape), so it is
-high-precision with zero false positives. Add to the denylist:
+**Org-specific secret-path convention (local `.tmpl` only — placeholder slot in the public template):**
+Some organisations encrypt secrets at rest in git via a tool such as
+[Strongbox](https://github.com/uw-labs/strongbox), keyed on a directory convention
+(e.g. `.gitattributes`: `**/secrets/** filter=strongbox`). Critically, **an at-rest git filter
+protects secrets in git, not in the working tree** — the checked-out copy is decrypted plaintext,
+so a `Read`/`cat` of a file under such a directory pulls the decrypted secret straight into context.
+This is a deterministic **path** convention (not a value shape), so it is high-precision with zero
+false positives. Where an org uses such a convention, add its paths to the denylist, e.g.:
 `**/secrets/**`, `**/.strongbox-keyid`, `**/.strongbox_keyring`, `*.secret`.
 The public template ships this as a commented placeholder showing where an org plugs in its own
-secret-path convention; the concrete the organisation entries stay in `~/.claude` only.
+secret-path convention; concrete org-specific entries stay in the private downstream repo only.
 
-**Scale finding (2026-07-12):** `~/Repos/<checkout>` holds ~37 repos; **7** use the strongbox
-`**/secrets/**` filter (`internal-repo-a`, `internal-repo-b`, `internal-repo-c`,
-`internal-repo-d`, `internal-repo-e`, `internal-repo-f`, `internal-repo-g`),
-with **~180 `secrets/` directories** across the working trees — each decrypted plaintext, each a
-read-into-context risk. This scale rules out per-repo `settings.local.json` deny blocks (they don't
-cover future clones or worktrees and guarantee gaps).
+**Scale consideration:** a monorepo-style checkout can hold dozens of repos, of which several may
+use an at-rest git filter across many `secrets/` directories — each decrypted plaintext, each a
+read-into-context risk. That scale rules out per-repo `settings.local.json` deny blocks (they don't
+cover future clones or worktrees and leave guarantee gaps).
 
-**Interim stopgap applied (2026-07-12) — user-level, global:** the denylist was promoted to the
-**user-level `permissions.deny`** in `~/.claude/settings.json` (immediate effect) and its hydration
-source `~/.claude/settings.json.tmpl`, plus the paired public template's `settings.json.tmpl`:
+**Interim stopgap pattern — user-level, global:** promote the denylist to the **user-level
+`permissions.deny`** in the private `settings.json` (immediate effect) and its hydration source
+`settings.json.tmpl`, plus the paired public template's `settings.json.tmpl`:
 `Read(**/secrets/**)`, `Read(**/.strongbox-keyid)`, `Read(**/*.secret)`,
-`Bash(cat|strings|xxd **/secrets/**)` (the existing `~/.strongbox_keyring` entries were retained).
-This one config covers all 7 strongbox repos, all ~180 dirs, and every future clone — in every
-repo, not just the organisation (global scope chosen deliberately: defensive by default). The two per-repo
-blocks initially added were reverted as redundant. The hook-based firewall supersedes this stopgap
-once shipped, adding the runtime-fetch guard + output scrubber the deny list cannot provide.
+`Bash(cat|strings|xxd **/secrets/**)` (retain any existing keyring entries). One user-level config
+covers every matching repo and every future clone — in every repo (global scope chosen
+deliberately: defensive by default). Any per-repo blocks are then redundant. The hook-based firewall
+supersedes this stopgap once shipped, adding the runtime-fetch guard + output scrubber the deny list
+cannot provide.
 
 **`UserPromptSubmit` — inbound prompt scan** (`hooks/secret-prompt-guard.sh`):
 Scan the submitted prompt against the secret-shape patterns; `decision: "block"` + reason if a
@@ -215,7 +214,7 @@ Following repo convention (`*.test.sh` next to each hook, e.g. `bash-guard.test.
 - `secret-bash-guard.test.sh` — denies `cat .env`, `env`, `echo $AWS_SECRET`,
   `aws secretsmanager get-secret-value` (bare); allows redirect-to-`/tmp/claude-*` and pipe forms;
   allows benign `cat README.md`.
-- `secret-path-guard.test.sh` — denies `.env`/`*.pem`/`~/.aws/credentials` and the the organisation
+- `secret-path-guard.test.sh` — denies `.env`/`*.pem`/`~/.aws/credentials` and the org
   `**/secrets/**` convention (incl. `.strongbox-keyid`, `.strongbox_keyring`, `*.secret`);
   allows `config.env.example`, `*.pub`, `*.tmpl`, and a benign `secrets.md` doc that is not under
   a `secrets/` directory (guard against over-matching).

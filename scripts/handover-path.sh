@@ -6,7 +6,7 @@
 # Key rule (matches the staleness model — see README "Handover workflow"):
 #   - Inside a git repo: key on `git rev-parse --show-toplevel` so invoking from
 #     the repo root or any subdirectory maps to the SAME handover.
-#   - Outside a repo (parent dirs like ~/Repos, ~/Repos/<checkout>, or $HOME): key on
+#   - Outside a repo (parent dirs like ~/Repos, a multi-repo checkout dir, or $HOME): key on
 #     the cwd absolute path. Reconciliation degrades to trust-the-file mode.
 #
 # Filename: <basename>-<8hex-of-root-path>.md
