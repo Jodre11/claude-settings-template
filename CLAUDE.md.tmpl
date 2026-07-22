@@ -168,6 +168,9 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
   `spec-reviewer-task-3`)
 - This enables `SendMessage({to: name})` for diagnosing agent failures or
   assessing results while agents run
+- When dispatching a subagent, state in its spawn prompt that its plain-text
+  output is invisible to the controller and it must deliver its entire result via
+  `SendMessage` to main — subagents otherwise go idle without ever reporting back
 
 ## Bash
 - Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
