@@ -70,16 +70,21 @@ case "$base" in
     md2clip)        hook_allow "$REASON" ;;
 
     # General utilities
-    curl|jq|cp|chmod|python3|brew|open|grep|aws|command|whisper-cli|tmux)
+    curl|jq|cp|chmod|python3|brew|open|grep|aws|command|whisper-cli|tmux|web-search)
                     hook_allow "$REASON" ;;
 
     # Read-only utilities used by code reviewers
-    wc|tail|xxd|find|head|sort|uniq|diff|file|echo|printf|awk)
+    wc|tail|xxd|find|head|sort|uniq|diff|file|echo|printf|awk|printenv)
                     hook_allow "$REASON" ;;
 
     # Temp directory operations — only allow for /tmp/claude-* paths
     mkdir)
         if [[ "$cmd" == "mkdir -p /tmp/claude-"* ]]; then
+            hook_allow "$REASON"
+        fi
+        ;;
+    mktemp)
+        if [[ "$cmd" == *"/tmp/claude-"* ]]; then
             hook_allow "$REASON"
         fi
         ;;

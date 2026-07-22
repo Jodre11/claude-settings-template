@@ -41,15 +41,15 @@ sed -i '' $'s/\xe2\x80\x9d/"/g' "$md_file"
 
 # --- Convert to HTML ----------------------------------------------------------
 
-html=$(pandoc "$md_file" -f markdown -t html --ascii)
+html=$(pandoc "$md_file" -f markdown -t html --ascii --wrap=none)
 
 # --- Post-process HTML for Teams ----------------------------------------------
 
 # 1. Replace non-breaking spaces pandoc inserts after abbreviations
 html=$(echo "$html" | sed 's/&#xA0;/ /g')
 
-# 2. Replace smart curly quotes
-html=$(echo "$html" | sed "s/&#x2019;/'/g")
+# 2. Replace smart curly quotes (single + double, both directions) with ASCII
+html=$(echo "$html" | sed "s/&#x2018;/'/g; s/&#x2019;/'/g; s/&#x201C;/\"/g; s/&#x201D;/\"/g")
 
 # 3. Join lines within <p> blocks (pandoc wraps long lines; Teams renders them
 #    as line breaks, splitting sentences mid-flow)
