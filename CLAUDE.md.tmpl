@@ -190,8 +190,8 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision
 - Fall back to Grep/Glob for discovery, broad text searches, config files, and non-code files
-- Languages with LSP support enabled in this stack: **C#** (`csharp-lsp` or `roslyn-lsp`), **TypeScript/JavaScript** (`typescript-lsp`), **Python** (`pyright-lsp`), **Lua** (`lua-lsp`). Other languages fall back to Grep/Glob
-- If LSP calls fail or no language server is available for the current language, inform the user and suggest installing one (e.g. `dotnet tool install --global csharp-ls` for .NET)
+- Languages with LSP support enabled in this stack: **C#** (`roslyn-lsp`, wrapping Microsoft's `roslyn-language-server`), **TypeScript/JavaScript** (`typescript-lsp`), **Python** (`pyright-lsp`), **Lua** (`lua-lsp`). Other languages fall back to Grep/Glob
+- If LSP calls fail or no language server is available for the current language, inform the user and suggest installing one
 
 ## Playwright
 - Prefer the `playwright-cli` skill over `mcp__playwright__*` tools — it is less token expensive
