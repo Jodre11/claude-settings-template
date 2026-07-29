@@ -32,6 +32,8 @@ case "$model_id" in
     *opus*)   model_type=opus ;;
     *sonnet*) model_type=sonnet ;;
     *haiku*)  model_type=haiku ;;
+    *fable*)  model_type=fable ;;
+    *mythos*) model_type=mythos ;;
     *)
         if [[ -n "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}" && "$model_id" == "$ANTHROPIC_DEFAULT_OPUS_MODEL" ]]; then
             model_type=opus
