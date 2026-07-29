@@ -1,6 +1,6 @@
-# CRITICAL VOCABULARY — Read Before Responding
+# Vocabulary — "template repo" vs ".tmpl file"
 
-**"the template repo" is NOT the same as "the .tmpl file". Do not conflate them.**
+"The template repo" and "the .tmpl file" are different things — do not conflate them.
 
 | Phrase | Refers to |
 |---|---|
@@ -17,7 +17,7 @@ A change can need to land in **both**: the user's personal `claude-settings`/`.c
 clone (so it hydrates locally) AND this template repo (so the public seed ships with it).
 These are two distinct edits in two distinct git repos with two distinct push targets.
 
-If genuinely ambiguous, ASK. Do not assume.
+If genuinely ambiguous, ask.
 
 # Global Settings
 
@@ -99,8 +99,6 @@ be compiled and installed on a new machine:
 - Don't guess. If unsure, search using MCPs, the `web-search` skill, or ask the user
 - When you need URLs, documentation, or current information: use the `web-search` skill rather
   than guessing or declining. It queries a SearXNG instance (set SEARXNG_URL — see README) — no API key, no tracking.
-- Suggest adding tests for core functionality
-- Suggest keeping .md files up to date
 
 ## Handover workflow
 - When a superpowers phase completes (the end of brainstorming, planning, or an
@@ -148,16 +146,11 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 - The interactive session has three modes (toggled with Shift+Tab): **default** (prompts on each
   tool use), **accept-edits** (auto-approves Write/Edit), and **plan** (read-only, no Write/Edit/Bash).
   Plan mode is the default I usually start in — Shift+Tab cycles through modes
-- Subagents inherit the parent's mode unless an explicit override is set (see Agents below)
 - For long-running Bash commands or Agent dispatches that don't gate the next step, prefer
   `run_in_background: true` — the system notifies on completion so I don't have to poll. Reserve
   foreground execution for cases where the result must inform the very next tool call
 
 ## Agents
-- Always set `mode: "auto"` when dispatching agents — when the interactive session is in
-  plan mode (entered via Shift+Tab), subagents inherit it and stall when they need
-  Write/Edit tools. `"auto"` lets subagents execute autonomously while the parent retains
-  plan-mode control
 - Always set the `name` parameter when dispatching agents via the Agent tool
 - Names must be kebab-case, descriptive, and unique within a session
 - For predefined agents with definition files: use the agent definition name
