@@ -29,7 +29,8 @@ sensitive values out of version control.
 | `aws-sso-refresh.sh` | Smart AWS SSO login for `awsAuthRefresh` |
 | `setup-platform.sh` | Configure platform-specific settings (macOS/Linux/WSL/Windows) |
 | `sso-cache-check.py` | AWS SSO cache walker for token validity checks |
-| `statusline.sh` | ANSI-coloured status line renderer |
+| `statusline.sh` | Two-row status line renderer; segments self-hide when their payload data is absent |
+| `tests/statusline-test.sh` | Fixture-driven tests for `statusline.sh` (run directly, no framework) |
 | `handover-path.sh` | Resolves the handover-artifact path for the cwd (git root or cwd key); shared by the hook and commands |
 
 ### Skills
