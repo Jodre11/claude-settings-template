@@ -1,6 +1,6 @@
 ---
 name: explore-haiku
-description: Cheap read-only codebase search for file discovery and symbol location — use instead of the built-in Explore agent, which may inherit the parent model rather than running on a cheap one. Returns file paths and line ranges, never judgements. Not for debugging, design decisions, or anything needing exact file content.
+description: Cheap read-only search for mechanical location tasks — find declarations, find references, enumerate symbols or files matching a pattern. Materially cheaper than the built-in Explore agent, which may inherit the parent model rather than running on a cheap one. Not for judgement-shaped questions ("what counts as X", "which is the real entry point"), debugging, design decisions, or anything needing exact file content — its output discipline is unreliable there and its recall is unmeasured.
 model: haiku
 tools: Read, Grep, Glob, LSP
 ---
