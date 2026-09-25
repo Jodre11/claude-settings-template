@@ -46,8 +46,10 @@ editing files here. The repo is cloned independently on each machine (macOS, Win
 `~/.claude/tools/` contains source for custom CLI utilities. These are version-controlled but must
 be compiled and installed on a new machine:
 
-- `md2clip` — converts Markdown to Teams-compatible HTML and copies to macOS clipboard (used by
+- `md2clip` — converts Markdown to rich-text HTML and copies to macOS clipboard (used by
   `md-to-clipboard` skill). Install: `ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`
+  - Default target is Teams. `--outlook` keeps `<p>` spacing and adds table borders, which
+    Teams strips and Outlook requires. `--debug` prints the HTML instead of copying.
   (macOS only)
 
 ## Related Repositories
