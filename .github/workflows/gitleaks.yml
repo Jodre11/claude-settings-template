@@ -7,14 +7,24 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   gitleaks:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    # gitleaks-action lists a pull request's commits through the REST API.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          # The action defaults to gitleaks 8.24.3. Pin the current release so
+          # scans use current rules and support multiple [[allowlists]] (8.25.0+).
+          GITLEAKS_VERSION: "8.30.1"
