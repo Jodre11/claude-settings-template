@@ -86,7 +86,9 @@ cp config.env.example config.env
 This generates real config files from `.tmpl` templates using your `config.env` values.
 For `settings.json`, `hydrate.sh` **merges** template defaults into the existing file rather
 than overwriting — your local additions to `permissions.allow`, `enabledPlugins`, `env`, etc.
-are preserved across template updates.
+are preserved across template updates. A key or list entry the template lists under
+`__remove__` is deleted instead (the header of `hydrate.sh` gives the format). `settings.json`
+itself is generated and gitignored, so it never reaches git.
 
 The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL` at it
 (self-hosted Docker or a cloud deployment).
@@ -97,19 +99,21 @@ The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL`
 bash scripts/setup-platform.sh
 ```
 
-This writes the platform-specific `awsAuthRefresh` path into `settings.json` and applies
-`skip-worktree` to hide the local modification from git.
+This activates the repo's git hooks (a repo-local `core.hooksPath .githooks`), then writes the
+platform-specific `awsAuthRefresh` path into the generated `settings.json`. It stops if
+`settings.json` is missing, so run `hydrate.sh` first.
 
 ### 5. Re-applying template changes later
 
-After pulling new template changes, re-run the merge with platform settings preserved:
+After pulling new template changes, preview them with `./hydrate.sh --diff`, then re-run the
+merge with platform settings preserved:
 
 ```bash
 bash scripts/apply-settings.sh
 ```
 
-This lifts `skip-worktree`, runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to
-re-inject the platform `awsAuthRefresh` and re-apply `skip-worktree`.
+This runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to re-inject the platform
+`awsAuthRefresh`.
 
 ### 6. Install tools
 
@@ -255,7 +259,8 @@ Three layers of protection prevent leaking sensitive data:
 2. **Gitleaks** (`.gitleaks.toml`) — comprehensive secret detection, locally and in CI
 3. **GitHub secret scanning + push protection** — enabled at the repository level
 
-Set `core.hooksPath = .githooks` to activate the local hook (done automatically on clone).
+`scripts/setup-platform.sh` activates the local hook by setting a repo-local
+`core.hooksPath .githooks`; git does not do this on clone.
 
 ## Licence
 

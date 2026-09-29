@@ -26,20 +26,22 @@ editing files here. The repo is cloned independently on each machine (macOS, Win
 
 ## Cross-Platform Architecture
 
-- **`settings.json`** (tracked) — cross-platform settings. All paths use `~` (expanded by
-  Claude Code for permissions, by bash for hooks/statusLine). Never put absolute or `$HOME`
-  paths here — except `awsAuthRefresh` which is written by `setup-platform.sh` (see below).
+- **`settings.json`** (untracked; generated per machine by `hydrate.sh` from `settings.json.tmpl`) —
+  cross-platform settings. All paths use `~` (expanded by Claude Code for permissions, by bash for
+  hooks/statusLine). Never put absolute or `$HOME` paths here — except `awsAuthRefresh`, which is
+  written by `setup-platform.sh` (see below).
 - **`settings.local.json`** — Claude Code only reads this at the **project** level
   (`<project>/.claude/settings.local.json`), NOT at the user level (`~/.claude/settings.local.json`).
   Do not put user-level settings here — they will be silently ignored.
 - **`awsAuthRefresh`** — written into `settings.json` by `scripts/setup-platform.sh` with a
   platform-specific absolute path. On Windows, Claude Code passes this to CMD (not bash), so `~`
   and `$HOME` do not expand — the script wraps it with Git Bash and uses absolute Windows paths.
-  On macOS/Linux/WSL it goes through bash so absolute paths work directly. The local modification
-  is hidden from git via `skip-worktree`.
+  On macOS/Linux/WSL it goes through bash so absolute paths work directly. `settings.json` is
+  gitignored, so the per-machine value never reaches git.
 - **Hook scripts** — use `#!/usr/bin/env bash` shebangs. Claude Code runs hook commands through
   bash on all platforms, so `~` and `$HOME` expand correctly in hook `command` values.
-- After cloning on a new machine, always run: `bash ~/.claude/scripts/setup-platform.sh`
+- After cloning on a new machine, run `~/.claude/hydrate.sh --force`, then
+  `bash ~/.claude/scripts/setup-platform.sh`
 
 ## Custom Tools
 
