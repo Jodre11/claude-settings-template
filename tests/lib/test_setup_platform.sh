@@ -30,7 +30,7 @@ test_setup_platform_requires_settings_json() {
     assert_equals 1 "$SP_RC" "setup-platform exits 1 when settings.json is missing"
     assert_matches "settings.json not found. Run $home/.claude/hydrate.sh first." "$SP_OUT" \
         "the error names hydrate.sh as the missing step"
-    assert_equals ".githooks" "$(git -C "$home/.claude" config core.hooksPath || true)" \
+    assert_equals ".githooks" "$(git -C "$home/.claude" config --local --get core.hooksPath || true)" \
         "core.hooksPath is set before the settings.json check"
     rm -rf "$home"
 }
@@ -45,7 +45,8 @@ test_setup_platform_untracked_settings_json() {
     assert_equals "\"$home/.claude/scripts/aws-sso-refresh.sh\"" \
         "$(jq -c '.awsAuthRefresh' "$home/.claude/settings.json")" \
         "awsAuthRefresh is the absolute refresh-script path"
-    assert_equals ".githooks" "$(git -C "$home/.claude" config core.hooksPath || true)" "core.hooksPath is set"
+    assert_equals ".githooks" "$(git -C "$home/.claude" config --local --get core.hooksPath || true)" \
+        "core.hooksPath is set"
     assert_equals "" "$(git -C "$home/.claude" ls-files settings.json)" "settings.json is still untracked"
     rm -rf "$home"
 }
@@ -73,7 +74,7 @@ test_setup_platform_leaves_enclosing_repo_hooks_alone() {
     printf '%s\n' '{"permissions":{"allow":["A"]}}' >"$home/.claude/settings.json"
     _sp_run "$home" setup-platform.sh
     assert_equals 0 "$SP_RC" "setup-platform succeeds when ~/.claude is not its own repository"
-    assert_equals "" "$(git -C "$home" config core.hooksPath || true)" \
+    assert_equals "" "$(git -C "$home" config --local --get core.hooksPath || true)" \
         "setup-platform leaves the enclosing repository's hooks path alone"
     assert_matches 'not activating git hooks' "$SP_OUT" "setup-platform says why it skipped activation"
     rm -rf "$home"
@@ -86,7 +87,7 @@ test_setup_platform_follows_a_symlinked_claude_dir() {
     ln -s "$home/real/.claude" "$home/.claude"
     printf '%s\n' '{"permissions":{"allow":["A"]}}' >"$home/.claude/settings.json"
     _sp_run "$home" setup-platform.sh
-    assert_equals ".githooks" "$(git -C "$home/real/.claude" config core.hooksPath || true)" \
+    assert_equals ".githooks" "$(git -C "$home/real/.claude" config --local --get core.hooksPath || true)" \
         "setup-platform activates the hooks through a symlinked ~/.claude"
     rm -rf "$home"
 }

@@ -391,6 +391,54 @@ test_hydrate_settings_failed_write() {
     rm -rf "$tmp"
 }
 
+test_hydrate_settings_full_disk() {
+    local tmp big
+    tmp=$(mktemp -d)
+    _hy_fixture "$tmp"
+    big=$(printf 'x%.0s' {1..6000})
+    printf '%s\n' "{\"permissions\":{\"allow\":[\"$big\"]}}" >"$tmp/settings.json.tmpl"
+    printf '%s\n' '{"permissions":{"allow":["A"]}}' >"$tmp/settings.json"
+    cp "$tmp/settings.json" "$tmp/before.json"
+    HY_RC=0
+    HY_OUT=$(trap '' XFSZ; ulimit -f 2; bash "$tmp/hydrate.sh" --force 2>&1) || HY_RC=$?
+    assert_equals 1 "$HY_RC" "a write that fills the disk exits 1"
+    assert_matches "FAIL $tmp/settings.json" "$HY_OUT" "a write that fills the disk prints FAIL"
+    assert_not_matches "OK $tmp/settings.json" "$HY_OUT" "a write that fills the disk prints no OK"
+    _hy_same "a write that fills the disk leaves settings.json as it was" "$tmp/settings.json" "$tmp/before.json"
+    assert_equals "" "$(_hy_temps "$tmp")" "a write that fills the disk leaves no temp file behind"
+    rm -rf "$tmp"
+}
+
+test_hydrate_settings_temp_name_is_gitignored() {
+    local tmp name
+    tmp=$(mktemp -d)
+    _hy_fixture "$tmp"
+    printf '%s\n' '{"permissions":{"allow":["NEW"]}}' >"$tmp/settings.json.tmpl"
+    mkdir -p "$tmp/bin"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$3" >"%s/mv-arg"\nexit 1\n' "$tmp" >"$tmp/bin/mv"
+    chmod +x "$tmp/bin/mv"
+    _hy_run "$tmp" --force "PATH=$tmp/bin:$PATH"
+    name=$(basename "$(cat "$tmp/mv-arg" 2>/dev/null || printf 'none')")
+    assert_matches '^\.settings\.json\.hydrate\.' "$name" "the temp file is named .settings.json.hydrate.*"
+    if git -C "$REPO_ROOT" check-ignore -q -- "$name"; then
+        pass "the temp file's name is gitignored"
+    else
+        fail "the temp file's name is gitignored" "$name is not ignored"
+    fi
+    rm -rf "$tmp"
+}
+
+test_hydrate_settings_ampersand_value() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_fixture "$tmp"
+    printf '%s\n' "SEARXNG_URL='https://s.test/?a=1&b=2'" >"$tmp/config.env"
+    printf '%s\n' '{"env":{"S":"__SEARXNG_URL__"},"permissions":{"allow":[]}}' >"$tmp/settings.json.tmpl"
+    _hy_run "$tmp" --force
+    assert_equals '"https://s.test/?a=1&b=2"' "$(_hy_q "$tmp" '.env.S')" "an & in a config.env value is kept literally"
+    rm -rf "$tmp"
+}
+
 test_hydrate_settings_malformed_remove_aborts() {
     local tmp shape desc
     local -a shapes=(
@@ -444,12 +492,13 @@ test_hydrate_settings_real_tmpl() {
 
     printf '%s\n' '{"env":{"API_TIMEOUT_MS":"1200000"},
         "permissions":{"allow":["Bash(git *)","Bash(local-only *)"]},
-        "sandbox":{"allowedDomains":["pypi.org"]},"enabledPlugins":{"x@live-mkt":true},"model":"sonnet",
+        "sandbox":{"enabled":true,"allowedDomains":["pypi.org"]},"enabledPlugins":{"x@live-mkt":true},"model":"sonnet",
         "hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"injected"}]}]}}' \
         >"$tmp/settings.json"
     _hy_run "$tmp" --force
     assert_equals 0 "$HY_RC" "the real tmpl hydrates over a live-shaped settings.json"
-    assert_equals 'false' "$(_hy_q "$tmp" 'has("sandbox")')" "the live sandbox block is removed"
+    assert_equals '{"enabled":true}' "$(_hy_q "$tmp" '.sandbox')" \
+        "the dead sandbox.allowedDomains key is removed, and a fork's own sandbox setting is kept"
     assert_equals 'true' "$(_hy_q "$tmp" '.permissions.allow | index("Bash(local-only *)") != null')" \
         "a local-only allow rule is kept"
     assert_equals '"sonnet"' "$(_hy_q "$tmp" '.model')" "a local model choice is kept"

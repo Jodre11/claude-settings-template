@@ -19,6 +19,13 @@ sensitive values out of version control.
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
 | `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
+| `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |
+
+### Tests
+
+`bash tests/run.sh` runs every `tests/lib/test_*.sh` and `hooks/*.test.sh` suite, and fails if it finds none. It
+needs bash 4 or later (macOS's `/bin/bash` 3.2 is too old; use Homebrew's), plus `jq` and `tmux`. The `tests`
+workflow runs it on every push and pull request.
 
 ### Scripts
 

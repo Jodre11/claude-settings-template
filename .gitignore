@@ -6,6 +6,8 @@ settings.json
 CLAUDE.md
 scripts/_aws-sso-common.sh
 skills/datadog-log-link/SKILL.md
+# A temp file hydrate.sh left behind (it removes them on every exit it sees; SIGKILL or power loss can leave one).
+.*.hydrate.*
 
 # Per-machine settings (written by scripts/setup-platform.sh)
 settings.local.json
