@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# apply-settings.sh — Apply settings template changes to settings.json.
+# apply-settings.sh — Apply settings.json.tmpl changes to the generated settings.json.
 #
-# Lifts skip-worktree, runs hydrate --force, then re-runs setup-platform.sh
-# to inject platform-specific values and re-apply skip-worktree.
+# Runs hydrate --force, then setup-platform.sh to activate the git hooks and inject the
+# platform-specific values. Preview first with: ~/.claude/hydrate.sh --diff
 #
 # Usage:
 #   bash ~/.claude/scripts/apply-settings.sh
@@ -13,13 +13,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "1/3  Lifting skip-worktree on settings.json..."
-git -C "$CLAUDE_DIR" update-index --no-skip-worktree settings.json
-
-echo "2/3  Hydrating settings from template..."
+echo "1/2  Hydrating settings from template..."
 "$CLAUDE_DIR/hydrate.sh" --force
 
-echo "3/3  Applying platform-specific settings (re-enables skip-worktree)..."
+echo "2/2  Applying platform-specific settings..."
 bash "$SCRIPT_DIR/setup-platform.sh"
 
 echo ""
