@@ -222,6 +222,17 @@
             "statusMessage": "Checking temp path..."
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/tmpl-output-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking for hydrated outputs..."
+          }
+        ]
       }
     ],
     "PostToolUse": [
