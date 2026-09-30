@@ -6,16 +6,18 @@ sensitive values out of version control.
 
 ## What's Included
 
-### Hooks (PreToolUse guards)
+### Hooks
 
 | Hook | Purpose |
 |---|---|
-| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/deny decisions) |
-| `agent-mode-guard.sh` | Prevents subagents inheriting `defaultMode: "plan"` |
-| `api-failure-log.sh` | StopFailure/PostToolUseFailure: appends provider/tool errors to `telemetry/api-failures.jsonl` |
-| `allow-permissions.sh` | Mirrors `settings.json` permission patterns for subagents |
-| `allow-write-permissions.sh` | Mirrors Write/Edit permissions for subagents |
+| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/ask/deny decisions, the quote-aware command scan) |
+| `api-failure-log.sh` | StopFailure: appends one slim record per turn that ended on an API error to `telemetry/api-failures.jsonl` |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
+| `reviewer-guard.sh` | Denies mutating git commands to read-only code-review agents |
+| `settings-edit-ask.sh` | Asks before a direct Edit/Write of `settings.json`, which is generated from `settings.json.tmpl` |
+| `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context; screens every pipeline stage |
+| `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
+| `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
 | `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
@@ -121,6 +123,13 @@ bash scripts/apply-settings.sh
 
 This runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to re-inject the platform
 `awsAuthRefresh`.
+
+**After pulling hook or permission changes**, run `bash scripts/apply-settings.sh` so `settings.json` picks up
+the new hook registrations and permission rules; hooks are template-wins, so the old registrations are replaced.
+Until you do, `allow-permissions.sh` and `allow-write-permissions.sh` forward to their replacements, the retired
+`agent-mode-guard.sh` does nothing, and a failed tool call's output is not scanned for secrets (the old
+registration there now does nothing); the forwarders go in a later release. Subagents inherit the allow rules on
+Claude Code 2.1.283 or later, so no hook re-implements them for subagents.
 
 ### 6. Install tools
 

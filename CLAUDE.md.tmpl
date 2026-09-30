@@ -180,9 +180,9 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
   into a clumsy temp-file handoff. This is the ONLY exemption `bash-guard.sh` recognises.
   For PR bodies always use `gh ... --body-file <path>` (write the body to
   `${CLAUDE_TEMP_DIR}/pr-body.md` first).
-- These Bash rules are load-bearing, not stylistic: `hooks/allow-permissions.sh`
-  auto-allows subagent commands by first-word matching, which is only sound because
-  `bash-guard.sh` guarantees single simple commands. Never relax one without the other.
+- These Bash rules are load-bearing, not stylistic: `hooks/secret-bash-guard.sh` screens each
+  pipeline stage by its first word, which is only sound because `bash-guard.sh` denies every
+  other compound form except unquoted `(...)` grouping. Never relax one without the other.
 
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision

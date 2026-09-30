@@ -4,10 +4,21 @@
 **Status:** Implemented 2026-07-12. See **Implementation findings** below — the Layer 2
 `updatedToolOutput` redaction does NOT take effect on the shipped Claude Code version, so the
 delivered feature is a **detector + alarm + on-disk scrub**, not a pre-egress preventer. Layer 1
-(block-before-execution) is verified working and IS true prevention.
+(block-before-execution) is verified working and IS true prevention. Superseded for Layer 2: see the
+**Outcome** note under Implementation findings.
 **Repos:** `~/.claude` (claude-settings, via `.tmpl` hydration) **and** `~/Repos/claude-settings-template/` (public seed) — ship to both.
 
 ## Implementation findings (2026-07-12, live-verified on Claude Code 2.1.207)
+
+**Outcome (later release): shape-preserving redaction works.** The Layer 2 gap below was a shape
+mismatch, not a platform limitation: the scrubber emitted `updatedToolOutput` as a string, and a
+built-in tool (Bash, Read, …) silently ignores a replacement that is not its own output object. The
+scrubber now walks `tool_response`, redacts each secret span in its string leaves and emits the
+object in the tool's own shape; MCP results keep their own shape (a string or a content-block array).
+A recognised secret in a tool result
+is therefore redacted before the model sees it. A failed call's output (`PostToolUseFailure`) cannot
+be replaced, so a secret there is detected and alarmed, not prevented. The findings below record the
+2.1.207 state.
 
 The design below was sound against the documented hook API, but live testing after wiring the
 hooks in revealed one load-bearing assumption does not hold on this Claude Code version. Recorded
