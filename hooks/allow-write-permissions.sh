@@ -1,34 +1,4 @@
 #!/usr/bin/env bash
-# allow-write-permissions.sh — PreToolUse hook for Write|Edit calls
-# Mirrors the Write/Edit permissions.allow patterns from ~/.claude/settings.json as a hook,
-# so that subagents (which inherit hooks but not permission patterns) get the same
-# auto-allow behaviour as the main conversation.
-#
-# Workaround for: https://github.com/anthropics/claude-code/issues/18950
-#
-# If the file path matches, emits permissionDecision: "allow".
-# If not, exits silently (falls through to subsequent hooks like temp-path-guard.sh).
-
-set -euo pipefail
-source "$(dirname "$0")/_lib.sh"
-hook_read_input
-
-file_path=$(hook_field '.tool_input.file_path')
-if [[ -z "$file_path" ]]; then
-    exit 0
-fi
-
-# Force explicit decision when editing settings.json directly.
-# The source of truth for shared settings is settings.json.tmpl — direct edits to
-# settings.json are valid for local testing but should be a conscious choice.
-if [[ "$file_path" == *"/.claude/settings.json" && "$file_path" != *".tmpl" ]]; then
-    hook_ask "settings.json has skip-worktree — edits here are local-only and will be lost on next hydrate. For permanent changes, edit settings.json.tmpl and run apply-settings.sh. Proceed only if testing locally."
-fi
-
-# Allow session-scoped temp directory (mirrors Write(//tmp/claude-**) and Edit(//tmp/claude-**))
-if [[ "$file_path" == "/tmp/claude-"* ]]; then
-    hook_allow "Allowed by allow-write-permissions hook (mirrors settings.json permissions.allow)"
-fi
-
-# No match — fall through silently to subsequent hooks
-exit 0
+# Compatibility shim: a settings.json hydrated before settings-edit-ask.sh replaced this hook still registers this name.
+# Re-run scripts/apply-settings.sh to register the new hook; this shim is removed in a later release.
+exec "$(dirname "$0")/settings-edit-ask.sh"

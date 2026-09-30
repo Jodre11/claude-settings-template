@@ -166,9 +166,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/allow-permissions.sh",
+            "command": "~/.claude/hooks/reviewer-guard.sh",
             "timeout": 5,
-            "statusMessage": "Checking allowed commands..."
+            "statusMessage": "Checking reviewer read-only rule..."
           },
           {
             "type": "command",
@@ -196,24 +196,13 @@
         ]
       },
       {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-mode-guard.sh",
-            "timeout": 5,
-            "statusMessage": "Checking agent mode..."
-          }
-        ]
-      },
-      {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/allow-write-permissions.sh",
+            "command": "~/.claude/hooks/settings-edit-ask.sh",
             "timeout": 5,
-            "statusMessage": "Checking write permissions..."
+            "statusMessage": "Checking for a settings.json edit..."
           },
           {
             "type": "command",
