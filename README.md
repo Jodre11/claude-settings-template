@@ -19,6 +19,13 @@ sensitive values out of version control.
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
 | `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
+| `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |
+
+### Tests
+
+`bash tests/run.sh` runs every `tests/lib/test_*.sh` and `hooks/*.test.sh` suite, and fails if it finds none. It
+needs bash 4 or later (macOS's `/bin/bash` 3.2 is too old; use Homebrew's), plus `jq` and `tmux`. The `tests`
+workflow runs it on every push and pull request.
 
 ### Scripts
 
@@ -86,7 +93,9 @@ cp config.env.example config.env
 This generates real config files from `.tmpl` templates using your `config.env` values.
 For `settings.json`, `hydrate.sh` **merges** template defaults into the existing file rather
 than overwriting — your local additions to `permissions.allow`, `enabledPlugins`, `env`, etc.
-are preserved across template updates.
+are preserved across template updates. A key or list entry the template lists under
+`__remove__` is deleted instead (the header of `hydrate.sh` gives the format). `settings.json`
+itself is generated and gitignored, so it never reaches git.
 
 The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL` at it
 (self-hosted Docker or a cloud deployment).
@@ -97,19 +106,21 @@ The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL`
 bash scripts/setup-platform.sh
 ```
 
-This writes the platform-specific `awsAuthRefresh` path into `settings.json` and applies
-`skip-worktree` to hide the local modification from git.
+This activates the repo's git hooks (a repo-local `core.hooksPath .githooks`), then writes the
+platform-specific `awsAuthRefresh` path into the generated `settings.json`. It stops if
+`settings.json` is missing, so run `hydrate.sh` first.
 
 ### 5. Re-applying template changes later
 
-After pulling new template changes, re-run the merge with platform settings preserved:
+After pulling new template changes, preview them with `./hydrate.sh --diff`, then re-run the
+merge with platform settings preserved:
 
 ```bash
 bash scripts/apply-settings.sh
 ```
 
-This lifts `skip-worktree`, runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to
-re-inject the platform `awsAuthRefresh` and re-apply `skip-worktree`.
+This runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to re-inject the platform
+`awsAuthRefresh`.
 
 ### 6. Install tools
 
@@ -255,7 +266,8 @@ Three layers of protection prevent leaking sensitive data:
 2. **Gitleaks** (`.gitleaks.toml`) — comprehensive secret detection, locally and in CI
 3. **GitHub secret scanning + push protection** — enabled at the repository level
 
-Set `core.hooksPath = .githooks` to activate the local hook (done automatically on clone).
+`scripts/setup-platform.sh` activates the local hook by setting a repo-local
+`core.hooksPath .githooks`; git does not do this on clone.
 
 ## Licence
 

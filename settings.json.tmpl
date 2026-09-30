@@ -96,16 +96,6 @@
       "Bash(*strongbox_keyring*)"
     ]
   },
-  "sandbox": {
-    "allowedDomains": [
-      "api.nuget.org",
-      "registry.npmjs.org",
-      "pypi.org",
-      "api.github.com",
-      "registry-1.docker.io",
-      "auth.docker.io"
-    ]
-  },
   "model": "opus",
   "hooks": {
     "SessionStart": [
@@ -232,6 +222,17 @@
             "statusMessage": "Checking temp path..."
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/tmpl-output-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking for hydrated outputs..."
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -286,5 +287,10 @@
   },
   "effortLevel": "xhigh",
   "showThinkingSummaries": true,
-  "teammateMode": "in-process"
+  "teammateMode": "in-process",
+  "__remove__": {
+    "keys": [
+      ["sandbox", "allowedDomains"]
+    ]
+  }
 }
