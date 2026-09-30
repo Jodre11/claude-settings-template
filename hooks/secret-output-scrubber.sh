@@ -63,8 +63,9 @@ if [[ "$SCRUB_EVENT" == PostToolUseFailure ]]; then
     exit 0
 fi
 
-# The text the model would see: every string leaf of tool_response, newline-joined.
-leaves=$(jq -r '[.tool_response | .. | strings] | join("\n")' <<< "$HOOK_INPUT" 2>/dev/null || printf '')
+# The text the model would see: every string leaf and object key of tool_response, newline-joined.
+leaves=$(jq -r '[.tool_response | .. | (strings, (objects | keys[]))] | join("\n")' <<< "$HOOK_INPUT" 2>/dev/null \
+    || printf '')
 
 # Fallback: with no string leaves, scan the raw payload so a novel response shape cannot
 # smuggle a secret past the alarm.

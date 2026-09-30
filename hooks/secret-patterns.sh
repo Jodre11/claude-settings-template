@@ -103,12 +103,13 @@ secret_patterns_json() {
 }
 
 # redact_json_strings: reads a JSON value on stdin and prints it with every secret span in
-# every string leaf replaced by a class-tagged marker. Keys, numbers, booleans and nesting
-# are untouched, so the value keeps its shape.
+# every string leaf and every object key replaced by a class-tagged marker (a structured
+# result can carry a secret as a key). Numbers, booleans and nesting are untouched, so the
+# value keeps its shape.
 redact_json_strings() {
     jq -c --argjson pats "$(secret_patterns_json)" '
         def redact: reduce $pats[] as $p (.; gsub($p.re; "[REDACTED-SECRET-BREACH:" + $p.class + "]"));
-        walk(if type == "string" then redact else . end)'
+        walk(if type == "string" then redact elif type == "object" then with_entries(.key |= redact) else . end)'
 }
 
 # _secret_path_alternations: set _SECRET_PATH_ANY and _SECRET_ALLOW_ANY to @(g1|g2|…) of SECRET_PATH_GLOBS and

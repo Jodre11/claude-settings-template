@@ -152,6 +152,17 @@ else
     bad "content-block array mishandled (got: $upd)"
 fi
 
+# 8b. A structured result can carry a secret as an object key: it is detected and redacted like a string leaf.
+out=$(jq -nc --arg k "$AWS_KEY" '{tool_name: "mcp__x__y", transcript_path: "",
+    tool_response: {note: "ok", map: {($k): "user"}}}' | "$HOOK")
+upd=$(jq -c '.hookSpecificOutput.updatedToolOutput' <<< "$out")
+if [[ "$upd" == '{"note":"ok","map":{"[REDACTED-SECRET-BREACH:aws-access-key]":"user"}}' \
+    && "$(jq -r '.hookSpecificOutput.additionalContext' <<< "$out")" == *'SECRET BREACH'* ]]; then
+    ok "a secret-shaped object key is redacted and alarmed"
+else
+    bad "a secret-shaped object key was not redacted and alarmed"
+fi
+
 # 9. A 600 KB result is redacted within the 5 s hook timeout (no argv limit, no slow path).
 big=$(printf '%0300000d' 0)
 start=$SECONDS
@@ -204,6 +215,38 @@ if [[ "$(jq -r '.hookSpecificOutput.updatedToolOutput.stdout' <<< "$out")" \
 else
     bad "a PEM block near the top of a >64 KB Bash result was not redacted (got: $out)"
 fi
+
+# 9e. The breach alarm's transcript rewrite runs before the scrubber replies, and a PostToolUse hook that overruns
+# its 5 s timeout does not apply its redaction, so the secret would reach the model. A transcript over the alarm's
+# rewrite bound is left as it is, and the result is still redacted within half the timeout.
+_ms() {  # _ms: the time in milliseconds (whole seconds without EPOCHREALTIME)
+    if [[ -n "${EPOCHREALTIME:-}" ]]; then
+        local t="${EPOCHREALTIME/[.,]/}"
+        echo $(( t / 1000 ))
+    else
+        echo $(( SECONDS * 1000 ))
+    fi
+}
+big_tr="$TMP/big-transcript.jsonl"
+head -c 25165824 /dev/zero | tr '\0' 'a' >"$big_tr"
+printf '\n{"content":"leak %s"}\n' "$AWS_KEY" >>"$big_tr"
+start=$(_ms)
+out=$(printf 'aws=%s\n' "$AWS_KEY" | jq -Rsc --arg tp "$big_tr" '{tool_name: "Bash", session_id: "sess-big",
+    transcript_path: $tp, tool_input: {command: "cat notes.txt"}, tool_response: {stdout: ., stderr: "",
+    interrupted: false, isImage: false, noOutputExpected: false}}' | "$HOOK")
+elapsed=$(( $(_ms) - start ))
+if [[ "$(jq -r '.hookSpecificOutput.updatedToolOutput.stdout' <<< "$out")" \
+        == *'[REDACTED-SECRET-BREACH:aws-access-key]'* && "$out" != *"$AWS_KEY"* && "$elapsed" -lt 2500 ]]; then
+    ok "a result is redacted in ${elapsed} ms beside a 24 MiB transcript"
+else
+    bad "a result beside a 24 MiB transcript was not redacted within 2500 ms (${elapsed} ms)"
+fi
+if grep -q $'session=sess-big\ttranscript=unscrubbed-too-large' "$HOME/.claude/breach-ledger.log"; then
+    ok "the ledger records that the oversized transcript was not rewritten"
+else
+    bad "the ledger does not record the skipped transcript rewrite"
+fi
+rm -f "$big_tr"
 
 # 10. PostToolUseFailure. The payload, captured from CLI 2.1.283, carries the failed call's output in .error,
 # a string. A secret there raises the alarm through additionalContext; the event cannot replace the error text.
