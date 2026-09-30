@@ -263,8 +263,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/api-failure-log.sh",
-            "timeout": 5
+            "command": "~/.claude/hooks/secret-output-scrubber.sh",
+            "timeout": 5,
+            "statusMessage": "Scanning failed tool output for secrets..."
           }
         ]
       }

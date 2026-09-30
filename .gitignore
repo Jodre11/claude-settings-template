@@ -48,6 +48,10 @@ bin/
 # Per-session security warnings
 security_warnings_state_*.json
 
+# Secret-firewall breach ledger, and code-review-suite runtime logs (both can name repos and people)
+/breach-ledger.log
+/code-review-suite/
+
 # Session transcripts, tool results, and indexes inside projects
 projects/*/*.jsonl
 projects/*/sessions-index.json

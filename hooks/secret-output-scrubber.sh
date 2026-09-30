@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
-# secret-output-scrubber.sh — PostToolUse hook (all tools). Scans the tool
-# result for secret value shapes; if any are present, emits a redacted result
-# via updatedToolOutput and fires the breach responder. Fail SAFE: if the result
-# cannot be parsed but the raw hook input contains a secret shape, redact the
-# whole result.
-#
-# KNOWN LIMITATION (Claude Code 2.1.207, verified 2026-07-12): updatedToolOutput
-# is NOT applied to the result the model sees on this version (the additionalContext
-# alarm from the same JSON IS applied). So in practice this hook DETECTS + ALARMS +
-# triggers the on-disk transcript scrub, but does NOT redact the in-turn result the
-# model/Bedrock receive. Re-test after CC upgrades; if honoured, this becomes true
-# pre-egress prevention as designed. See docs/superpowers/specs/2026-07-12-*.md.
+# secret-output-scrubber.sh — PostToolUse and PostToolUseFailure hook (all tools).
+# PostToolUse: scans every string leaf of the tool result for secret value shapes; if any are present, fires the
+# breach responder and replaces the result via updatedToolOutput with a copy whose string leaves are redacted. The
+# copy keeps the tool's output shape: built-in tools (Bash, Read, ...) return objects and silently ignore a
+# replacement of any other shape; MCP results pass through unchecked.
+# PostToolUseFailure: scans the failed call's .error text. That event cannot replace what the model sees, so a
+# secret there is detected and alarmed, not prevented; prevention stays with the PreToolUse guards.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
 source "$DIR/secret-patterns.sh"
-# Fail LOUD (not open): a mid-evaluation crash must not silently pass a result
-# through as if screened. We do not withhold the result (updatedToolOutput is
-# detector-only on 2.1.207 anyway, and a false withhold on every parse hiccup
-# would hurt more than help), but we surface a visible 'screening failed' notice
-# so a silent scrubber death is never invisible. Trap set before any real work.
-trap 'printf "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"⚠ secret-output-scrubber failed to evaluate this result — it was NOT screened for secrets. Treat any credential-shaped content in it as unscreened.\"}}"; exit 0' ERR
+# Fail LOUD (not open): a mid-evaluation crash must not silently pass a result through as if screened, so surface
+# a visible 'screening failed' notice under the payload's own event. Trap set before any work.
+SCRUB_EVENT=PostToolUse
+SCRUB_FAIL_MSG="⚠ secret-output-scrubber failed to evaluate this result — it was NOT screened for secrets. Treat"
+SCRUB_FAIL_MSG+=" any credential-shaped content in it as unscreened."
+# scrub_failed: ERR-trap handler; emits the 'NOT screened' notice under $SCRUB_EVENT and exits 0.
+scrub_failed() {
+    printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}' "$SCRUB_EVENT" "$SCRUB_FAIL_MSG"
+    exit 0
+}
+trap scrub_failed ERR
 hook_read_input
+if [[ "$(hook_field '.hook_event_name')" == PostToolUseFailure ]]; then
+    SCRUB_EVENT=PostToolUseFailure
+fi
 
 # Skip scanning results whose target is a firewall self-definition/test/doc file
 # (their contents embed example secret vectors by design — scanning them fires a
@@ -39,33 +42,54 @@ if [[ -n "$cmd_str" ]] && path_is_scan_exempt "$cmd_str"; then
     exit 0
 fi
 
-# Stringify tool_response (may be a string or an object).
-resp=$(jq -r '.tool_response | if type=="string" then . elif .==null then "" else tojson end' <<< "$HOOK_INPUT" 2>/dev/null || printf '')
+# raise_alarm <classes> <source-suffix>: set TOOL and CSV for the caller's message, then run the breach responder
+# (ledger with the payload session, OS alert, transcript scrub). Never blocks on failure.
+raise_alarm() {
+    TOOL=$(hook_field '.tool_name')
+    CSV=$(printf '%s' "$1" | tr '\n' ',' | sed 's/,$//')
+    "$DIR/secret-breach-alarm.sh" "$CSV" "tool=${TOOL}$2" "$(hook_field '.transcript_path')" \
+        "$(hook_field '.session_id')" >/dev/null 2>&1 || true
+}
 
-# Fallback: if extraction produced nothing, scan the raw payload so a novel
-# response shape cannot smuggle a secret past the scrubber.
-scan_target="$resp"
+if [[ "$SCRUB_EVENT" == PostToolUseFailure ]]; then
+    err=$(jq -r '.error | if type == "string" then . else tojson end' <<< "$HOOK_INPUT")
+    if classes=$(scan_content_for_secrets "$err"); then
+        raise_alarm "$classes" " (failed)"
+        alarm="⛔ SECRET BREACH: a value matching [$CSV] was detected in the error output of a failed ${TOOL} call"
+        alarm+=" and logged. This event cannot redact it, so the value is already in this conversation. Treat it as"
+        alarm+=" exposed and REGENERATE IT NOW. Logged to ~/.claude/breach-ledger.log."
+        hook_post_context "$alarm" PostToolUseFailure
+    fi
+    exit 0
+fi
+
+# The text the model would see: every string leaf of tool_response, newline-joined.
+leaves=$(jq -r '[.tool_response | .. | strings] | join("\n")' <<< "$HOOK_INPUT" 2>/dev/null || printf '')
+
+# Fallback: with no string leaves, scan the raw payload so a novel response shape cannot
+# smuggle a secret past the alarm.
+scan_target="$leaves"
 if [[ -z "$scan_target" ]]; then
     scan_target="$HOOK_INPUT"
 fi
 
 if classes=$(scan_content_for_secrets "$scan_target"); then
-    tool=$(hook_field '.tool_name')
-    transcript=$(hook_field '.transcript_path')
-    csv=$(printf '%s' "$classes" | tr '\n' ',' | sed 's/,$//')
+    raise_alarm "$classes" ""
 
-    # Side-effects (ledger, OS alert, transcript scrub). Never blocks on failure.
-    "$DIR/secret-breach-alarm.sh" "$csv" "tool=$tool" "$transcript" >/dev/null 2>&1 || true
-
-    # Redact for the model. If we had a parsed response, redact it; otherwise we
-    # cannot safely reconstruct the shape, so replace the whole result.
-    if [[ -n "$resp" ]]; then
-        redacted=$(redact_secrets "$resp")
-    else
-        redacted="[REDACTED-SECRET-BREACH: tool result withheld — a secret value ($csv) was detected and could not be selectively redacted]"
+    if [[ -z "$leaves" ]]; then
+        # Nothing in the result to rewrite: the match is elsewhere in the payload (e.g.
+        # tool_input), so nothing was redacted and the value is already in this conversation.
+        alarm="⛔ SECRET BREACH: a value matching [$CSV] was detected in the ${TOOL} call payload"
+        alarm+=" (not in its result) and logged. Nothing was redacted: the value is already in"
+        alarm+=" this conversation. Treat it as exposed and REGENERATE IT NOW. Logged to"
+        alarm+=" ~/.claude/breach-ledger.log."
+        hook_post_context "$alarm"
     fi
-
-    alarm="⛔ SECRET BREACH: a value matching [$csv] was detected in the result of ${tool} and logged. Depending on the Claude Code version, the raw value may still be present in this turn's context — treat it as exposed and REGENERATE IT NOW. Logged to ~/.claude/breach-ledger.log."
+    alarm="⛔ SECRET BREACH: a value matching [$CSV] was detected in the result of ${TOOL} and"
+    alarm+=" logged. It was redacted before reaching you, but the tool printed it and telemetry"
+    alarm+=" captured the original — treat it as exposed and REGENERATE IT NOW. Logged to"
+    alarm+=" ~/.claude/breach-ledger.log."
+    redacted=$(jq -c '.tool_response' <<< "$HOOK_INPUT" | redact_json_strings)
     hook_post_redact "$redacted" "$alarm"
 fi
 exit 0

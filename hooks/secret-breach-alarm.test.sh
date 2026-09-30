@@ -15,7 +15,7 @@ export CLAUDE_BREACH_NO_NOTIFY=1
 tfile="$TMP/transcript.jsonl"
 printf '{"content":"leak AKIAIOSFODNN7EXAMPLE here"}\n' > "$tfile"
 
-"$HOOK" "aws-access-key" "tool=Bash" "$tfile" >/dev/null 2>&1
+"$HOOK" "aws-access-key" "tool=Bash" "$tfile" "sess-1234" >/dev/null 2>&1
 
 # 1. Ledger written with class + source, and NOT the raw value.
 if [[ -f "$HOME/.claude/breach-ledger.log" ]] \
@@ -25,6 +25,13 @@ if [[ -f "$HOME/.claude/breach-ledger.log" ]] \
     ok "ledger records class/source, not value"
 else
     bad "ledger missing/incorrect or leaked value"
+fi
+
+# 1b. The ledger records the session id passed as the fourth argument, not "unknown".
+if grep -q 'session=sess-1234' "$HOME/.claude/breach-ledger.log"; then
+    ok "ledger records the payload session id"
+else
+    bad "ledger session id missing: $(cat "$HOME/.claude/breach-ledger.log")"
 fi
 
 # 2. Transcript scrubbed: raw value gone, marker present.

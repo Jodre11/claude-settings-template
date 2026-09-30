@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # secret-breach-alarm.sh — side-effects for a detected secret leak. NEVER
 # receives or records the raw secret value; only its class and source.
-# Usage: secret-breach-alarm.sh <class-csv> <source> [transcript_path]
+# Usage: secret-breach-alarm.sh <class-csv> <source> [transcript_path] [session_id]
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/secret-patterns.sh"
@@ -9,13 +9,14 @@ source "$DIR/secret-patterns.sh"
 classes="${1:-unknown}"
 source_desc="${2:-unknown}"
 transcript="${3:-}"
+session="${4:-${CLAUDE_SESSION_ID:-unknown}}"
 LEDGER="$HOME/.claude/breach-ledger.log"
 
 # 1. Ledger (append-only; class + source + session only).
 mkdir -p "$(dirname "$LEDGER")"
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 printf '%s\tclass=%s\tsource=%s\tsession=%s\n' \
-    "$ts" "$classes" "$source_desc" "${CLAUDE_SESSION_ID:-unknown}" >> "$LEDGER"
+    "$ts" "$classes" "$source_desc" "$session" >> "$LEDGER"
 
 # 2. Out-of-band alert (macOS), unless suppressed (tests).
 if [[ "${CLAUDE_BREACH_NO_NOTIFY:-0}" != "1" && "$(uname)" == "Darwin" ]]; then
