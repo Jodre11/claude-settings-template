@@ -14,7 +14,8 @@ delivered feature is a **detector + alarm + on-disk scrub**, not a pre-egress pr
 mismatch, not a platform limitation: the scrubber emitted `updatedToolOutput` as a string, and a
 built-in tool (Bash, Read, …) silently ignores a replacement that is not its own output object. The
 scrubber now walks `tool_response`, redacts each secret span in its string leaves and emits the
-object in the tool's own shape; MCP tools keep the string form. A recognised secret in a tool result
+object in the tool's own shape; MCP results keep their own shape (a string or a content-block array).
+A recognised secret in a tool result
 is therefore redacted before the model sees it. A failed call's output (`PostToolUseFailure`) cannot
 be replaced, so a secret there is detected and alarmed, not prevented. The findings below record the
 2.1.207 state.

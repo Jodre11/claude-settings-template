@@ -293,5 +293,13 @@ test_permission_policy_hydrated_over_live_shape() {
         "$(_hy_q "$tmp" '.permissions.ask | length')" "the whole ask list lands on a fork that had none"
     assert_equals "$(jq -S -c '.hooks' "$REPO_ROOT/settings.json.tmpl")" "$(_hy_q "$tmp" '.hooks')" \
         "the old hook registrations are replaced by the tmpl's"
+    assert_equals true "$(_hy_q "$tmp" '.permissions.ask | length > 0')" "the fork gains a non-empty ask list"
+    assert_equals '[]' "$(_hy_q "$tmp" '[.hooks[][] | .hooks[] | .command
+        | select(test("allow-permissions|allow-write-permissions|agent-mode-guard"))]')" \
+        "the fork registers none of the three old hook names"
+    assert_equals 0 "$(_hy_q "$tmp" '[.hooks.PreToolUse[] | select(.matcher == "Agent")] | length')" \
+        "the fork has no Agent guard"
+    assert_equals '[]' "$(_hy_q "$tmp" '[.hooks.PostToolUseFailure[]? | .hooks[] | .command
+        | select(test("api-failure-log"))]')" "the fork no longer logs failed tool calls raw"
     rm -rf "$tmp"
 }

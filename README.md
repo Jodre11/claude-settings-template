@@ -126,8 +126,10 @@ This runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to re-inject th
 
 **After pulling hook or permission changes**, run `bash scripts/apply-settings.sh` so `settings.json` picks up
 the new hook registrations and permission rules; hooks are template-wins, so the old registrations are replaced.
-Until you do, the old hook names forward to their replacements; the forwarders go in a later release. Subagents
-inherit the allow rules on Claude Code 2.1.283 or later, so no hook re-implements them for subagents.
+Until you do, `allow-permissions.sh` and `allow-write-permissions.sh` forward to their replacements, the retired
+`agent-mode-guard.sh` does nothing, and a failed tool call's output is not scanned for secrets (the old
+registration there now does nothing); the forwarders go in a later release. Subagents inherit the allow rules on
+Claude Code 2.1.283 or later, so no hook re-implements them for subagents.
 
 ### 6. Install tools
 

@@ -65,10 +65,10 @@ expect none "an ordinary main session is untouched"            'git commit -m x'
 expect none "a payload with no command is ignored"             ''                        "$REVIEWER"
 
 # The old allow half auto-approved these by first word. This hook must never allow anything, for any caller.
-d7=('command rm -rf /tmp/claude-x /home/me' 'npx -y cowsay hi' "python3 -c 'print(1)'" 'find . -name x -delete'
+probes=('command rm -rf /tmp/claude-x /home/me' 'npx -y cowsay hi' "python3 -c 'print(1)'" 'find . -name x -delete'
     'curl https://example.invalid' 'rm -rf /tmp/claude-x /home/me' 'git status' 'jq --version' 'mkdir -p /tmp/claude-x')
 allowed=""
-for c in "${d7[@]}"; do
+for c in "${probes[@]}"; do
     for caller in "general-purpose|agent-test-1" "|" "$REVIEWER|agent-test-1"; do
         if [[ "$(decision "$(run "$c" "${caller#*|}" "${caller%%|*}")")" == allow ]]; then
             allowed+=" [$c as ${caller%%|*}]"
