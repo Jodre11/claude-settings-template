@@ -269,14 +269,36 @@ fork to your own marketplace and edit accordingly).
 
 ## Secret Scanning
 
-Three layers of protection prevent leaking sensitive data:
+Four layers keep sensitive data out of the repository:
 
-1. **Pre-commit hook** (`.githooks/pre-commit`) — pattern-scans staged files for known sensitive values
-2. **Gitleaks** (`.gitleaks.toml`) — comprehensive secret detection, locally and in CI
-3. **GitHub secret scanning + push protection** — enabled at the repository level
+1. **Pre-commit hook** (`.githooks/pre-commit`) — scans every added line for secret-shaped values and identity
+   markers (the patterns are in `.githooks/guard-config.sh`), then runs gitleaks over the staged changes, including
+   content gitleaks' own diff cannot read.
+2. **Pre-push hook** (`.githooks/pre-push`) — repeats those scans over every commit a push would publish, so a commit
+   made without the pre-commit (a rebase, a cherry-pick, `git am`, or the hooks turned off) is caught before it
+   leaves the machine. It also scans each commit's message, author and committer.
+3. **CI** — gitleaks, a pattern-sync check (`tests/test-pattern-sync.sh`) and an output-ignore check
+   (`tests/test-output-ignore.sh`) run on every push and pull request.
+4. **GitHub secret scanning and push protection** — enabled at the repository level.
 
-`scripts/setup-platform.sh` activates the local hook by setting a repo-local
-`core.hooksPath .githooks`; git does not do this on clone.
+`scripts/setup-platform.sh` activates both hooks by setting a repo-local `core.hooksPath .githooks`; git does not do
+this on clone. The hooks use gitleaks 8.25.0 or later (8.30.1 is tested); without it they warn and run the pattern
+scan only.
+
+### Local pattern lists
+
+To screen for names you must not publish without publishing the list, put them in `.githooks/identity-patterns.local`
+(organisation and personal identity markers) and `.githooks/always-patterns.local` (secret-shaped literals such as
+account IDs). Each holds one POSIX ERE per line, matched case-insensitively; blank lines and lines starting with `#`
+are ignored. Both are gitignored, either may be a symlink to a list kept elsewhere, and the hooks refuse to commit or
+push either one. A list that cannot be read, holds no pattern, or holds a pattern with leading or trailing
+whitespace or one awk cannot match as written stops the commit rather than being skipped.
+
+### Bypasses
+
+`SKIP_PATTERN_SCAN=1 git commit` (or `git push`) skips the pattern scan only, for a file that must carry a pattern;
+say so in the commit body. gitleaks always runs and has no bypass: clear a false positive with a targeted
+`[[allowlists]]` entry in `.gitleaks.toml`, committed with the change.
 
 ## Licence
 
