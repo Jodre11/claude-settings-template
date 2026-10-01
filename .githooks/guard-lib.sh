@@ -17,8 +17,8 @@ local_identity_list="$guard_dir/identity-patterns.local"
 local_always_list="$guard_dir/always-patterns.local"
 local_list_path_re='^\.githooks/(identity|always)-patterns\.local$'
 
-# The guard files define the patterns (the pre-commit did, before guard-config.sh), so the pattern scans skip them, in
-# history too; .gitleaks.toml's allowlists name them as well.
+# The guard files define the tracked patterns (the pre-commit did, before guard-config.sh), so the pattern scans exempt
+# them from those patterns, in history too; .gitleaks.toml's allowlists name them as well. The local lists still apply.
 guard_file_re='^\.githooks/(guard-config\.sh|pre-commit)$|^\.gitleaks\.toml$'
 
 # Constructs awk's ERE does not support: in a pattern they never match as meant, so the scan would fail open.
@@ -135,15 +135,15 @@ guard_awk_common='
 # "[<sha>] <path>: <line>" for every added line that matches a set it is not exempt from. Lines are tracked by hunk,
 # so an added line whose text starts "++" is still scanned. The path comes from the "+++ b/" header before the first
 # hunk, which no path text can spoof; a path git must quote (one holding a quote, a backslash or a control character)
-# gets no exemption, and the guard files are skipped. The caller pins the diff format and drops NUL bytes; this runs
-# in the C locale, so a byte that is not valid UTF-8 cannot stop it.
+# gets no exemption. The guard files, which define the tracked patterns, are exempt from those patterns only: the
+# local lists still apply to them, since a hand-ported pattern hunk lands there. The caller pins the diff format and
+# drops NUL bytes; this runs in the C locale, so a byte that is not valid UTF-8 cannot stop it.
 scan_patch() {
     LC_ALL=C awk "$guard_awk_common"'
         /^commit [0-9a-f]+$/ { commit = substr($2, 1, 12) " "; in_hunk = 0; next }
         /^diff --git / {
             path = ""
             shown = ""
-            skip = 0
             identity_exempt = 0
             local_identity_exempt = 0
             always_exempt = 0
@@ -158,14 +158,14 @@ scan_patch() {
                 shown = substr(shown, 3)
                 path = shown
             }
-            skip = path_matches(path, guard_file_re)
-            identity_exempt = path_matches(path, identity_exempt_re)
+            guard_file = path_matches(path, guard_file_re)
+            identity_exempt = guard_file || path_matches(path, identity_exempt_re)
             local_identity_exempt = path_matches(path, local_identity_exempt_re)
-            always_exempt = path_matches(path, always_exempt_re)
+            always_exempt = guard_file || path_matches(path, always_exempt_re)
             next
         }
         /^@@/ { in_hunk = 1; next }
-        !in_hunk || skip || !/^\+/ { next }
+        !in_hunk || !/^\+/ { next }
         line_hits(substr($0, 2), identity_exempt, local_identity_exempt, always_exempt) { print commit shown ": " $0 }
     '
 }

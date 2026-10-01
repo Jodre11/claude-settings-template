@@ -292,7 +292,9 @@ To screen for names you must not publish without publishing the list, put them i
 account IDs). Each holds one POSIX ERE per line, matched case-insensitively; blank lines and lines starting with `#`
 are ignored. Both are gitignored, either may be a symlink to a list kept elsewhere, and the hooks refuse to commit or
 push either one. A list that cannot be read, holds no pattern, or holds a pattern with leading or trailing
-whitespace or one awk cannot match as written stops the commit rather than being skipped.
+whitespace or one awk cannot match as written stops the commit rather than being skipped. The lists also apply to
+`.githooks/guard-config.sh`, `.githooks/pre-commit` and `.gitleaks.toml`, which are exempt only from the tracked
+patterns they define.
 
 ### Bypasses
 
