@@ -63,7 +63,7 @@ scan_metadata() {
     with_pinned_git git log --no-color -z --format='%H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B' "${range[@]}" |
         while IFS= read -r -d '' rec; do
             sha=${rec%%$'\n'*}
-            printf '%s\n' "${rec#*$'\n'}" | scan_text "${sha:0:12} metadata"
+            printf '%s\n' "${rec#*$'\n'}" | scan_text "${sha:0:12} metadata" 2
         done
 }
 

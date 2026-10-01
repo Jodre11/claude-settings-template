@@ -147,6 +147,16 @@ push_to "$d" origin main
 check "pre-push allows the GitHub noreply alias of a listed handle" 0 "$rc"
 d=$(push_repo)
 with_list "$d" identity "$local_word"
+raw_commit "$d" notes.md "clean line" --author "Someone <1+a.${local_word}_b@users.noreply.github.com>"
+push_to "$d" origin main
+check "pre-push refuses a noreply-shaped author whose handle GitHub would not issue" 1 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
+raw_commit "$d" notes.md "clean line" -m "see 9+$local_word@users.noreply.github.com"
+push_to "$d" origin main
+check "pre-push scans a noreply-shaped address in a commit message" 1 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
 raw_commit "$d" notes.md "see $local_word" -m "mentions $local_word"
 push_env "$d" SKIP_PATTERN_SCAN=1 origin main
 check "SKIP_PATTERN_SCAN=1 skips the pre-push pattern scan of lines and metadata" 0 "$rc"
