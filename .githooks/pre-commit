@@ -14,8 +14,9 @@
 # the change; a false positive from a built-in rule also needs its path in BUILTINS_EXEMPT_RE, in a reviewed commit.
 # A local pattern list is never committed, with or without the bypass.
 #
-# gitleaks reads the working-tree .gitleaks.toml and .gitleaksignore, so the hook refuses a commit while either
-# differs from its staged copy: an unstaged edit must never decide what this commit's scan allows. For the same
+# gitleaks reads the working-tree .gitleaks.toml and .gitleaksignore, and the hooks the working-tree guard-config.sh,
+# so the hook refuses a commit while any of them differs from its staged copy: an unstaged edit must never decide
+# what this commit's scan allows. For the same
 # reason, it also refuses any .gitleaks.toml whose use of extend is not exactly the canonical [extend] followed by
 # useDefault = true, since any other spelling, case or key there could hand the scan to a file outside the staged
 # config.
@@ -39,6 +40,18 @@ pattern_scan() {
 }
 
 if ! git diff --cached --name-only --no-renames --diff-filter=ACMRT -z | refuse_local_lists "the commit stages"; then
+    exit 1
+fi
+
+# The patterns and path exemptions come from the guard-config.sh these hooks read, so, as for .gitleaks.toml below, an
+# unstaged edit there must never decide what this commit's scans allow.
+if git cat-file -e ":.githooks/guard-config.sh" 2>/dev/null &&
+    ! git cat-file blob ":.githooks/guard-config.sh" | cmp -s - "$hook_dir/guard-config.sh"; then
+    {
+        echo "❌ Pre-commit: .githooks/guard-config.sh differs from its staged copy, and the hooks read the"
+        echo "working-tree file. Stage the change (git add .githooks/guard-config.sh) or restore the file, then"
+        echo "commit again."
+    } >&2
     exit 1
 fi
 

@@ -93,6 +93,18 @@ raw_commit "$d" .githooks/guard-config.sh "# see $local_word"
 push_to "$d" origin main
 check "pre-push refuses a local identity word in guard-config.sh" 1 "$rc"
 d=$(push_repo)
+git -C "$d" checkout -q -b side
+raw_commit "$d" .githooks/guard-config.sh "# side change"
+git -C "$d" checkout -q main
+push_to "$d" origin side
+check "pre-push refuses a ref whose committed guard-config.sh differs from the one in use" 1 "$rc"
+check_match "the refusal names guard-config.sh" 'guard-config.sh committed at' "$out"
+d=$(push_repo)
+git -C "$d" checkout -q -b side
+raw_commit "$d" .githooks/guard-config.sh "# side change"
+push_to "$d" origin side
+check "pre-push accepts a ref whose committed guard-config.sh is the one in use" 0 "$rc"
+d=$(push_repo)
 raw_commit "$d" .gitleaks.toml "# account \`$digits\`"
 push_to "$d" origin main
 check "pre-push refuses a secret-shaped value in .gitleaks.toml" 1 "$rc"

@@ -175,8 +175,20 @@ commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on an upper-case PCRE-only local pattern" 1 "$rc"
 d=$(new_repo)
 printf '%s\n' "IDENTITY_PATTERNS+=('a\\sb')" >>"$d/.githooks/guard-config.sh"
+git -C "$d" add .githooks/guard-config.sh
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a tracked pattern awk cannot match as written" 1 "$rc"
+check_match "that refusal comes from the pattern check" 'awk cannot match as written' "$out"
+d=$(new_repo)
+printf '%s\n' "BUILTINS_EXEMPT_RE='^notes\\.md\$'" >>"$d/.githooks/guard-config.sh"
+commit_line "$d" notes.md "clean line"
+check "pre-commit refuses while guard-config.sh differs from its staged copy" 1 "$rc"
+check_match "the refusal names guard-config.sh" 'guard-config.sh differs from its staged copy' "$out"
+d=$(new_repo)
+printf '%s\n' "# a comment" >>"$d/.githooks/guard-config.sh"
+git -C "$d" add .githooks/guard-config.sh
+commit_line "$d" notes.md "clean line"
+check "pre-commit accepts a staged guard-config.sh edit" 0 "$rc"
 for name in identity-patterns.local always-patterns.local Identity-Patterns.local; do
     d=$(new_repo)
     printf 'x\n' >"$d/.githooks/$name"

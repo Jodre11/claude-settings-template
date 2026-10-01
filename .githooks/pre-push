@@ -295,6 +295,12 @@ for entry in ${refs[@]+"${refs[@]}"}; do
         continue
     fi
     peel_ref "$local_sha" "$local_ref"
+    if git cat-file -e "$target:.githooks/guard-config.sh" 2>/dev/null &&
+        ! git cat-file blob "$target:.githooks/guard-config.sh" | cmp -s - "$hook_dir/guard-config.sh"; then
+        guard_fail "❌ Pre-push: the .githooks/guard-config.sh committed at $local_ref's tip differs from the one" \
+            "these hooks read, whose patterns and exemptions would decide its scan. Push it from a checkout of that" \
+            "commit."
+    fi
     set_range "$target" "$remote_sha"
     count=$(git rev-list --count "${range[@]}")
     if [ "$count" = 0 ]; then
