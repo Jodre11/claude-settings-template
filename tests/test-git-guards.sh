@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the commit side of the git leak guards: .githooks/pre-commit, the local pattern lists it reads,
-# .gitleaks.toml, and the CI check scripts under tests/ that keep them consistent. The helpers and fixtures are in
+# .gitleaks.toml, and tests/test-pattern-sync.sh, which keeps them consistent. The helpers and fixtures are in
 # tests/guard-test-lib.sh, so this file carries no literal the guards flag. Bash 3.2 compatible.
 # Run: bash tests/test-git-guards.sh
 # shellcheck disable=SC2154  # the fixtures, rc, out, repo_root and tmp come from guard-test-lib.sh
@@ -227,12 +227,20 @@ for near in "${local_word}x" "${local_word%?}" "$(printf '%s' "$local_word" | tr
     with_ignore "$d" "$near"
     commit_line "$d" notes.md "see $local_word"
     check "an ignore entry that is not the pattern's exact text drops nothing: $near" 1 "$rc"
+    check_match "that rejection comes from the pattern scan: $near" 'sensitive pattern detected' "$out"
 done
+d=$(new_repo)
+with_ignore "$d" "$local_word"
+commit_line "$d" notes.md "clean line"
+check "an ignore entry with no local list to match commits" 0 "$rc"
+named=$(grep -c -e LOCAL_IDENTITY_IGNORE -e "$local_word" <<<"$out" || true)
+check "and the hook says nothing about the unmatched entry" 0 "$named"
 d=$(new_repo)
 with_list "$d" always "$local_id"
 with_ignore "$d" "$local_id"
 commit_line "$d" notes.md "profile|$local_id|role"
 check "LOCAL_IDENTITY_IGNORE cannot drop an always-patterns.local pattern" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
 d=$(new_repo)
 with_ignore "$d" "$handle"
 commit_line "$d" notes.md "see $handle"
@@ -258,6 +266,7 @@ with_list "$d" identity 'a\sb' "$local_word"
 with_ignore "$d" 'a\sb'
 commit_line "$d" notes.md "clean line"
 check "an ignored local pattern awk cannot match as written still stops the commit" 1 "$rc"
+check_match "that rejection names the unmatchable pattern" 'awk cannot match as written' "$out"
 d=$(new_repo)
 with_list "$d" identity "$local_word"
 with_ignore "$d" "$local_word"

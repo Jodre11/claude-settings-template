@@ -1,9 +1,9 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # the suites that source this file read its fixtures, rc and out
-# Shared helpers for the git leak guard suites, tests/test-git-guards.sh and tests/test-pre-push.sh: pass and fail
-# bookkeeping, fixtures assembled at run time, and scratch repos that run copies of the tracked guard files under an
-# isolated git config, so this repository, any local pattern list on this machine and the user's git config are never
-# touched. Sourced, never run. Bash 3.2 compatible.
+# Shared helpers for the git leak guard suites, the tests/test-*.sh files that source it: pass and fail bookkeeping,
+# fixtures assembled at run time, and scratch repos that run copies of the tracked guard files under an isolated git
+# config, so this repository, any local pattern list on this machine and the user's git config are never touched.
+# Sourced, never run. Bash 3.2 compatible.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp=$(mktemp -d)
