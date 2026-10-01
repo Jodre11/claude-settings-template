@@ -1,149 +1,298 @@
 #!/usr/bin/env bash
-# Pre-commit hook: blocks commits containing org-specific or personal sensitive patterns.
-# Escape hatch: SKIP_SECRET_SCAN=1 git commit
+# Pre-commit hook: rejects a commit whose added lines carry a secret-shaped value or an organisation or personal
+# identity marker, then runs gitleaks over the staged changes and over the staged content of each file gitleaks' own
+# diff cannot read: one git diffs as binary or through a diff driver, and one whose name holds gitleaks.toml, which
+# gitleaks' default allowlist skips. Last, gitleaks' built-in rules alone scan every staged blob, so no path allowlist
+# can hide a secret from them: not gitleaks' default one (images, documents, lockfiles, vendored code), nor
+# .gitleaks.toml's. Only BUILTINS_EXEMPT_RE in guard-config.sh exempts a path from that pass. Both direct scans run
+# gitleaks from an empty directory, so no .gitleaksignore can silence them. Replace refs are ignored, so every scan
+# reads the blobs the commit records, and a staged path holding a newline is refused. The patterns are in
+# .githooks/guard-config.sh and the optional local lists; .githooks/pre-push repeats these scans for each push.
+#
+# SKIP_PATTERN_SCAN=1 skips the pattern scan only, for a file that must carry a pattern. gitleaks always runs and has
+# no bypass: clear a gitleaks false positive with a targeted [[allowlists]] entry in .gitleaks.toml, committed with
+# the change; a false positive from a built-in rule also needs its path in BUILTINS_EXEMPT_RE, in a reviewed commit.
+# A local pattern list is never committed, with or without the bypass.
+#
+# gitleaks reads the working-tree .gitleaks.toml and .gitleaksignore, so the hook refuses a commit while either
+# differs from its staged copy: an unstaged edit must never decide what this commit's scan allows. For the same
+# reason, it also refuses any .gitleaks.toml whose use of extend is not exactly the canonical [extend] followed by
+# useDefault = true, since any other spelling, case or key there could hand the scan to a file outside the staged
+# config.
 set -euo pipefail
 
-if [ "${SKIP_SECRET_SCAN:-0}" = "1" ]; then
-    echo "⚠ SKIP_SECRET_SCAN=1 — bypassing secret scan" >&2
-    exit 0
-fi
+# shellcheck disable=SC2034  # read by guard-lib.sh
+hook_name=Pre-commit
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=guard-lib.sh
+source "$hook_dir/guard-lib.sh"
 
-# --- Pattern scan (custom org/personal patterns) ---
-#
-# Two pattern sets:
-#   ALWAYS_PATTERNS    — secret-shaped values (account IDs, ARN fragments, ECR
-#                        domains, private-key markers, PATs). Bite everywhere,
-#                        including projects/**/memory/**.
-#   IDENTITY_PATTERNS  — org/brand/personal identity markers (organisation
-#                        names, SSO URL, AD DC, personal usernames/emails,
-#                        absolute /Users/ paths). Bite outside the memory dir
-#                        but are exempt inside projects/**/memory/**, where
-#                        rich org-specific context is the whole point.
-#
-# Rationale: Claude Code accrues per-project memory under projects/**/memory/**
-# referencing real org/repo names. Stripping that detail would gut the value
-# of the auto-memory system; leaking secret-shaped values matters even in a
-# private repo. The split keeps both rules intact.
-#
-# Customise the IDENTITY_PATTERNS placeholders for your org. ALWAYS_PATTERNS
-# are generally safe to keep verbatim — extend with anything specific to your
-# infrastructure (Bedrock profiles, custom token names, etc.).
-
-ALWAYS_PATTERNS=(
-    # AWS account IDs (contextual — catches IDs in ARNs, SSO config, etc.)
-    'arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}:'
-    'sso_account_id\s*=\s*[0-9]{12}'
-    'account[_-]?id.*[0-9]{12}'
-
-    # ECR registry hostnames
-    '[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'
-
-    # Bedrock inference profile ARN fragments
-    'application-inference-profile/[a-z0-9]{10,16}'
-
-    # SSH private key markers
-    '-----BEGIN.*PRIVATE KEY-----'
-
-    # Tokens / PATs
-    'YOUR_NUGET_PAT'
-)
-
-IDENTITY_PATTERNS=(
-    # SSO portal
-    'yourorg\.awsapps\.com'
-
-    # Active Directory
-    'DC=your-domain'
-
-    # Organisation
-    'YourOrgEngineering'
-    'yourorg'
-    'your-company\.com'
-    'your-stage\.com'
-    'your-dev-server'
-    'your-prod-server'
-    'yourorgltd'
-    'internal-project-1'
-    'internal-project-2'
-    'internal-project-3'
-    'internal-project-4'
-    'internal-project-5'
-
-    # Personal
-    'YourGitHubUser'
-    '@your-company\.com'
-    '@your-email\.co\.uk'
-    'your\.name'
-    '/Users/yourusername/'
-)
-
-join_patterns() {
-    local combined=""
-    local p
-    for p in "$@"; do
-        if [ -z "$combined" ]; then
-            combined="$p"
-        else
-            combined="$combined|$p"
-        fi
-    done
-    printf '%s' "$combined"
+# pattern_scan: print "<path>: <line>" for every staged added line that matches a pattern set it is not exempt from.
+# Renames show as additions and type changes as a deletion plus an addition, so moved content is rescanned. The diff
+# format is pinned, so no colour, external-diff, textconv, prefix or quoting setting can hide lines or break the path
+# exemptions; binary content is diffed as text with its NUL bytes dropped, so the scan reads each line in full.
+pattern_scan() {
+    git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-textconv --text --src-prefix=a/ \
+        --dst-prefix=b/ --diff-filter=ACMRT --no-renames -U0 |
+        LC_ALL=C tr -d '\000' |
+        scan_patch
 }
 
-ALWAYS_RE=$(join_patterns "${ALWAYS_PATTERNS[@]}")
-IDENTITY_RE=$(join_patterns "${IDENTITY_PATTERNS[@]}")
+if ! git diff --cached --name-only --no-renames --diff-filter=ACMRT -z | refuse_local_lists "the commit stages"; then
+    exit 1
+fi
 
-# Scan staged file contents (not filenames) for matches.
-# `git diff --cached -U0` includes a path header (`diff --git a/... b/...`) for
-# each file, so we can split the diff per-file and apply different rule sets.
-STAGED_DIFF=$(git diff --cached --diff-filter=ACMR -U0 -- . ':!.githooks/pre-commit' ':!.gitleaks.toml' ':!README.md' ':!config.env.example' || true)
-
-if [ -n "$STAGED_DIFF" ]; then
-    MATCHES=$(printf '%s\n' "$STAGED_DIFF" | awk -v always_re="$ALWAYS_RE" -v identity_re="$IDENTITY_RE" '
-        BEGIN { path = ""; in_memory = 0 }
-        /^diff --git / {
-            # Capture the b/<path> half of the diff header
-            path = $0
-            sub(/^.* b\//, "", path)
-            in_memory = (path ~ /^projects\/.+\/memory\//) ? 1 : 0
-            next
-        }
-        /^(---|\+\+\+|@@|index )/ { next }
-        /^\+/ {
-            # Only scan added lines. Removed lines (`-`) carry secrets that are
-            # leaving the working tree; flagging them blocks legitimate redaction
-            # commits without preventing any leak (history retains them either way).
-            if (always_re != "" && tolower($0) ~ tolower(always_re)) {
-                print path ": " $0
-                next
-            }
-            if (!in_memory && identity_re != "" && tolower($0) ~ tolower(identity_re)) {
-                print path ": " $0
-            }
-        }
-    ')
-    if [ -n "$MATCHES" ]; then
-        echo "❌ Pre-commit: sensitive pattern detected in staged changes:" >&2
-        echo "" >&2
-        echo "$MATCHES" >&2
-        echo "" >&2
-        echo "If this is a false positive (e.g. documenting the guard patterns themselves):" >&2
-        echo "  SKIP_SECRET_SCAN=1 git commit" >&2
+if [ "${SKIP_PATTERN_SCAN:-0}" = "1" ]; then
+    echo "⚠ SKIP_PATTERN_SCAN=1 — skipping the pattern scan; gitleaks still runs." >&2
+else
+    load_patterns
+    matches=$(pattern_scan)
+    if [ -n "$matches" ]; then
+        {
+            echo "❌ Pre-commit: sensitive pattern detected in staged changes:"
+            echo ""
+            printf '%s\n' "$matches"
+            echo ""
+            echo "Redact the value. Bypass this scan only for a file that must carry a pattern, and say so in the"
+            echo "commit body:"
+            echo "  SKIP_PATTERN_SCAN=1 git commit"
+        } >&2
         exit 1
     fi
 fi
 
-# --- Gitleaks scan (generic secret detection) ---
+# staged_copy_matches <path>: return 0 when <path> in the working tree is byte-identical to its staged copy, or is in
+# neither. The bytes are compared directly, so a --skip-worktree or --assume-unchanged flag cannot hide an edit.
+staged_copy_matches() {
+    local in_index=0 in_tree=0
+    if git cat-file -e ":$1" 2>/dev/null; then
+        in_index=1
+    fi
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        in_tree=1
+    fi
+    if [ "$in_index" != "$in_tree" ]; then
+        return 1
+    fi
+    if [ "$in_index" = 0 ]; then
+        return 0
+    fi
+    git cat-file blob ":$1" | cmp -s - "$1"
+}
 
-if command -v gitleaks &>/dev/null; then
-    if ! gitleaks protect --staged --no-banner --exit-code 1; then
-        echo "" >&2
-        echo "❌ Pre-commit: gitleaks detected secrets in staged changes." >&2
-        echo "Fix the issues above, or use SKIP_SECRET_SCAN=1 git commit to bypass." >&2
+# staged_blob_paths: print, NUL-terminated, each added, copied, modified, renamed or retyped staged path whose staged
+# entry is a blob. A submodule (a gitlink, mode 160000) records a commit ID, not a blob, so it is skipped; gitleaks git
+# still reads its diff. git runs under gitleaks_git_env, as in binary_paths. A record not in raw form ends the list with
+# status 1, so every scan that reads it fails closed.
+staged_blob_paths() {
+    local meta path rest
+    with_pinned_git git diff --cached --raw --no-renames --diff-filter=ACMRT -z |
+        while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            case "$meta" in
+                :*) ;;
+                *) exit 1 ;;
+            esac
+            rest=${meta#* }
+            if [ "${rest%% *}" = 160000 ]; then
+                continue
+            fi
+            printf '%s\0' "$path"
+        done
+}
+
+# binary_paths: print, one per line, each staged path whose content git diffs as binary (a NUL byte, UTF-16, a binary
+# or -diff attribute, or a size over core.bigFileThreshold). git runs under gitleaks_git_env, so it reads the config
+# and attributes gitleaks git reads, and no caller setting can make the two disagree.
+binary_paths() {
+    local rec tab=$'\t'
+    with_pinned_git git diff --cached --no-textconv --numstat --no-renames --diff-filter=ACMRT -z |
+        while IFS= read -r -d '' rec; do
+            case "$rec" in
+                "-$tab-$tab"*) printf '%s\n' "${rec#"-$tab-$tab"}" ;;
+            esac
+        done
+}
+
+# driver_paths [--cached]: print, one per line, each staged path whose diff attribute can hide content from gitleaks
+# git: a bare diff attribute (value set), which forces a text diff of content git would otherwise call binary, or any
+# value naming a driver that configures a textconv or a binary setting (including a driver literally named set,
+# unset or unspecified) — git's only per-driver keys that change what gitleaks git reads, since diff.<name>.command
+# is disabled by --no-ext-diff and binary=false forces the same text diff a bare attribute does. A funcname-only
+# driver such as diff=markdown hides nothing and is left to gitleaks git and its path allowlists. --cached reads the
+# staged .gitattributes, otherwise the working tree's. The paths come from staged_blob_paths, so a submodule is
+# skipped, and every git call runs under gitleaks_git_env, as in binary_paths.
+driver_paths() {
+    local path value
+    staged_blob_paths |
+        with_pinned_git git check-attr "$@" -z --stdin diff |
+        while IFS= read -r -d '' path && IFS= read -r -d '' _ && IFS= read -r -d '' value; do
+            case "$value" in
+                set) ;;
+                *)
+                    with_pinned_git git config --get "diff.$value.textconv" >/dev/null ||
+                        with_pinned_git git config --get "diff.$value.binary" >/dev/null || continue
+                    ;;
+            esac
+            printf '%s\n' "$path"
+        done
+}
+
+# config_named_paths: print, one per line, each staged path other than .gitleaks.toml whose name holds gitleaks.toml in
+# any case. gitleaks' default allowlist skips every path matching the unanchored gitleaks\.toml, so gitleaks git never
+# reads one. The paths come from staged_blob_paths, so a submodule is skipped.
+config_named_paths() {
+    local path
+    staged_blob_paths |
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                .gitleaks.toml) ;;
+                *[Gg][Ii][Tt][Ll][Ee][Aa][Kk][Ss].[Tt][Oo][Mm][Ll]*) printf '%s\n' "$path" ;;
+            esac
+        done
+}
+
+# scan_opaque_blobs: run gitleaks stdin over the staged blob of each path gitleaks git cannot read (binary, behind a
+# diff driver, or a name holding gitleaks.toml), NUL bytes dropped so UTF-16 text reads as ASCII; exit 1
+# naming the path on a finding. The blob carries no path, so no path allowlist applies to it. The path list holds one
+# path per line, so the function first refuses any staged path holding a newline, which would split into names that
+# can resolve to other, clean blobs. Each blob is read as :0:<path>, so a path shaped like a stage number reads as
+# itself. The NUL strip runs in the C locale, so a byte that is not valid UTF-8 (a real image's header) cannot stop it.
+# gitleaks runs from scan_dir with the working-tree .gitleaks.toml named by absolute path (the staged-copy check has
+# proved it equal to the staged copy), so no .gitleaksignore can silence it.
+scan_opaque_blobs() {
+    local binary drivers staged_drivers named paths path config="$PWD/.gitleaks.toml"
+    if ! with_pinned_git git diff --cached --name-only --no-renames --diff-filter=ACMRT -z |
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                *$'\n'*) exit 1 ;;
+            esac
+        done; then
+        {
+            echo "❌ Pre-commit: a staged path holds a newline; rename it. The scan of content gitleaks git"
+            echo "cannot read lists paths one per line, so it cannot scan such a path."
+        } >&2
         exit 1
     fi
+    binary=$(binary_paths)
+    drivers=$(driver_paths)
+    staged_drivers=$(driver_paths --cached)
+    named=$(config_named_paths)
+    paths=$(printf '%s\n%s\n%s\n%s\n' "$binary" "$drivers" "$staged_drivers" "$named" | LC_ALL=C sort -u)
+    while IFS= read -r path; do
+        if [ -z "$path" ]; then
+            continue
+        fi
+        if ! git cat-file blob ":0:$path" | LC_ALL=C tr -d '\000' |
+            in_scan_dir gitleaks stdin --no-banner --redact --ignore-gitleaks-allow --config "$config"; then
+            {
+                echo ""
+                echo "❌ Pre-commit: gitleaks found a secret in $path, which gitleaks git cannot read:"
+                echo "binary, behind a diff driver, or a path gitleaks allowlists by default. So gitleaks"
+                echo "scanned its staged content directly, where no path allowlist applies."
+                echo "There is no bypass: remove the value."
+            } >&2
+            exit 1
+        fi
+    done <<<"$paths"
+}
+
+# builtins_paths: print, NUL-terminated, each staged path the built-ins pass scans: every path from staged_blob_paths
+# (so no submodule) that BUILTINS_EXEMPT_RE does not match.
+builtins_paths() {
+    local path
+    staged_blob_paths |
+        while IFS= read -r -d '' path; do
+            if builtins_exempt "$path"; then
+                continue
+            fi
+            printf '%s\0' "$path"
+        done
+}
+
+# builtins_stream: read NUL-terminated staged paths on standard input and print each one's staged blob, read as
+# :0:<path>, followed by a newline, so no match joins the last line of one blob to the first of the next; return 1
+# when a blob cannot be read, so the scan fails closed.
+builtins_stream() {
+    local path
+    while IFS= read -r -d '' path; do
+        git cat-file blob ":0:$path" || return 1
+        printf '\n'
+    done
+}
+
+# scan_staged_with_builtins: run gitleaks' built-in rules alone, from scan_dir, over the staged blob of every staged
+# path BUILTINS_EXEMPT_RE does not exempt, NUL bytes dropped as in scan_opaque_blobs, so no path allowlist can hide a
+# secret: not gitleaks' default one (images, documents, lockfiles, vendored code), nor .gitleaks.toml's, and no
+# .gitleaksignore. The custom rules stay out, so memory notes are unaffected. One batched run covers every blob; only
+# when it fails is each path rescanned alone to name the culprit, and the commit is refused even when none is named (a
+# match across two blobs, or an error). scan_opaque_blobs has already refused any path holding a newline.
+scan_staged_with_builtins() {
+    local path batch_log found=""
+    if batch_log=$(builtins_paths | builtins_stream | LC_ALL=C tr -d '\000' | builtins_gitleaks 2>&1); then
+        return 0
+    fi
+    while IFS= read -r -d '' path; do
+        if ! printf '%s\0' "$path" | builtins_stream | LC_ALL=C tr -d '\000' | builtins_gitleaks >/dev/null 2>&1
+        then
+            found="$found    $path"$'\n'
+        fi
+    done < <(builtins_paths)
+    {
+        echo ""
+        if [ -n "$found" ]; then
+            echo "❌ Pre-commit: gitleaks' built-in rules found a secret in:"
+            printf '%s' "$found"
+            echo "They scan every staged file's content directly, so no path allowlist applies: not gitleaks'"
+            echo "default one (images, documents, lockfiles, vendored code), nor .gitleaks.toml's, nor"
+            echo ".gitleaksignore. There is no bypass: remove the value. For a false positive, add the path to"
+            echo "BUILTINS_EXEMPT_RE in .githooks/guard-config.sh in a reviewed commit."
+        else
+            printf '%s\n' "$batch_log"
+            echo "❌ Pre-commit: gitleaks' built-in rules failed on the staged content as a whole but on no single"
+            echo "file: a match across two files, or a gitleaks error (shown above). There is no bypass: fix the"
+            echo "content or the error, then commit again."
+        fi
+    } >&2
+    exit 1
+}
+
+if command -v gitleaks >/dev/null 2>&1; then
+    # The direct stdin scans run gitleaks from this empty directory, so no .gitleaksignore or .gitleaks.toml in the
+    # repository can reach them.
+    scan_dir=$(mktemp -d)
+    trap 'rm -rf "$scan_dir"' EXIT
+    for config_file in .gitleaks.toml .gitleaksignore; do
+        if ! staged_copy_matches "$config_file"; then
+            {
+                echo "❌ Pre-commit: $config_file differs from its staged copy, and gitleaks reads the working-tree"
+                echo "file. Stage the change (git add $config_file) or restore the file, then commit again."
+            } >&2
+            exit 1
+        fi
+    done
+    if ! extend_is_defaults_only .gitleaks.toml; then
+        {
+            echo "❌ Pre-commit: .gitleaks.toml may hold only the canonical [extend] followed by useDefault = true."
+            echo "Any other use of extend lets a file outside the staged config decide the scan. Put allowlists in"
+            echo ".gitleaks.toml."
+        } >&2
+        exit 1
+    fi
+    if ! with_pinned_git gitleaks git --pre-commit --staged --no-banner --redact --ignore-gitleaks-allow \
+        --config .gitleaks.toml .; then
+        {
+            echo ""
+            echo "❌ Pre-commit: gitleaks found a secret in the staged changes. There is no bypass."
+            echo "Remove it. For a false positive, add a targeted [[allowlists]] entry (targetRules plus a path or a"
+            echo "regex) to .gitleaks.toml in the same commit. A built-in rule's false positive also needs its path in"
+            echo "BUILTINS_EXEMPT_RE in .githooks/guard-config.sh, since the built-ins pass ignores .gitleaks.toml."
+        } >&2
+        exit 1
+    fi
+    scan_opaque_blobs
+    scan_staged_with_builtins
 else
-    echo "⚠ gitleaks not found — skipping generic secret scan. Install: brew install gitleaks" >&2
+    echo "⚠ gitleaks not found — skipping the generic secret scan. Install: brew install gitleaks" >&2
 fi
 
 echo "✔ Pre-commit: no sensitive patterns detected." >&2
