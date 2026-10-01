@@ -36,7 +36,8 @@ is_named_remote() {
 
 # set_range <local-sha> <remote-sha>: set range to the rev-list arguments naming the commits this push publishes, and
 # log_opts to the same arguments as one string for gitleaks' --log-opts, which also shows each merge against its first
-# parent, so gitleaks reads what only a merge adds, and each root commit's whole tree.
+# parent, so gitleaks reads what only a merge adds, each root commit's whole tree, and every blob's own bytes rather
+# than a textconv driver's output.
 set_range() {
     if [[ ! "$2" =~ $zero_re ]] && git cat-file -e "$2^{commit}" 2>/dev/null; then
         range=("$2..$1")
@@ -45,7 +46,7 @@ set_range() {
     else
         range=("$1")
     fi
-    log_opts="--root --diff-merges=first-parent ${range[*]}"
+    log_opts="--root --diff-merges=first-parent --no-textconv ${range[*]}"
 }
 
 # tag_text <tag-sha>: print the tag's tagger line ("tagger -" when it has none), then its name line, then its message,
@@ -212,19 +213,21 @@ scan_with_gitleaks() {
             "Rewrite the commits to remove it. For a false positive, commit a targeted [[allowlists]] entry to" \
             ".gitleaks.toml first."
     fi
-    tip_config="$cfg_dir/.gitleaks.toml"
+    tip_cfg_dir="$cfg_dir"
 }
 
 # opaque_paths: print, one per line, each path a commit in range adds whose content gitleaks git does not read as
-# text: one git diffs as binary there (a NUL byte, UTF-16, a binary or -diff attribute), and one other than
+# text: one git diffs as binary there (a NUL byte, UTF-16, a binary or -diff attribute), judged in the environment
+# gitleaks git runs in (from tip_cfg_dir with GIT_DIR set, so no working-tree .gitattributes applies, as for it), and
+# one other than
 # .gitleaks.toml whose name holds gitleaks.toml in any case, which gitleaks' default allowlist skips. .gitleaks.toml
 # itself defines the rules, so it would match them; the pattern scan and the built-ins pass read it. A path holding a
 # newline is left to the caller.
 opaque_paths() {
     local rec path tab=$'\t'
     {
-        with_pinned_git git log --root -z --numstat --format= --no-renames --diff-merges=first-parent \
-            --diff-filter=ACMRT "${range[@]}" |
+        (cd "$tip_cfg_dir" && with_pinned_git GIT_DIR="$git_dir" git log --root -z --numstat --no-textconv --format= \
+            --no-renames --diff-merges=first-parent --diff-filter=ACMRT "${range[@]}") |
             while IFS= read -r -d '' rec; do
                 rec=${rec#$'\n'}
                 case "$rec" in
@@ -260,8 +263,8 @@ scan_opaque_blobs() {
                 esac
                 ;;
         esac
-        if ! git cat-file blob "$sha" | LC_ALL=C tr -d '\000' |
-            in_scan_dir gitleaks stdin --no-banner --redact --ignore-gitleaks-allow --config "$tip_config"; then
+        if ! git cat-file blob "$sha" | LC_ALL=C tr -d '\000' | in_scan_dir gitleaks stdin --no-banner --redact \
+            --ignore-gitleaks-allow --config "$tip_cfg_dir/.gitleaks.toml"; then
             guard_fail "" "❌ Pre-push: gitleaks found a secret in $path (blob ${sha:0:12}), which $1 would publish." \
                 "gitleaks git cannot read it as text (binary, or a name it allowlists by default), so it scanned the" \
                 "blob directly, where no path allowlist applies. There is no bypass: rewrite the commits to remove it."

@@ -391,6 +391,20 @@ if have_gitleaks "pre-push gitleaks rows"; then
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "gitleaks' custom rules scan a blob behind a textconv driver" 1 "$rc"
     d=$(push_repo)
+    raw_commit "$d" .gitattributes 'wide.txt diff'
+    printf 'x\000account `%s`\n' "$digits" >"$d/wide.txt"
+    git -C "$d" add -f wide.txt
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m wide
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "a committed diff attribute cannot hide NUL content from gitleaks' custom rules" 1 "$rc"
+    d=$(push_repo)
+    git -C "$d" config diff.hide.textconv true
+    mkdir -p "$d/.git/info"
+    printf '%s\n' '*.dat diff=hide' >"$d/.git/info/attributes"
+    raw_commit "$d" notes.dat "account \`$digits\`"
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "a textconv driver from info/attributes cannot hide content from gitleaks" 1 "$rc"
+    d=$(push_repo)
     raw_commit "$d" docs/old.gitleaks.toml "account \`$digits\`"
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "gitleaks' custom rules scan a path named like gitleaks.toml" 1 "$rc"

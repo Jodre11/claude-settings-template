@@ -251,13 +251,14 @@ refuse_local_lists() {
 
 # with_pinned_git [NAME=value...] <command> [arg...]: run <command> with git's diff and log output pinned. gitleaks runs
 # git itself: a coloured diff hides every added line, a changed path prefix breaks the anchored path allowlists, rename
-# detection hides content moved out of an allowlisted path, log.showRoot=false hides a root commit's whole diff, and
-# another i18n.logOutputEncoding re-encodes every message the scans read. git -c settings arrive in
+# detection hides content moved out of an allowlisted path, log.showRoot=false hides a root commit's whole diff,
+# another i18n.logOutputEncoding re-encodes every message the scans read, and log.showSignature inserts lines before
+# them. git -c settings arrive in
 # GIT_CONFIG_PARAMETERS, which outranks GIT_CONFIG_COUNT, so it is dropped. The hooks run their own git calls for
 # content gitleaks git cannot read under this same environment, so both read one config and one set of attributes.
 with_pinned_git() {
     env -u GIT_CONFIG_PARAMETERS \
-        GIT_CONFIG_COUNT=9 \
+        GIT_CONFIG_COUNT=10 \
         GIT_CONFIG_KEY_0=color.ui GIT_CONFIG_VALUE_0=never \
         GIT_CONFIG_KEY_1=color.diff GIT_CONFIG_VALUE_1=never \
         GIT_CONFIG_KEY_2=diff.noprefix GIT_CONFIG_VALUE_2=false \
@@ -267,6 +268,7 @@ with_pinned_git() {
         GIT_CONFIG_KEY_6=diff.renames GIT_CONFIG_VALUE_6=false \
         GIT_CONFIG_KEY_7=log.showRoot GIT_CONFIG_VALUE_7=true \
         GIT_CONFIG_KEY_8=i18n.logOutputEncoding GIT_CONFIG_VALUE_8=UTF-8 \
+        GIT_CONFIG_KEY_9=log.showSignature GIT_CONFIG_VALUE_9=false \
         "$@"
 }
 
