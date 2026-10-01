@@ -87,6 +87,24 @@ raw_commit "$d" .githooks/guard-config.sh "# see $local_word"
 push_to "$d" origin main
 check "pre-push refuses a local identity word in guard-config.sh" 1 "$rc"
 d=$(push_repo)
+git -C "$d" config log.showRoot false
+git -C "$d" checkout -q --orphan side
+raw_commit "$d" notes.md "see $word"
+push_to "$d" origin side
+check "pre-push scans a root commit under log.showRoot=false" 1 "$rc"
+d=$(push_repo)
+git -C "$d" config log.showRoot false
+git -C "$d" checkout -q --orphan side
+raw_commit "$d" .githooks/identity-patterns.local "x"
+push_env "$d" SKIP_PATTERN_SCAN=1 origin side
+check "pre-push refuses a root commit that adds a local list under log.showRoot=false" 1 "$rc"
+d=$(push_repo)
+git -C "$d" config i18n.logOutputEncoding UTF-16
+with_list "$d" identity "$local_word"
+raw_commit "$d" notes.md "clean line" -m "mentions $local_word"
+push_to "$d" origin main
+check "pre-push scans commit metadata under i18n.logOutputEncoding=UTF-16" 1 "$rc"
+d=$(push_repo)
 raw_commit "$d" "$memory" "see $word"
 push_to "$d" origin main
 check "pre-push applies IDENTITY_EXEMPT_RE to a memory path" "$memory_rc" "$rc"

@@ -46,19 +46,21 @@ set_range() {
 }
 
 # scan_lines: print "<sha> <path>: <line>" for every line the commits in range add that matches a pattern set it is not
-# exempt from. A merge shows its changes against its first parent, so an evil merge is scanned too.
+# exempt from. A merge shows its changes against its first parent, so an evil merge is scanned too, and a root commit
+# shows its whole tree as added, whatever log.showRoot says.
 scan_lines() {
-    git -c core.quotePath=false log --no-color --no-ext-diff --no-textconv --text --src-prefix=a/ --dst-prefix=b/ \
-        --no-renames --diff-merges=first-parent --diff-filter=ACMRT -U0 -p --format='commit %H' "${range[@]}" |
+    with_pinned_git git -c core.quotePath=false log --root --no-color --no-ext-diff --no-textconv --text \
+        --src-prefix=a/ --dst-prefix=b/ --no-renames --diff-merges=first-parent --diff-filter=ACMRT -U0 -p \
+        --format='commit %H' "${range[@]}" |
         LC_ALL=C tr -d '\000' |
         scan_patch
 }
 
 # scan_metadata: print "<sha> <field>: <line>" for every line of the author, committer or message of a commit in range
-# that matches any pattern set.
+# that matches any pattern set. The log output encoding is pinned to UTF-8, so no setting re-encodes what is scanned.
 scan_metadata() {
     local rec sha
-    git log --no-color -z --format='%H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B' "${range[@]}" |
+    with_pinned_git git log --no-color -z --format='%H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B' "${range[@]}" |
         while IFS= read -r -d '' rec; do
             sha=${rec%%$'\n'*}
             printf '%s\n' "${rec#*$'\n'}" | scan_text "${sha:0:12} metadata"
@@ -67,7 +69,8 @@ scan_metadata() {
 
 # added_paths: print, NUL-terminated, every path a commit in range adds, copies, modifies, renames or retypes.
 added_paths() {
-    git log -z --format= --name-only --no-renames --diff-merges=first-parent --diff-filter=ACMRT "${range[@]}"
+    with_pinned_git git log --root -z --format= --name-only --no-renames --diff-merges=first-parent \
+        --diff-filter=ACMRT "${range[@]}"
 }
 
 # range_blobs: print "<blob-sha> <path>", NUL-terminated, for every blob a commit in range adds, copies, modifies,
@@ -75,7 +78,7 @@ added_paths() {
 # ends the list with status 1, so the scan fails closed.
 range_blobs() {
     local meta path rest new_mode new_sha
-    with_pinned_git git log -z --raw --no-abbrev --format= --no-renames --diff-merges=first-parent \
+    with_pinned_git git log --root -z --raw --no-abbrev --format= --no-renames --diff-merges=first-parent \
         --diff-filter=ACMRT "${range[@]}" |
         while IFS= read -r -d '' meta; do
             meta=${meta#$'\n'}
