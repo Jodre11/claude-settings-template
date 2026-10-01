@@ -305,7 +305,8 @@ warn when git cannot name the main worktree (a git directory kept apart with `--
 `SKIP_PATTERN_SCAN=1 git commit` (or `git push`) skips the pattern scan only, for a file that must carry a pattern;
 say so in the commit body. gitleaks always runs and has no bypass: clear a false positive with a targeted
 `[[allowlists]]` entry in `.gitleaks.toml`, committed with the change. gitleaks never reads `.gitleaks.toml` itself,
-so under the bypass only its built-in rules scan that file.
+and its default allowlist keeps its custom rules out of some other paths (images, PDFs, lockfiles, `node_modules/`
+and the like), so under the bypass only its built-in rules scan those files.
 
 ## Licence
 
