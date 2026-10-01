@@ -426,6 +426,14 @@ if have_gitleaks "pre-push gitleaks rows"; then
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "a textconv driver from info/attributes cannot hide content from gitleaks" 1 "$rc"
     d=$(push_repo)
+    mkdir -p "$d/projects/p/memory"
+    printf 'see %s\n' "$word" >"$d/zz.gitleaks.toml"
+    cp "$d/zz.gitleaks.toml" "$d/projects/p/memory/m.md"
+    git -C "$d" add -f zz.gitleaks.toml projects/p/memory/m.md
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m dup
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "the opaque pass scans a pushed blob at every path it is at" 1 "$rc"
+    d=$(push_repo)
     raw_commit "$d" docs/old.gitleaks.toml "account \`$digits\`"
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "gitleaks' custom rules scan a path named like gitleaks.toml" 1 "$rc"

@@ -122,10 +122,10 @@ added_paths() {
         --diff-filter=ACMRT "${range[@]}"
 }
 
-# range_blobs: print "<blob-sha> <path>", NUL-terminated, for every blob a commit in range adds, copies, modifies,
-# renames or retypes, except gitlinks and paths BUILTINS_EXEMPT_RE exempts, each blob once. A record not in raw form
-# ends the list with status 1, so the scan fails closed.
-range_blobs() {
+# range_blob_records: print "<blob-sha> <path>", NUL-terminated, for every blob a commit in range adds, copies,
+# modifies, renames or retypes, except gitlinks and paths BUILTINS_EXEMPT_RE exempts. A record not in raw form ends
+# the list with status 1, so the scan fails closed.
+range_blob_records() {
     local meta path rest new_mode new_sha
     with_pinned_git git log --root -z --raw --no-abbrev --format= --no-renames --diff-merges=first-parent \
         --diff-filter=ACMRT "${range[@]}" |
@@ -148,7 +148,12 @@ range_blobs() {
                 continue
             fi
             printf '%s %s\0' "$new_sha" "$path"
-        done | LC_ALL=C sort -z -u -k1,1
+        done
+}
+
+# range_blobs: print range_blob_records' records with each blob once, for the passes that read content alone.
+range_blobs() {
+    range_blob_records | LC_ALL=C sort -z -u -k1,1
 }
 
 # blob_stream: read "<blob-sha> <path>" records, NUL-terminated, on standard input and print each blob followed by a
@@ -216,41 +221,47 @@ scan_with_gitleaks() {
     tip_cfg_dir="$cfg_dir"
 }
 
-# opaque_paths: print, one per line, each path a commit in range adds whose content gitleaks git does not read as
-# text: one git diffs as binary there (a NUL byte, UTF-16, a binary or -diff attribute), judged in the environment
-# gitleaks git runs in (from tip_cfg_dir with GIT_DIR set, so no working-tree .gitattributes applies, as for it), and
-# one other than
-# .gitleaks.toml whose name holds gitleaks.toml in any case, which gitleaks' default allowlist skips. .gitleaks.toml
-# itself defines the rules, so it would match them; the pattern scan and the built-ins pass read it. A path holding a
-# newline is left to the caller.
-opaque_paths() {
-    local rec path tab=$'\t'
-    {
-        (cd "$tip_cfg_dir" && with_pinned_git GIT_DIR="$git_dir" git log --root -z --numstat --no-textconv --format= \
-            --no-renames --diff-merges=first-parent --diff-filter=ACMRT "${range[@]}") |
-            while IFS= read -r -d '' rec; do
-                rec=${rec#$'\n'}
-                case "$rec" in
-                    "-$tab-$tab"*) printf '%s\n' "${rec#"-$tab-$tab"}" ;;
-                esac
-            done
-        added_paths |
-            while IFS= read -r -d '' path; do
-                case "$path" in
-                    .gitleaks.toml) ;;
-                    *[Gg][Ii][Tt][Ll][Ee][Aa][Kk][Ss].[Tt][Oo][Mm][Ll]*) printf '%s\n' "$path" ;;
-                esac
-            done
-    } | LC_ALL=C sort -u
+# binary_paths: print, one per line, each path a commit in range adds whose content git diffs as binary there (a NUL
+# byte, UTF-16, a binary or -diff attribute), judged in the environment gitleaks git runs in (from tip_cfg_dir with
+# GIT_DIR set, so no working-tree .gitattributes applies, as for it).
+binary_paths() {
+    local rec tab=$'\t'
+    (cd "$tip_cfg_dir" && with_pinned_git GIT_DIR="$git_dir" git log --root -z --numstat --no-textconv --format= \
+        --no-renames --diff-merges=first-parent --diff-filter=ACMRT "${range[@]}") |
+        while IFS= read -r -d '' rec; do
+            rec=${rec#$'\n'}
+            case "$rec" in
+                "-$tab-$tab"*) printf '%s\n' "${rec#"-$tab-$tab"}" ;;
+            esac
+        done
+}
+
+# config_named_paths: print, one per line, each path other than .gitleaks.toml that a commit in range adds whose name
+# holds gitleaks.toml in any case, which gitleaks' default allowlist skips. .gitleaks.toml itself defines the rules, so
+# it would match them; the pattern scan and the built-ins pass read it.
+config_named_paths() {
+    local path
+    added_paths |
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                .gitleaks.toml) ;;
+                *[Gg][Ii][Tt][Ll][Ee][Aa][Kk][Ss].[Tt][Oo][Mm][Ll]*) printf '%s\n' "$path" ;;
+            esac
+        done
 }
 
 # scan_opaque_blobs <ref>: run gitleaks stdin, under the config committed at the pushed tip, over every pushed blob at
-# a path opaque_paths lists (and at any path holding a newline), NUL bytes dropped so UTF-16 text reads as ASCII, from
-# scan_dir, so no .gitleaksignore applies. Its custom rules otherwise never see such content when the pattern scan is
-# skipped. Exit 1 naming the path on a finding; there is no bypass.
+# a path gitleaks git does not read as text (binary_paths, config_named_paths, and any path holding a newline), NUL
+# bytes dropped so UTF-16 text reads as ASCII, from scan_dir, so no .gitleaksignore applies. Its custom rules
+# otherwise never see such content when the pattern scan is skipped. Every (blob, path) pair is checked, so a blob
+# also pushed at an ordinary path is still scanned. Each list is built by a plain command, so a failing git call
+# stops the push. Exit 1 naming the path on a finding; there is no bypass.
 scan_opaque_blobs() {
-    local opaque rec sha path
-    opaque=$(opaque_paths)
+    local opaque binary named rec sha path
+    binary=$(binary_paths)
+    named=$(config_named_paths)
+    opaque="$binary"$'\n'"$named"
+    range_blob_records | LC_ALL=C sort -z -u >"$scan_dir/blob-records"
     while IFS= read -r -d '' rec; do
         sha=${rec%% *}
         path=${rec#* }
@@ -269,7 +280,7 @@ scan_opaque_blobs() {
                 "gitleaks git cannot read it as text (binary, or a name it allowlists by default), so it scanned the" \
                 "blob directly, where no path allowlist applies. There is no bypass: rewrite the commits to remove it."
         fi
-    done < <(range_blobs)
+    done <"$scan_dir/blob-records"
 }
 
 refs=()
