@@ -158,6 +158,14 @@ with_list "$d" identity '(unbalanced'
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a local pattern awk cannot compile" 1 "$rc"
 d=$(new_repo)
+with_list "$d" identity "zqxcafé"
+commit_line "$d" notes.md "see zqxcafé"
+check "a non-ASCII local pattern matches" 1 "$rc"
+d=$(new_repo)
+with_list "$d" identity 'zqx\Sorg'
+commit_line "$d" notes.md "clean line"
+check "pre-commit fails closed on an upper-case PCRE-only local pattern" 1 "$rc"
+d=$(new_repo)
 printf '%s\n' "IDENTITY_PATTERNS+=('a\\sb')" >>"$d/.githooks/guard-config.sh"
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a tracked pattern awk cannot match as written" 1 "$rc"
@@ -596,6 +604,11 @@ add_identity "$d" 'x\sy'
 printf '%s\n' '' '[[rules]]' 'id = "drift-test"' "regex = '''(?i)x\\sy'''" >>"$d/.gitleaks.toml"
 run_sync "$d"
 check_match "pattern sync catches PCRE-only syntax" 'PCRE' "$out"
+d=$(sync_copy)
+add_identity "$d" 'x\Sy'
+printf '%s\n' '' '[[rules]]' 'id = "drift-test"' "regex = '''(?i)x\\Sy'''" >>"$d/.gitleaks.toml"
+run_sync "$d"
+check_match "pattern sync catches upper-case PCRE-only syntax" 'PCRE' "$out"
 d=$(sync_copy)
 printf '%s\n' 'target_rules = ["personal-identity"]' >>"$d/.gitleaks.toml"
 run_sync "$d"

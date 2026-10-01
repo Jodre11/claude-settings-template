@@ -121,11 +121,12 @@ check_sync() {
         <(printf '%s\n' "${gitleaks_atoms[@]}" | LC_ALL=C sort -u))
 }
 
-# check_awk_syntax: the pre-commit matches with awk's ERE, where \s, \d, \w, \b and (?: never match.
+# check_awk_syntax: the pre-commit matches with awk's ERE, where \s, \d, \w, \b and (?: never match. The upper-case
+# forms count too: the hooks lowercase every pattern, which turns \S into \s.
 check_awk_syntax() {
     local atom
     for atom in "${precommit_atoms[@]}"; do
-        if [[ "$atom" =~ \\[sdwb]|\(\?: ]]; then
+        if [[ "$atom" =~ \\[sdwbSDWB]|\(\?: ]]; then
             fail "PCRE-only syntax in a pre-commit pattern: $atom"
         fi
     done

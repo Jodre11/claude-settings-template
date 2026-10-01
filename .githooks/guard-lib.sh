@@ -31,8 +31,9 @@ local_list_path_re='^\.githooks/(identity|always)-patterns\.local$'
 # lists still apply to them. .gitleaks.toml's allowlists name them as well.
 guard_file_re='^\.githooks/(guard-config\.sh|pre-commit)$|^\.gitleaks\.toml$'
 
-# Constructs awk's ERE does not support: in a pattern they never match as meant, so the scan would fail open.
-pcre_only_re='\\[sdwb]|\(\?:'
+# Constructs awk's ERE does not support: in a pattern they never match as meant, so the scan would fail open. The
+# upper-case forms count too, since every pattern is lowercased, which turns \S into \s.
+pcre_only_re='\\[sdwbSDWB]|\(\?:'
 
 # The hook sourcing this file names itself in hook_name, for its messages.
 hook_name=${hook_name:-Git hook}
@@ -127,25 +128,31 @@ load_patterns() {
 # not match their own text, for the guard files; path_matches(path, re), true when a non-empty re matches a known path;
 # and line_hits(text, identity_exempt, local_identity_exempt, always_exempt, guard_file), true when the lowercased text
 # matches a set it is not exempt from. always-patterns.local has no exemption. UTF-8 continuation bytes are dropped
-# first, so each character counts once and the {0,24} windows count characters, not bytes; the AWS documentation
-# account ID 123456789012 is removed, so it never counts as an account ID.
+# from the text and from every pattern alike, so each character counts once, the {0,24} windows count characters, not
+# bytes, and a non-ASCII pattern still matches; the AWS documentation account ID 123456789012 is removed, so it never
+# counts as an account ID.
 guard_awk_common='
     BEGIN {
-        always_re = tolower(ENVIRON["GUARD_ALWAYS_RE"])
+        always_re = folded(ENVIRON["GUARD_ALWAYS_RE"])
         guard_always_re = ""
-        n = split(tolower(ENVIRON["GUARD_ALWAYS_LIST"]), always_list, "\n")
+        n = split(folded(ENVIRON["GUARD_ALWAYS_LIST"]), always_list, "\n")
         for (i = 1; i <= n; i++) {
             if (always_list[i] != "" && always_list[i] !~ always_list[i]) {
                 guard_always_re = guard_always_re (guard_always_re == "" ? "" : "|") always_list[i]
             }
         }
-        identity_re = tolower(ENVIRON["GUARD_IDENTITY_RE"])
-        local_always_re = tolower(ENVIRON["GUARD_LOCAL_ALWAYS_RE"])
-        local_identity_re = tolower(ENVIRON["GUARD_LOCAL_IDENTITY_RE"])
+        identity_re = folded(ENVIRON["GUARD_IDENTITY_RE"])
+        local_always_re = folded(ENVIRON["GUARD_LOCAL_ALWAYS_RE"])
+        local_identity_re = folded(ENVIRON["GUARD_LOCAL_IDENTITY_RE"])
         identity_exempt_re = ENVIRON["GUARD_IDENTITY_EXEMPT_RE"]
         local_identity_exempt_re = ENVIRON["GUARD_LOCAL_IDENTITY_EXEMPT_RE"]
         always_exempt_re = ENVIRON["GUARD_ALWAYS_EXEMPT_RE"]
         guard_file_re = ENVIRON["GUARD_FILE_RE"]
+    }
+    function folded(s) {
+        s = tolower(s)
+        gsub(/[\200-\277]/, "", s)
+        return s
     }
     function path_matches(path, re) {
         return path != "" && re != "" && path ~ re
