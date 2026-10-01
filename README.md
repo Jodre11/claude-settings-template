@@ -276,7 +276,8 @@ Four layers keep sensitive data out of the repository:
    content gitleaks' own diff cannot read.
 2. **Pre-push hook** (`.githooks/pre-push`) — repeats those scans over every commit a push would publish, so a commit
    made without the pre-commit (a rebase, a cherry-pick, `git am`, or the hooks turned off) is caught before it
-   leaves the machine. It also scans each commit's message, author and committer.
+   leaves the machine. It also scans each commit's message, author and committer, and each annotated tag's message,
+   tagger and name, and refuses a ref that names a blob or a tree.
 3. **CI** — gitleaks, a pattern-sync check (`tests/test-pattern-sync.sh`) and an output-ignore check
    (`tests/test-output-ignore.sh`) run on every push and pull request.
 4. **GitHub secret scanning and push protection** — enabled at the repository level.

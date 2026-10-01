@@ -157,6 +157,45 @@ push_to "$d" origin main
 check "pre-push scans a noreply-shaped address in a commit message" 1 "$rc"
 d=$(push_repo)
 with_list "$d" identity "$local_word"
+git -C "$d" tag -a -m "mentions $local_word" v1
+push_to "$d" origin v1
+check "pre-push refuses a local identity word in an annotated tag's message" 1 "$rc"
+check_match "the refusal names the tag" 'sensitive pattern detected in the tag' "$out"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" -c user.email="someone@$local_word.example" tag -a -m "release" v1
+push_to "$d" origin v1
+check "pre-push refuses a local identity word in a tagger email" 1 "$rc"
+d=$(push_repo)
+git -C "$d" tag -a -m "mentions account \`$digits\`" v1
+push_to "$d" origin v1
+check "pre-push refuses a secret-shaped value in a tag message" 1 "$rc"
+d=$(push_repo)
+git -C "$d" tag -a -m "release" v1
+push_to "$d" origin v1
+check "pre-push allows a clean annotated tag of a pushed commit" 0 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" tag -a -m "mentions $local_word" v1
+push_env "$d" SKIP_PATTERN_SCAN=1 origin v1
+check "SKIP_PATTERN_SCAN=1 skips the tag scan too" 0 "$rc"
+d=$(push_repo)
+blob=$(printf 'see %s\n' "$word" | git -C "$d" hash-object -w --stdin)
+git -C "$d" tag blobtag "$blob"
+push_to "$d" origin blobtag
+check "pre-push refuses a ref that names a blob" 1 "$rc"
+check_match "the refusal names the object type" 'names a blob' "$out"
+d=$(push_repo)
+git -C "$d" tag treetag "main^{tree}"
+push_to "$d" origin treetag
+check "pre-push refuses a ref that names a tree" 1 "$rc"
+d=$(push_repo)
+blob=$(printf 'x\n' | git -C "$d" hash-object -w --stdin)
+git -C "$d" tag -a -m "a blob" blobtag "$blob"
+push_to "$d" origin blobtag
+check "pre-push refuses an annotated tag of a blob" 1 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
 raw_commit "$d" notes.md "see $local_word" -m "mentions $local_word"
 push_env "$d" SKIP_PATTERN_SCAN=1 origin main
 check "SKIP_PATTERN_SCAN=1 skips the pre-push pattern scan of lines and metadata" 0 "$rc"

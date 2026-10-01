@@ -7,9 +7,11 @@
 # commit is scanned on its own, so a value added and then removed within one push is still caught.
 #
 # The scans:
-#   - no commit may add a local pattern list (.githooks/*-patterns.local); there is no bypass;
-#   - the pattern scan of every added line, as in the pre-commit, and of each commit's message, author and committer,
-#     since all three are published; the GitHub noreply alias is allowed;
+#   - no commit may add a local pattern list (.githooks/*-patterns.local), and no ref may name a blob or a tree, whose
+#     content no scan would read; there is no bypass;
+#   - the pattern scan of every added line, as in the pre-commit, and of each commit's message, author and committer
+#     and each pushed annotated tag's message, tagger and name, since all are published; the GitHub noreply alias is
+#     allowed;
 #   - gitleaks git over the commits, under the config and .gitleaksignore committed at the pushed tip, as CI reads
 #     them, whatever the working tree holds;
 #   - gitleaks' built-in rules alone over every blob the commits add, so no path allowlist can hide a secret from them.
@@ -43,6 +45,51 @@ set_range() {
         range=("$1")
     fi
     log_opts="${range[*]}"
+}
+
+# tag_text <tag-sha>: print the tag's tagger line ("tagger -" when it has none), then its name line, then its message,
+# for scan_text with one identity line.
+tag_text() {
+    git cat-file tag "$1" | LC_ALL=C awk '
+        BEGIN { header = 1; tagger = "tagger -" }
+        header && /^tagger / { tagger = $0; next }
+        header && /^tag / { name = $0; next }
+        header && /^$/ { header = 0; print tagger; if (name != "") print name; next }
+        header { next }
+        { print }
+        END { if (header) { print tagger; if (name != "") print name } }
+    '
+}
+
+# peel_ref <sha> <ref>: follow the chain of annotated tags <sha> starts and set target to the object it ends at,
+# scanning each tag's tagger, name and message as commit metadata is scanned (unless SKIP_PATTERN_SCAN=1), since all
+# three are published. Exit 1 on a match, and when the chain ends at a blob or a tree: the scans read commits, so
+# such a ref would publish its content unscanned, and there is no bypass.
+peel_ref() {
+    local sha="$1" type matches
+    type=$(git cat-file -t "$sha")
+    while [ "$type" = tag ]; do
+        if [ "${SKIP_PATTERN_SCAN:-0}" != "1" ]; then
+            matches=$(tag_text "$sha" | scan_text "${sha:0:12} tag" 1)
+            if [ -n "$matches" ]; then
+                {
+                    echo "❌ Pre-push: sensitive pattern detected in the tag $2 would publish:"
+                    echo ""
+                    printf '%s\n' "$matches"
+                    echo ""
+                    echo "Delete the tag and create it again without the value."
+                } >&2
+                exit 1
+            fi
+        fi
+        sha=$(git cat-file tag "$sha" | sed -n '1s/^object //p')
+        type=$(git cat-file -t "$sha")
+    done
+    if [ "$type" != commit ]; then
+        guard_fail "❌ Pre-push: $2 names a $type, not a commit. The scans read commits, so a $type cannot be pushed" \
+            "through them; there is no bypass."
+    fi
+    target="$sha"
 }
 
 # scan_lines: print "<sha> <path>: <line>" for every line the commits in range add that matches a pattern set it is not
@@ -191,7 +238,8 @@ for entry in ${refs[@]+"${refs[@]}"}; do
     if [[ "$local_sha" =~ $zero_re ]]; then
         continue
     fi
-    set_range "$local_sha" "$remote_sha"
+    peel_ref "$local_sha" "$local_ref"
+    set_range "$target" "$remote_sha"
     count=$(git rev-list --count "${range[@]}")
     if [ "$count" = 0 ]; then
         continue
@@ -222,7 +270,7 @@ for entry in ${refs[@]+"${refs[@]}"}; do
         fi
     fi
     if [ "$have_gitleaks" = 1 ]; then
-        scan_with_gitleaks "$local_sha" "$local_ref"
+        scan_with_gitleaks "$target" "$local_ref"
         scan_blobs_with_builtins
     fi
 done
