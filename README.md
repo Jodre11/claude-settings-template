@@ -27,7 +27,7 @@ sensitive values out of version control.
 
 `bash tests/run.sh` runs every `tests/lib/test_*.sh` and `hooks/*.test.sh` suite, and fails if it finds none. It
 needs bash 4 or later (macOS's `/bin/bash` 3.2 is too old; use Homebrew's), plus `jq` and `tmux`. The `tests`
-workflow runs it on every push and pull request.
+workflow runs it on every push to `main`, every pull request into `main`, and on demand.
 
 ### Scripts
 
@@ -279,7 +279,7 @@ Four layers keep sensitive data out of the repository:
    leaves the machine. It also scans each commit's message, author and committer, and each annotated tag's message,
    tagger and name, and refuses a ref that names a blob or a tree.
 3. **CI** — gitleaks, a pattern-sync check (`tests/test-pattern-sync.sh`) and an output-ignore check
-   (`tests/test-output-ignore.sh`) run on every push and pull request.
+   (`tests/test-output-ignore.sh`) run on every push to `main` and every pull request into it.
 4. **GitHub secret scanning and push protection** — enabled at the repository level.
 
 `scripts/setup-platform.sh` activates both hooks by setting a repo-local `core.hooksPath .githooks`; git does not do
