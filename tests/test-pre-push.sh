@@ -382,6 +382,10 @@ if have_gitleaks "pre-push gitleaks rows"; then
     raw_commit "$d" docs/old.gitleaks.toml "account \`$digits\`"
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "gitleaks' custom rules scan a path named like gitleaks.toml" 1 "$rc"
+    d=$(push_repo)
+    raw_commit "$d" .githooks/guard-config.sh "# account \`$digits\`"
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "pre-push gitleaks flags an account ID in guard-config.sh under SKIP_PATTERN_SCAN=1" 1 "$rc"
     if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-patterns.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
         d=$(push_repo)
         raw_commit "$d" hooks/secret-patterns.test.sh "aws $key"

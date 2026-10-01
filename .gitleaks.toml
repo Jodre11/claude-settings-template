@@ -100,16 +100,13 @@ targetRules = [
 regexTarget = "match"
 regexes = ['''123456789012''']
 
-# guard-config.sh and this file define every pattern, so every custom rule matches them; the pre-commit defined them
-# before guard-config.sh did, and history keeps those versions.
+# guard-config.sh and this file define every pattern; the pre-commit defined them before guard-config.sh did, and
+# history keeps those versions. Their definitions match the identity rules and the two secret-shaped rules whose
+# pattern matches its own text (the PAT name and the private-key marker), so the guard files are exempt from those
+# alone; every other secret-shaped rule still scans them, as the hooks' pattern scan does.
 [[allowlists]]
 description = "Guard files that define the patterns"
 targetRules = [
-    "org-aws-account-context",
-    "org-aws-account-context-trailing",
-    "org-aws-arn-account",
-    "org-ecr-registry",
-    "org-bedrock-arn-fragment",
     "org-nuget-pat",
     "ssh-private-key",
     "org-sso-url",

@@ -44,6 +44,12 @@ check "a secret-shaped value bites in .gitleaks.toml" 1 "$rc"
 marker=$(printf '%s%s' '-----BEG' 'IN.*PRIVATE KEY-----')
 try .githooks/guard-config.sh "ALWAYS_PATTERNS+=('$marker')"
 check "guard-config.sh may still define a pattern that matches its own text" 0 "$rc"
+if have_gitleaks "gitleaks rows of the guard files"; then
+    try .githooks/guard-config.sh "# account \`$digits\`" SKIP_PATTERN_SCAN=1
+    check "gitleaks flags an account ID in guard-config.sh under SKIP_PATTERN_SCAN=1" 1 "$rc"
+    try .githooks/guard-config.sh "ALWAYS_PATTERNS+=('$marker')" SKIP_PATTERN_SCAN=1
+    check "gitleaks still lets guard-config.sh define a pattern that matches its own text" 0 "$rc"
+fi
 firewall=hooks/secret-patterns.test.sh
 if [[ -n "$ALWAYS_EXEMPT_RE" && "$firewall" =~ $ALWAYS_EXEMPT_RE ]]; then
     firewall_rc=0
