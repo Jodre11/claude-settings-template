@@ -28,3 +28,17 @@ jobs:
           # The action defaults to gitleaks 8.24.3. Pin the current release so
           # scans use current rules and support multiple [[allowlists]] (8.25.0+).
           GITLEAKS_VERSION: "8.30.1"
+
+  pattern-sync:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify guard-config.sh and .gitleaks.toml carry the same patterns
+        run: bash tests/test-pattern-sync.sh
+
+  output-ignore:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify hydrated outputs, config.env and the local pattern lists are gitignored
+        run: bash tests/test-output-ignore.sh

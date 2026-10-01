@@ -1,41 +1,69 @@
 title = "claude-settings-template gitleaks config"
 
-# Extend the built-in ruleset (AWS access keys, GitHub PATs, Anthropic API keys,
-# private keys, etc.) so we catch real secrets in addition to the corporate
-# fingerprints defined below.
+# Extend the built-in ruleset (AWS access keys, GitHub PATs, Anthropic API keys, private keys and more) so real
+# secrets are caught as well as the fingerprints below. The custom rules mirror .githooks/guard-config.sh;
+# tests/test-pattern-sync.sh keeps them in step. Every custom rule starts (?i), because the hooks match
+# case-insensitively and gitleaks must be no weaker where it has no bypass. The hooks require this [extend] block
+# exactly as written.
 [extend]
 useDefault = true
 
-# Org-specific rules (supplement the built-in rules)
+# --- Secret-shaped rules: guard-config.sh's ALWAYS_PATTERNS
 
 [[rules]]
-id = "org-aws-account-id"
-description = "AWS account ID in context (ARN, SSO config, ECR)"
-regex = '''(?:arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:|sso_account_id\s*=\s*|account[_-]?id["'\s:=]+)\d{12}'''
+id = "org-aws-account-context"
+description = "A 12-digit number up to 24 characters after the word account"
+regex = '''(?i)account[^0-9]{0,24}[0-9]{12}([^0-9]|$)'''
 tags = ["corporate", "aws"]
 
 [[rules]]
-id = "org-sso-url"
-description = "Organisation SSO start URL"
-regex = '''yourorg\.awsapps\.com'''
+id = "org-aws-account-context-trailing"
+description = "A 12-digit number up to 24 characters before the word account"
+regex = '''(?i)(^|[^0-9])[0-9]{12}[^0-9]{1,24}account'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-aws-arn-account"
+description = "An AWS ARN carrying an account ID"
+regex = '''(?i)arn:aws[a-z-]*:[^:]*:[^:]*:[0-9]{12}:'''
 tags = ["corporate", "aws"]
 
 [[rules]]
 id = "org-ecr-registry"
 description = "AWS ECR registry URL"
-regex = '''\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'''
+regex = '''(?i)[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'''
 tags = ["corporate", "aws"]
 
 [[rules]]
 id = "org-bedrock-arn-fragment"
-description = "Bedrock inference profile ARN fragment"
-regex = '''application-inference-profile/[a-z0-9]{10,16}'''
+description = "Bedrock application inference profile ID"
+regex = '''(?i)application-inference-profile/[a-z0-9]{10,16}'''
+tags = ["corporate", "aws"]
+
+[[rules]]
+id = "org-nuget-pat"
+description = "NuGet PAT variable name"
+regex = '''(?i)YOUR_NUGET_PAT'''
+tags = ["corporate"]
+
+[[rules]]
+id = "ssh-private-key"
+description = "SSH private key"
+regex = '''(?i)-----BEGIN.*PRIVATE KEY-----'''
+tags = ["secret"]
+
+# --- Identity rules: guard-config.sh's IDENTITY_PATTERNS (placeholders to replace with your own)
+
+[[rules]]
+id = "org-sso-url"
+description = "Organisation SSO start URL"
+regex = '''(?i)yourorg\.awsapps\.com'''
 tags = ["corporate", "aws"]
 
 [[rules]]
 id = "org-ad-path"
 description = "Active Directory path"
-regex = '''DC=your-domain'''
+regex = '''(?i)DC=your-domain'''
 tags = ["corporate"]
 
 [[rules]]
@@ -47,32 +75,72 @@ tags = ["corporate"]
 [[rules]]
 id = "org-internal-project"
 description = "Internal project names"
-regex = '''(?i)(internal-project-1|internal-project-2|internal-project-3|internal-project-4|YOUR_NUGET_PAT|internal-project-5)'''
+regex = '''(?i)(internal-project-1|internal-project-2|internal-project-3|internal-project-4|internal-project-5)'''
 tags = ["corporate"]
 
 [[rules]]
 id = "personal-identity"
 description = "Personal identity markers"
-regex = '''(YourGitHubUser|your\.name|@your-company\.com|@your-email\.co\.uk|/Users/yourusername/)'''
+regex = '''(?i)(YourGitHubUser|@your-company\.com|@your-email\.co\.uk|your\.name|/Users/yourusername/)'''
 tags = ["personal"]
 
-[[rules]]
-id = "ssh-private-key"
-description = "SSH private key"
-regex = '''-----BEGIN.*PRIVATE KEY-----'''
-tags = ["secret"]
+# --- Allowlists. gitleaks runs in the hooks with no bypass, so each path that legitimately carries a custom-rule match
+# has an allowlist naming exactly those rules. The built-in secret rules stay on everywhere except the secret-firewall
+# files. Paths are anchored.
 
-# Global allowlist — files that necessarily contain the patterns being detected
-[allowlist]
+# 123456789012 is the AWS documentation example account ID, used as a placeholder.
+[[allowlists]]
+description = "AWS documentation placeholder account ID"
+targetRules = [
+    "org-aws-account-context",
+    "org-aws-account-context-trailing",
+    "org-aws-arn-account",
+    "org-ecr-registry",
+]
+regexTarget = "match"
+regexes = ['''123456789012''']
+
+# guard-config.sh and this file define every pattern; the pre-commit defined them before guard-config.sh did, and
+# history keeps those versions. Their definitions match the identity rules and the two secret-shaped rules whose
+# pattern matches its own text (the PAT name and the private-key marker), so the guard files are exempt from those
+# alone; every other secret-shaped rule still scans them, as the hooks' pattern scan does.
+[[allowlists]]
+description = "Guard files that define the patterns"
+targetRules = [
+    "org-nuget-pat",
+    "ssh-private-key",
+    "org-sso-url",
+    "org-ad-path",
+    "org-name",
+    "org-internal-project",
+    "personal-identity",
+]
 paths = [
-    '''.githooks/pre-commit''',
-    '''.gitleaks.toml''',
-    '''config.env.example''',
-    # Secret context firewall: the recognition library defines the secret-shape
-    # regexes it hunts for, its tests embed dummy example vectors, and the design
-    # doc quotes the pattern strings — all necessarily contain the patterns being
-    # detected. None hold a real credential.
-    '''hooks/secret-patterns\.sh''',
-    '''hooks/secret-.*\.test\.sh''',
-    '''docs/superpowers/specs/.*secret-context-firewall.*\.md''',
+    '''^\.githooks/guard-config\.sh$''',
+    '''^\.githooks/pre-commit$''',
+    '''^\.gitleaks\.toml$''',
+]
+
+# Claude Code's per-project memory names real organisations and repositories by design: exempt from the identity
+# rules only, as the hooks exempt it.
+[[allowlists]]
+description = "Auto-memory directories carry organisation identity"
+targetRules = ["org-sso-url", "org-ad-path", "org-name", "org-internal-project", "personal-identity"]
+paths = ['''^projects/[^/]+/memory/''']
+
+# The secret firewall's pattern library, its tests' dummy vectors and its design doc necessarily match secret rules,
+# built-ins included, so these paths are exempt from every rule. None holds a real credential. Each is named exactly,
+# as in BUILTINS_EXEMPT_RE in .githooks/guard-config.sh, so a new file gets no exemption until a reviewed commit adds
+# it to both.
+[[allowlists]]
+description = "Secret-firewall pattern library, dummy test vectors and design doc"
+paths = [
+    '''^hooks/secret-patterns\.sh$''',
+    '''^hooks/secret-patterns\.test\.sh$''',
+    '''^hooks/secret-bash-guard\.test\.sh$''',
+    '''^hooks/secret-breach-alarm\.test\.sh$''',
+    '''^hooks/secret-output-scrubber\.test\.sh$''',
+    '''^hooks/secret-path-guard\.test\.sh$''',
+    '''^hooks/secret-prompt-guard\.test\.sh$''',
+    '''^docs/superpowers/specs/2026-07-12-secret-context-firewall-design\.md$''',
 ]

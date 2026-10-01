@@ -1,6 +1,10 @@
 # Private config (tracked in private repo, not in template)
 config.env
 
+# Machine-local pattern lists the git hooks read; they name what must not be published, so they are never committed
+/.githooks/identity-patterns.local
+/.githooks/always-patterns.local
+
 # Generated files (produced by hydrate.sh from .tmpl templates)
 settings.json
 CLAUDE.md

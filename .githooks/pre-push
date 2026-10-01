@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+# Pre-push hook: scans every commit a push would publish, before it leaves the machine. The pre-commit screens each
+# commit as it is made, but a rebase, cherry-pick, am or merge makes commits without it, and so does a commit made with
+# the hooks off; this hook catches all of them. For each pushed ref it scans the commits the remote does not have yet:
+# <remote-sha>..<local-sha> when the remote's tip is known here, otherwise every commit on no remote-tracking branch of
+# that remote (a new branch), or the whole history when the push goes to a URL rather than a named remote. Each
+# commit is scanned on its own, so a value added and then removed within one push is still caught.
+#
+# The scans:
+#   - no commit may add a local pattern list (.githooks/*-patterns.local), and no ref may name a blob or a tree, whose
+#     content no scan would read; there is no bypass;
+#   - the pattern scan of every added line, as in the pre-commit, and of each commit's message, author and committer
+#     and each pushed annotated tag's message, tagger and name, since all are published; the GitHub noreply alias is
+#     allowed;
+#   - gitleaks git over the commits, under the config and .gitleaksignore committed at the pushed tip, as CI reads
+#     them, whatever the working tree holds;
+#   - gitleaks' built-in rules alone over every blob the commits add, so no path allowlist can hide a secret from them.
+#
+# SKIP_PATTERN_SCAN=1 skips the pattern scan of lines and metadata only, as in the pre-commit; gitleaks always runs.
+set -euo pipefail
+
+# shellcheck disable=SC2034  # read by guard-lib.sh
+hook_name=Pre-push
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=guard-lib.sh
+source "$hook_dir/guard-lib.sh"
+
+remote="$1"
+zero_re='^0+$'
+git_dir=$(git rev-parse --absolute-git-dir)
+
+# is_named_remote <name>: return 0 when <name> is a configured remote rather than a URL.
+is_named_remote() {
+    git remote | grep -q -x -F -- "$1"
+}
+
+# set_range <local-sha> <remote-sha>: set range to the rev-list arguments naming the commits this push publishes, and
+# log_opts to the same arguments as one string for gitleaks' --log-opts, which also shows each merge against its first
+# parent, so gitleaks reads what only a merge adds, each root commit's whole tree, and every blob's own bytes rather
+# than a textconv driver's output.
+set_range() {
+    if [[ ! "$2" =~ $zero_re ]] && git cat-file -e "$2^{commit}" 2>/dev/null; then
+        range=("$2..$1")
+    elif is_named_remote "$remote"; then
+        range=("$1" --not "--remotes=$remote")
+    else
+        range=("$1")
+    fi
+    log_opts="--root --diff-merges=first-parent --no-textconv ${range[*]}"
+}
+
+# tag_text <tag-sha>: print the tag's tagger line ("tagger -" when it has none), then its name line, then its message,
+# for scan_text with one identity line.
+tag_text() {
+    git cat-file tag "$1" | LC_ALL=C awk '
+        BEGIN { header = 1; tagger = "tagger -" }
+        header && /^tagger / { tagger = $0; next }
+        header && /^tag / { name = $0; next }
+        header && /^$/ { header = 0; print tagger; if (name != "") print name; next }
+        header { next }
+        { print }
+        END { if (header) { print tagger; if (name != "") print name } }
+    '
+}
+
+# peel_ref <sha> <ref>: follow the chain of annotated tags <sha> starts and set target to the object it ends at,
+# scanning each tag's tagger, name and message as commit metadata is scanned (unless SKIP_PATTERN_SCAN=1), since all
+# three are published. Exit 1 on a match, and when the chain ends at a blob or a tree: the scans read commits, so
+# such a ref would publish its content unscanned, and there is no bypass.
+peel_ref() {
+    local sha="$1" type matches
+    type=$(git cat-file -t "$sha")
+    while [ "$type" = tag ]; do
+        if [ "${SKIP_PATTERN_SCAN:-0}" != "1" ]; then
+            matches=$(tag_text "$sha" | scan_text "${sha:0:12} tag" 1)
+            if [ -n "$matches" ]; then
+                {
+                    echo "❌ Pre-push: sensitive pattern detected in the tag $2 would publish:"
+                    echo ""
+                    printf '%s\n' "$matches"
+                    echo ""
+                    echo "Delete the tag and create it again without the value."
+                } >&2
+                exit 1
+            fi
+        fi
+        sha=$(git cat-file tag "$sha" | sed -n '1s/^object //p')
+        type=$(git cat-file -t "$sha")
+    done
+    if [ "$type" != commit ]; then
+        guard_fail "❌ Pre-push: $2 names a $type, not a commit. The scans read commits, so a $type cannot be pushed" \
+            "through them; there is no bypass."
+    fi
+    target="$sha"
+}
+
+# scan_lines: print "<sha> <path>: <line>" for every line the commits in range add that matches a pattern set it is not
+# exempt from. A merge shows its changes against its first parent, so an evil merge is scanned too, and a root commit
+# shows its whole tree as added, whatever log.showRoot says.
+scan_lines() {
+    with_pinned_git git -c core.quotePath=false log --root --no-color --no-ext-diff --no-textconv --text \
+        --src-prefix=a/ --dst-prefix=b/ --no-renames --diff-merges=first-parent --diff-filter=ACMRT -U0 -p \
+        --format='commit %H' "${range[@]}" |
+        LC_ALL=C tr -d '\000' |
+        scan_patch
+}
+
+# scan_metadata: print "<sha> <field>: <line>" for every line of the author, committer or message of a commit in range
+# that matches any pattern set. The log output encoding is pinned to UTF-8, so no setting re-encodes what is scanned.
+scan_metadata() {
+    local rec sha
+    with_pinned_git git log --no-color -z --format='%H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B' "${range[@]}" |
+        while IFS= read -r -d '' rec; do
+            sha=${rec%%$'\n'*}
+            printf '%s\n' "${rec#*$'\n'}" | scan_text "${sha:0:12} metadata" 2
+        done
+}
+
+# added_paths: print, NUL-terminated, every path a commit in range adds, copies, modifies, renames or retypes.
+added_paths() {
+    with_pinned_git git log --root -z --format= --name-only --no-renames --diff-merges=first-parent \
+        --diff-filter=ACMRT "${range[@]}"
+}
+
+# range_blob_records: print "<blob-sha> <path>", NUL-terminated, for every blob a commit in range adds, copies,
+# modifies, renames or retypes, except gitlinks and paths BUILTINS_EXEMPT_RE exempts. A record not in raw form ends
+# the list with status 1, so the scan fails closed.
+range_blob_records() {
+    local meta path rest new_mode new_sha
+    with_pinned_git git log --root -z --raw --no-abbrev --format= --no-renames --diff-merges=first-parent \
+        --diff-filter=ACMRT "${range[@]}" |
+        while IFS= read -r -d '' meta; do
+            meta=${meta#$'\n'}
+            if [ -z "$meta" ]; then
+                continue
+            fi
+            case "$meta" in
+                :*) ;;
+                *) exit 1 ;;
+            esac
+            IFS= read -r -d '' path || exit 1
+            rest=${meta#* }
+            new_mode=${rest%% *}
+            rest=${rest#* }
+            rest=${rest#* }
+            new_sha=${rest%% *}
+            if [ "$new_mode" = 160000 ] || builtins_exempt "$path"; then
+                continue
+            fi
+            printf '%s %s\0' "$new_sha" "$path"
+        done
+}
+
+# range_blobs: print range_blob_records' records with each blob once, for the passes that read content alone.
+range_blobs() {
+    range_blob_records | LC_ALL=C sort -z -u -k1,1
+}
+
+# blob_stream: read "<blob-sha> <path>" records, NUL-terminated, on standard input and print each blob followed by a
+# newline, so no match joins two blobs; return 1 when a blob cannot be read, so the scan fails closed.
+blob_stream() {
+    local rec
+    while IFS= read -r -d '' rec; do
+        git cat-file blob "${rec%% *}" || return 1
+        printf '\n'
+    done
+}
+
+# scan_blobs_with_builtins: run gitleaks' built-in rules alone over every blob range_blobs lists, NUL bytes dropped,
+# from scan_dir, so no path allowlist and no .gitleaksignore applies. One batched run covers every blob; only when it
+# fails is each blob rescanned alone to name the culprit, and the push is refused even when none is named.
+scan_blobs_with_builtins() {
+    local rec found="" batch_log
+    if batch_log=$(range_blobs | blob_stream | LC_ALL=C tr -d '\000' | builtins_gitleaks 2>&1); then
+        return 0
+    fi
+    while IFS= read -r -d '' rec; do
+        if ! printf '%s\0' "$rec" | blob_stream | LC_ALL=C tr -d '\000' | builtins_gitleaks >/dev/null 2>&1; then
+            found="$found    ${rec#* } (blob ${rec:0:12})"$'\n'
+        fi
+    done < <(range_blobs)
+    {
+        echo ""
+        if [ -n "$found" ]; then
+            echo "❌ Pre-push: gitleaks' built-in rules found a secret in:"
+            printf '%s' "$found"
+            echo "They scan every pushed blob directly, so no path allowlist or .gitleaksignore applies. There is no"
+            echo "bypass: rewrite the commits to remove the value. For a false positive, add the path to"
+            echo "BUILTINS_EXEMPT_RE in .githooks/guard-config.sh in a reviewed commit."
+        else
+            printf '%s\n' "$batch_log"
+            echo "❌ Pre-push: gitleaks' built-in rules failed on the pushed blobs as a whole but on no single blob: a"
+            echo "match across two blobs, or a gitleaks error (shown above). There is no bypass."
+        fi
+    } >&2
+    exit 1
+}
+
+# scan_with_gitleaks <local-sha> <ref>: run gitleaks git over the commits in range under the .gitleaks.toml and
+# .gitleaksignore committed at <local-sha>, copied into a fresh directory that gitleaks treats as its source while
+# GIT_DIR points it at this repository, so no working-tree file decides what the scan allows.
+scan_with_gitleaks() {
+    local cfg_dir
+    cfg_dir=$(mktemp -d "$scan_dir/cfg.XXXXXX")
+    if ! git cat-file blob "$1:.gitleaks.toml" >"$cfg_dir/.gitleaks.toml" 2>/dev/null; then
+        guard_fail "❌ Pre-push: $2 has no .gitleaks.toml at its tip, so gitleaks cannot scan it. Commit one."
+    fi
+    if git cat-file -e "$1:.gitleaksignore" 2>/dev/null; then
+        git cat-file blob "$1:.gitleaksignore" >"$cfg_dir/.gitleaksignore"
+    fi
+    if ! extend_is_defaults_only "$cfg_dir/.gitleaks.toml"; then
+        guard_fail "❌ Pre-push: the .gitleaks.toml at $2's tip may hold only the canonical [extend] followed by" \
+            "useDefault = true. Any other use of extend lets a file outside the committed config decide the scan."
+    fi
+    if ! (cd "$cfg_dir" && with_pinned_git GIT_DIR="$git_dir" gitleaks git --log-opts="$log_opts" \
+        --no-banner --redact --ignore-gitleaks-allow --config "$cfg_dir/.gitleaks.toml" "$cfg_dir"); then
+        guard_fail "" "❌ Pre-push: gitleaks found a secret in the commits $2 would publish. There is no bypass." \
+            "Rewrite the commits to remove it. For a false positive, commit a targeted [[allowlists]] entry to" \
+            ".gitleaks.toml first."
+    fi
+    tip_cfg_dir="$cfg_dir"
+}
+
+# binary_paths: print, one per line, each path a commit in range adds whose content git diffs as binary there (a NUL
+# byte, UTF-16, a binary or -diff attribute), judged in the environment gitleaks git runs in (from tip_cfg_dir with
+# GIT_DIR set, so no working-tree .gitattributes applies, as for it).
+binary_paths() {
+    local rec tab=$'\t'
+    (cd "$tip_cfg_dir" && with_pinned_git GIT_DIR="$git_dir" git log --root -z --numstat --no-textconv --format= \
+        --no-renames --diff-merges=first-parent --diff-filter=ACMRT "${range[@]}") |
+        while IFS= read -r -d '' rec; do
+            rec=${rec#$'\n'}
+            case "$rec" in
+                "-$tab-$tab"*) printf '%s\n' "${rec#"-$tab-$tab"}" ;;
+            esac
+        done
+}
+
+# config_named_paths: print, one per line, each path other than .gitleaks.toml that a commit in range adds whose name
+# holds gitleaks.toml in any case, which gitleaks' default allowlist skips. .gitleaks.toml itself defines the rules, so
+# it would match them; the pattern scan and the built-ins pass read it.
+config_named_paths() {
+    local path
+    added_paths |
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                .gitleaks.toml) ;;
+                *[Gg][Ii][Tt][Ll][Ee][Aa][Kk][Ss].[Tt][Oo][Mm][Ll]*) printf '%s\n' "$path" ;;
+            esac
+        done
+}
+
+# scan_opaque_blobs <ref>: run gitleaks stdin, under the config committed at the pushed tip, over every pushed blob at
+# a path gitleaks git does not read as text (binary_paths, config_named_paths, and any path holding a newline), NUL
+# bytes dropped so UTF-16 text reads as ASCII, from scan_dir, so no .gitleaksignore applies. Its custom rules
+# otherwise never see such content when the pattern scan is skipped. Every (blob, path) pair is checked, so a blob
+# also pushed at an ordinary path is still scanned. Each list is built by a plain command, so a failing git call
+# stops the push. Exit 1 naming the path on a finding; there is no bypass.
+scan_opaque_blobs() {
+    local opaque binary named rec sha path
+    binary=$(binary_paths)
+    named=$(config_named_paths)
+    opaque="$binary"$'\n'"$named"
+    range_blob_records | LC_ALL=C sort -z -u >"$scan_dir/blob-records"
+    while IFS= read -r -d '' rec; do
+        sha=${rec%% *}
+        path=${rec#* }
+        case "$path" in
+            *$'\n'*) ;;
+            *)
+                case $'\n'"$opaque"$'\n' in
+                    *$'\n'"$path"$'\n'*) ;;
+                    *) continue ;;
+                esac
+                ;;
+        esac
+        if ! git cat-file blob "$sha" | LC_ALL=C tr -d '\000' | in_scan_dir gitleaks stdin --no-banner --redact \
+            --ignore-gitleaks-allow --config "$tip_cfg_dir/.gitleaks.toml"; then
+            guard_fail "" "❌ Pre-push: gitleaks found a secret in $path (blob ${sha:0:12}), which $1 would publish." \
+                "gitleaks git cannot read it as text (binary, or a name it allowlists by default), so it scanned the" \
+                "blob directly, where no path allowlist applies. There is no bypass: rewrite the commits to remove it."
+        fi
+    done <"$scan_dir/blob-records"
+}
+
+refs=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+    refs+=("$local_ref $local_sha $remote_ref $remote_sha")
+done
+
+have_gitleaks=0
+if command -v gitleaks >/dev/null 2>&1; then
+    have_gitleaks=1
+    scan_dir=$(mktemp -d)
+    trap 'rm -rf "$scan_dir"' EXIT
+else
+    echo "⚠ gitleaks not found — skipping the generic secret scan. Install: brew install gitleaks" >&2
+fi
+if ! guard_config_is_staged; then
+    guard_fail "❌ Pre-push: .githooks/guard-config.sh differs from its staged copy, or is not staged, and its" \
+        "patterns and exemptions decide every scan. Commit or restore it, then push again."
+fi
+if [ "${SKIP_PATTERN_SCAN:-0}" = "1" ]; then
+    echo "⚠ SKIP_PATTERN_SCAN=1 — skipping the pattern scan; gitleaks still runs." >&2
+else
+    load_patterns
+fi
+
+scanned=0
+for entry in ${refs[@]+"${refs[@]}"}; do
+    read -r local_ref local_sha remote_ref remote_sha <<<"$entry"
+    if [[ "$local_sha" =~ $zero_re ]]; then
+        continue
+    fi
+    peel_ref "$local_sha" "$local_ref"
+    set_range "$target" "$remote_sha"
+    count=$(git rev-list --count "${range[@]}")
+    if [ "$count" = 0 ]; then
+        continue
+    fi
+    if git cat-file -e "$target:.githooks/guard-config.sh" 2>/dev/null &&
+        ! git cat-file blob "$target:.githooks/guard-config.sh" | cmp -s - "$hook_dir/guard-config.sh"; then
+        guard_fail "❌ Pre-push: the .githooks/guard-config.sh committed at $local_ref's tip differs from the one" \
+            "these hooks read, whose patterns and exemptions would decide the scan of its commits. Merge or rebase" \
+            "it onto the current guard-config.sh, or push it with that commit checked out."
+    fi
+    scanned=$((scanned + count))
+    if ! added_paths | refuse_local_lists "a commit for $local_ref adds"; then
+        exit 1
+    fi
+    if [ "${SKIP_PATTERN_SCAN:-0}" != "1" ]; then
+        matches=$(scan_lines)
+        metadata=$(scan_metadata)
+        if [ -n "$matches$metadata" ]; then
+            {
+                echo "❌ Pre-push: sensitive pattern detected in the commits $local_ref would publish:"
+                echo ""
+                if [ -n "$matches" ]; then
+                    printf '%s\n' "$matches"
+                fi
+                if [ -n "$metadata" ]; then
+                    printf '%s\n' "$metadata"
+                fi
+                echo ""
+                echo "Rewrite the commits to remove the value. If a file must carry a pattern, bypass this scan"
+                echo "only for that push, and say so in the commit body:"
+                echo "  SKIP_PATTERN_SCAN=1 git push"
+            } >&2
+            exit 1
+        fi
+    fi
+    if [ "$have_gitleaks" = 1 ]; then
+        scan_with_gitleaks "$target" "$local_ref"
+        scan_blobs_with_builtins
+        scan_opaque_blobs "$local_ref"
+    fi
+done
+
+echo "✔ Pre-push: $scanned commit(s) scanned; no sensitive patterns detected." >&2

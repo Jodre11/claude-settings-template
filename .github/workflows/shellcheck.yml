@@ -22,9 +22,11 @@ jobs:
           find . -type f \( -name '*.sh' -path './hooks/*' \
             -o -name '*.sh' -path './scripts/*' \
             -o -name 'hydrate.sh' \
-            -o -path './tests/run.sh' \
+            -o -path './tests/*.sh' \
             -o -path './tests/lib/*' \
             -o -path './.githooks/pre-commit' \
+            -o -path './.githooks/pre-push' \
+            -o -path './.githooks/*.sh' \
             -o -path './tools/aws-secret-field' \
             -o -path './tools/md2clip' \) \
             -exec shellcheck --severity=warning {} +
