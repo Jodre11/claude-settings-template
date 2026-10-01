@@ -349,6 +349,39 @@ if have_gitleaks "pre-push gitleaks rows"; then
     git -C "$d" -c core.hooksPath=/dev/null commit -q -m "no config"
     push_to "$d" origin main
     check "pre-push refuses a pushed tip with no .gitleaks.toml" 1 "$rc"
+    d=$(push_repo)
+    git -C "$d" checkout -q -b side
+    raw_commit "$d" side.md "side line"
+    git -C "$d" checkout -q main
+    raw_commit "$d" main.md "main line"
+    git -C "$d" -c core.hooksPath=/dev/null merge -q --no-ff --no-commit side
+    printf 'account `%s`\n' "$digits" >"$d/evil.md"
+    git -C "$d" add -f evil.md
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m merge
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "gitleaks reads what only a merge adds, even under SKIP_PATTERN_SCAN=1" 1 "$rc"
+    d=$(push_repo)
+    printf 'x\000account `%s`\n' "$digits" >"$d/blob.bin"
+    git -C "$d" add -f blob.bin
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m binary
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "gitleaks' custom rules scan a pushed binary blob" 1 "$rc"
+    d=$(push_repo)
+    printf 'x\000clean\n' >"$d/blob.bin"
+    git -C "$d" add -f blob.bin
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m binary
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "pre-push allows a clean pushed binary blob" 0 "$rc"
+    d=$(push_repo)
+    git -C "$d" config diff.hide.textconv true
+    raw_commit "$d" .gitattributes '*.dat diff=hide'
+    raw_commit "$d" notes.dat "account \`$digits\`"
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "gitleaks' custom rules scan a blob behind a textconv driver" 1 "$rc"
+    d=$(push_repo)
+    raw_commit "$d" docs/old.gitleaks.toml "account \`$digits\`"
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "gitleaks' custom rules scan a path named like gitleaks.toml" 1 "$rc"
     if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-x.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
         d=$(push_repo)
         raw_commit "$d" hooks/secret-x.test.sh "aws $key"
