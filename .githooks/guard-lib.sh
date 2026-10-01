@@ -52,7 +52,8 @@ check_pattern() {
 
 # read_pattern_list <file>: fill loaded_patterns from <file>, skipping blank and # lines and stripping a trailing CR.
 # A missing file leaves loaded_patterns empty. Exit 1 when <file> is a dangling symlink or unreadable, holds no
-# pattern, or holds one awk cannot match as written, so a local list the user relies on can never fail open.
+# pattern, holds one with leading or trailing whitespace (which would only match padded text), or holds one awk
+# cannot match as written, so a local list the user relies on can never fail open.
 read_pattern_list() {
     local line
     loaded_patterns=()
@@ -66,6 +67,9 @@ read_pattern_list() {
         line="${line%$'\r'}"
         case "$line" in
             '' | '#'*) continue ;;
+            [[:space:]]* | *[[:space:]])
+                guard_fail "❌ $hook_name: $1 has a pattern with leading or trailing whitespace; the scan cannot run."
+                ;;
         esac
         check_pattern "$line" "$1"
         loaded_patterns+=("$line")

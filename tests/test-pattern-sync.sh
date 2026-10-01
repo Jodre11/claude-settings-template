@@ -131,16 +131,32 @@ check_awk_syntax() {
     done
 }
 
-# check_allowlists: every pattern source and .gitleaks.toml sit in an allowlist, targetRules is the only spelling, and
-# every rule it names is defined.
+# allowlisted_paths: print the entries of every paths = [ ... ] array in .gitleaks.toml, with comment lines and trailing
+# comments dropped. An array ends at the first line whose last non-blank character is ].
+allowlisted_paths() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        /^paths = \[/ { inside = 1 }
+        inside {
+            line = $0
+            sub(/[[:space:]]+#.*$/, "", line)
+            print line
+            if (line ~ /\][[:space:]]*$/) inside = 0
+        }
+    ' "$gitleaks_toml"
+}
+
+# check_allowlists: every pattern source and .gitleaks.toml sit, as an exact '''^<path>$''' entry, in an allowlist's
+# paths; targetRules is the only spelling, and every rule it names is defined.
 check_allowlists() {
-    local guard id
+    local guard id paths
     local -a guards=('\.gitleaks\.toml')
     for guard in "${sources[@]}"; do
         guards+=("${guard//./\\.}")
     done
+    paths=$(allowlisted_paths)
     for guard in "${guards[@]}"; do
-        if ! grep -q -F "$guard" "$gitleaks_toml"; then
+        if ! grep -q -F -- "'''^$guard\$'''" <<<"$paths"; then
             fail "guard file is not in a .gitleaks.toml allowlist: $guard"
         fi
     done

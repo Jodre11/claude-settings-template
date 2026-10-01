@@ -77,6 +77,11 @@ raw_commit "$d" notes.md "profile|$local_id|role"
 push_to "$d" origin main
 check "pre-push refuses a literal from always-patterns.local" 1 "$rc"
 d=$(push_repo)
+with_list "$d" identity "$local_word "
+raw_commit "$d" notes.md "clean line"
+push_to "$d" origin main
+check "pre-push fails closed on a local pattern with a trailing space" 1 "$rc"
+d=$(push_repo)
 raw_commit "$d" "$memory" "see $word"
 push_to "$d" origin main
 check "pre-push applies IDENTITY_EXEMPT_RE to a memory path" "$memory_rc" "$rc"

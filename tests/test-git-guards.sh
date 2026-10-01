@@ -109,6 +109,19 @@ with_list "$d" always '# only a comment'
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a local list with no pattern" 1 "$rc"
 check_match "the failure says the list holds no pattern" 'holds no pattern' "$out"
+d=$(new_repo)
+with_list "$d" identity "$local_word "
+commit_line "$d" notes.md "clean line"
+check "pre-commit fails closed on a local pattern with a trailing space" 1 "$rc"
+check_match "the failure names the padded pattern" 'leading or trailing whitespace' "$out"
+d=$(new_repo)
+with_list "$d" always " $local_id"
+commit_line "$d" notes.md "clean line"
+check "pre-commit fails closed on a local pattern with a leading space" 1 "$rc"
+d=$(new_repo)
+with_list "$d" always '# only a comment' '   '
+commit_line "$d" notes.md "clean line"
+check "pre-commit fails closed on a local list of only whitespace" 1 "$rc"
 for entry in 'a\sb' 'a\db' '(?:ab)'; do
     d=$(new_repo)
     with_list "$d" identity "$entry"
@@ -570,6 +583,12 @@ d=$(sync_copy)
 sed -i.bak -e '/guard-config/d' "$d/.gitleaks.toml"
 run_sync "$d"
 check_match "pattern sync requires guard-config.sh to be allowlisted" 'guard file is not in' "$out"
+d=$(sync_copy)
+sed -i.bak -e '/guard-config/d' "$d/.gitleaks.toml"
+printf '%s\n' "# was: '''^\\.githooks/guard-config\\.sh\$'''" >>"$d/.gitleaks.toml"
+run_sync "$d"
+check_match "pattern sync looks for a guard file in an allowlist's paths, not anywhere in the file" \
+    'guard file is not in' "$out"
 d=$(sync_copy)
 sed -i.bak -e "1,/^regex = '''(?i)/ s/^regex = '''(?i)/regex = '''/" "$d/.gitleaks.toml"
 run_sync "$d"
