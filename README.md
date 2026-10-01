@@ -284,9 +284,9 @@ Four layers keep sensitive data out of the repository:
 
 `scripts/setup-platform.sh` activates both hooks by setting a repo-local `core.hooksPath .githooks`; git does not do
 this on clone. The hooks use gitleaks 8.25.0 or later (8.30.1 is tested); without it they warn and run the pattern
-scan only. So that no uncommitted edit decides a scan, a commit is refused while `.githooks/guard-config.sh`,
-`.gitleaks.toml` or `.gitleaksignore` differs from its staged copy, and a push of a ref whose committed
-`guard-config.sh` differs from the one in use.
+scan only. So that no uncommitted edit decides a scan, a commit or push is refused while `.githooks/guard-config.sh`
+is not exactly its staged copy, a commit while `.gitleaks.toml` or `.gitleaksignore` differs from its staged copy,
+and a push of commits whose tip commits a different `guard-config.sh` from the one in use.
 
 ### Local pattern lists
 

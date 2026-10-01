@@ -45,12 +45,11 @@ fi
 
 # The patterns and path exemptions come from the guard-config.sh these hooks read, so, as for .gitleaks.toml below, an
 # unstaged edit there must never decide what this commit's scans allow.
-if git cat-file -e ":.githooks/guard-config.sh" 2>/dev/null &&
-    ! git cat-file blob ":.githooks/guard-config.sh" | cmp -s - "$hook_dir/guard-config.sh"; then
+if ! guard_config_is_staged; then
     {
-        echo "❌ Pre-commit: .githooks/guard-config.sh differs from its staged copy, and the hooks read the"
-        echo "working-tree file. Stage the change (git add .githooks/guard-config.sh) or restore the file, then"
-        echo "commit again."
+        echo "❌ Pre-commit: .githooks/guard-config.sh differs from its staged copy, or is not staged, and the hooks"
+        echo "read the working-tree file. Stage it (git add .githooks/guard-config.sh) or restore it, then commit"
+        echo "again."
     } >&2
     exit 1
 fi

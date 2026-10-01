@@ -189,6 +189,10 @@ printf '%s\n' "# a comment" >>"$d/.githooks/guard-config.sh"
 git -C "$d" add .githooks/guard-config.sh
 commit_line "$d" notes.md "clean line"
 check "pre-commit accepts a staged guard-config.sh edit" 0 "$rc"
+d=$(new_repo)
+git -C "$d" rm -q --cached .githooks/guard-config.sh
+commit_line "$d" notes.md "clean line"
+check "pre-commit refuses while guard-config.sh is not in the index" 1 "$rc"
 for name in identity-patterns.local always-patterns.local Identity-Patterns.local; do
     d=$(new_repo)
     printf 'x\n' >"$d/.githooks/$name"

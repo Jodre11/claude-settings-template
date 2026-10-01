@@ -229,6 +229,14 @@ scan_text() {
     '
 }
 
+# guard_config_is_staged: return 0 when the index holds .githooks/guard-config.sh byte-identical to the copy these hooks
+# read. An unstaged edit there, or a copy the index does not track (removed with git rm --cached, or tracked under
+# another case), must never decide what a scan allows.
+guard_config_is_staged() {
+    git cat-file -e ":.githooks/guard-config.sh" 2>/dev/null &&
+        git cat-file blob ":.githooks/guard-config.sh" | cmp -s - "$guard_dir/guard-config.sh"
+}
+
 # is_local_list <path>: return 0 when <path> names one of the local lists, in any case.
 is_local_list() {
     local lower
