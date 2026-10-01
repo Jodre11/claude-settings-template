@@ -87,6 +87,10 @@ raw_commit "$d" .githooks/guard-config.sh "# see $local_word"
 push_to "$d" origin main
 check "pre-push refuses a local identity word in guard-config.sh" 1 "$rc"
 d=$(push_repo)
+raw_commit "$d" .gitleaks.toml "# account \`$digits\`"
+push_to "$d" origin main
+check "pre-push refuses a secret-shaped value in .gitleaks.toml" 1 "$rc"
+d=$(push_repo)
 git -C "$d" config log.showRoot false
 git -C "$d" checkout -q --orphan side
 raw_commit "$d" notes.md "see $word"

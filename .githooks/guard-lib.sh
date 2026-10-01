@@ -18,7 +18,9 @@ local_always_list="$guard_dir/always-patterns.local"
 local_list_path_re='^\.githooks/(identity|always)-patterns\.local$'
 
 # The guard files define the tracked patterns (the pre-commit did, before guard-config.sh), so the pattern scans exempt
-# them from those patterns, in history too; .gitleaks.toml's allowlists name them as well. The local lists still apply.
+# them, in history too, from the identity patterns and from each ALWAYS_PATTERNS entry whose own text it matches (the
+# private-key marker, a PAT name), which their definitions would trip; every other ALWAYS_PATTERNS entry and the local
+# lists still apply to them. .gitleaks.toml's allowlists name them as well.
 guard_file_re='^\.githooks/(guard-config\.sh|pre-commit)$|^\.gitleaks\.toml$'
 
 # Constructs awk's ERE does not support: in a pattern they never match as meant, so the scan would fail open.
@@ -88,6 +90,7 @@ load_patterns() {
         check_pattern "$p" .githooks/guard-config.sh
     done
     GUARD_ALWAYS_RE=$(join_patterns "${ALWAYS_PATTERNS[@]}")
+    GUARD_ALWAYS_LIST=$(printf '%s\n' "${ALWAYS_PATTERNS[@]}")
     GUARD_IDENTITY_RE=$(join_patterns "${IDENTITY_PATTERNS[@]}")
     read_pattern_list "$local_always_list"
     GUARD_LOCAL_ALWAYS_RE=$(join_patterns ${loaded_patterns[@]+"${loaded_patterns[@]}"})
@@ -97,18 +100,26 @@ load_patterns() {
     GUARD_LOCAL_IDENTITY_EXEMPT_RE="$LOCAL_IDENTITY_EXEMPT_RE"
     GUARD_ALWAYS_EXEMPT_RE="$ALWAYS_EXEMPT_RE"
     GUARD_FILE_RE="$guard_file_re"
-    export GUARD_ALWAYS_RE GUARD_IDENTITY_RE GUARD_LOCAL_ALWAYS_RE GUARD_LOCAL_IDENTITY_RE GUARD_IDENTITY_EXEMPT_RE \
-        GUARD_LOCAL_IDENTITY_EXEMPT_RE GUARD_ALWAYS_EXEMPT_RE GUARD_FILE_RE
+    export GUARD_ALWAYS_RE GUARD_ALWAYS_LIST GUARD_IDENTITY_RE GUARD_LOCAL_ALWAYS_RE GUARD_LOCAL_IDENTITY_RE \
+        GUARD_IDENTITY_EXEMPT_RE GUARD_LOCAL_IDENTITY_EXEMPT_RE GUARD_ALWAYS_EXEMPT_RE GUARD_FILE_RE
 }
 
-# The awk body both scanners share: the pattern sets, lowercased; path_matches(path, re), true when a non-empty re
-# matches a known path; and line_hits(text, identity_exempt, local_identity_exempt, always_exempt), true when the
-# lowercased text matches a set it is not exempt from. always-patterns.local has no exemption. UTF-8 continuation
-# bytes are dropped first, so each character counts once and the {0,24} windows count characters, not bytes; the AWS
-# documentation account ID 123456789012 is removed, so it never counts as an account ID.
+# The awk body both scanners share: the pattern sets, lowercased; guard_always_re, the ALWAYS_PATTERNS entries that do
+# not match their own text, for the guard files; path_matches(path, re), true when a non-empty re matches a known path;
+# and line_hits(text, identity_exempt, local_identity_exempt, always_exempt, guard_file), true when the lowercased text
+# matches a set it is not exempt from. always-patterns.local has no exemption. UTF-8 continuation bytes are dropped
+# first, so each character counts once and the {0,24} windows count characters, not bytes; the AWS documentation
+# account ID 123456789012 is removed, so it never counts as an account ID.
 guard_awk_common='
     BEGIN {
         always_re = tolower(ENVIRON["GUARD_ALWAYS_RE"])
+        guard_always_re = ""
+        n = split(tolower(ENVIRON["GUARD_ALWAYS_LIST"]), always_list, "\n")
+        for (i = 1; i <= n; i++) {
+            if (always_list[i] != "" && always_list[i] !~ always_list[i]) {
+                guard_always_re = guard_always_re (guard_always_re == "" ? "" : "|") always_list[i]
+            }
+        }
         identity_re = tolower(ENVIRON["GUARD_IDENTITY_RE"])
         local_always_re = tolower(ENVIRON["GUARD_LOCAL_ALWAYS_RE"])
         local_identity_re = tolower(ENVIRON["GUARD_LOCAL_IDENTITY_RE"])
@@ -120,11 +131,12 @@ guard_awk_common='
     function path_matches(path, re) {
         return path != "" && re != "" && path ~ re
     }
-    function line_hits(text, identity_exempt, local_identity_exempt, always_exempt,    line) {
+    function line_hits(text, identity_exempt, local_identity_exempt, always_exempt, guard_file,    line, re) {
         line = tolower(text)
         gsub(/[\200-\277]/, "", line)
         gsub(/123456789012/, "", line)
-        if (!always_exempt && always_re != "" && line ~ always_re) return 1
+        re = guard_file ? guard_always_re : always_re
+        if (!always_exempt && re != "" && line ~ re) return 1
         if (local_always_re != "" && line ~ local_always_re) return 1
         if (!identity_exempt && identity_re != "" && line ~ identity_re) return 1
         return !local_identity_exempt && local_identity_re != "" && line ~ local_identity_re
@@ -135,9 +147,10 @@ guard_awk_common='
 # "[<sha>] <path>: <line>" for every added line that matches a set it is not exempt from. Lines are tracked by hunk,
 # so an added line whose text starts "++" is still scanned. The path comes from the "+++ b/" header before the first
 # hunk, which no path text can spoof; a path git must quote (one holding a quote, a backslash or a control character)
-# gets no exemption. The guard files, which define the tracked patterns, are exempt from those patterns only: the
-# local lists still apply to them, since a hand-ported pattern hunk lands there. The caller pins the diff format and
-# drops NUL bytes; this runs in the C locale, so a byte that is not valid UTF-8 cannot stop it.
+# gets no exemption. The guard files, which define the tracked patterns, are exempt only as guard_file_re's comment
+# says: the local lists and every ALWAYS_PATTERNS entry their definitions cannot trip still apply, since a hand-ported
+# pattern hunk lands there. The caller pins the diff format and drops NUL bytes; this runs in the C locale, so a byte
+# that is not valid UTF-8 cannot stop it.
 scan_patch() {
     LC_ALL=C awk "$guard_awk_common"'
         /^commit [0-9a-f]+$/ { commit = substr($2, 1, 12) " "; in_hunk = 0; next }
@@ -161,12 +174,14 @@ scan_patch() {
             guard_file = path_matches(path, guard_file_re)
             identity_exempt = guard_file || path_matches(path, identity_exempt_re)
             local_identity_exempt = path_matches(path, local_identity_exempt_re)
-            always_exempt = guard_file || path_matches(path, always_exempt_re)
+            always_exempt = path_matches(path, always_exempt_re)
             next
         }
         /^@@/ { in_hunk = 1; next }
         !in_hunk || !/^\+/ { next }
-        line_hits(substr($0, 2), identity_exempt, local_identity_exempt, always_exempt) { print commit shown ": " $0 }
+        line_hits(substr($0, 2), identity_exempt, local_identity_exempt, always_exempt, guard_file) {
+            print commit shown ": " $0
+        }
     '
 }
 
@@ -183,7 +198,7 @@ scan_text() {
             if (NR <= identity_lines) {
                 gsub(/<[0-9]+\+[a-z0-9-]{1,39}@users\.noreply\.github\.com>/, "<>", text)
             }
-            if (line_hits(text, 1, 0, 0)) print label ": " $0
+            if (line_hits(text, 1, 0, 0, 0)) print label ": " $0
         }
     '
 }

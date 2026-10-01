@@ -36,6 +36,14 @@ try .githooks/guard-config.sh "# see $word"
 check "pre-commit skips the file that defines the patterns" 0 "$rc"
 try .githooks/pre-commit "# see $word"
 check "pre-commit skips the hook that defined the patterns before guard-config.sh" 0 "$rc"
+try .githooks/guard-config.sh "# account \`$digits\`"
+check "a secret-shaped value bites in guard-config.sh" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+try .gitleaks.toml "# account \`$digits\`"
+check "a secret-shaped value bites in .gitleaks.toml" 1 "$rc"
+marker=$(printf '%s%s' '-----BEG' 'IN.*PRIVATE KEY-----')
+try .githooks/guard-config.sh "ALWAYS_PATTERNS+=('$marker')"
+check "guard-config.sh may still define a pattern that matches its own text" 0 "$rc"
 firewall=hooks/secret-x.test.sh
 if [[ -n "$ALWAYS_EXEMPT_RE" && "$firewall" =~ $ALWAYS_EXEMPT_RE ]]; then
     firewall_rc=0
