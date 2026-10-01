@@ -68,10 +68,14 @@ LOCAL_IDENTITY_EXEMPT_RE="$IDENTITY_EXEMPT_RE"
 
 # Paths the built-ins pass skips: the secret firewall's pattern library, its tests' dummy vectors and its design doc,
 # which necessarily match gitleaks' built-in rules and which .gitleaks.toml exempts from every rule. None holds a real
-# credential. To clear a built-in false positive, add its anchored path here in a reviewed commit. An empty value, or
-# one that never matches such as '^$.', exempts nothing.
-BUILTINS_EXEMPT_RE='^hooks/secret-patterns\.sh$|^hooks/secret-[^/]*\.test\.sh$'
-BUILTINS_EXEMPT_RE+='|^docs/superpowers/specs/[^/]*secret-context-firewall[^/]*\.md$'
+# credential. Each is named exactly, so a new file gets no exemption until it is added here, and to .gitleaks.toml, in
+# a reviewed commit; do the same to clear a built-in false positive. An empty value, or one that never matches such as
+# '^$.', exempts nothing.
+BUILTINS_EXEMPT_RE='^hooks/secret-patterns\.sh$|^hooks/secret-patterns\.test\.sh$'
+BUILTINS_EXEMPT_RE+='|^hooks/secret-bash-guard\.test\.sh$|^hooks/secret-breach-alarm\.test\.sh$'
+BUILTINS_EXEMPT_RE+='|^hooks/secret-output-scrubber\.test\.sh$|^hooks/secret-path-guard\.test\.sh$'
+BUILTINS_EXEMPT_RE+='|^hooks/secret-prompt-guard\.test\.sh$'
+BUILTINS_EXEMPT_RE+='|^docs/superpowers/specs/2026-07-12-secret-context-firewall-design\.md$'
 
 # Paths exempt from ALWAYS_PATTERNS: the same secret-firewall files, whose dummy vectors are secret-shaped by design.
 # always-patterns.local and the identity patterns still apply there.

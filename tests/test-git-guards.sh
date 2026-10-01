@@ -44,7 +44,7 @@ check "a secret-shaped value bites in .gitleaks.toml" 1 "$rc"
 marker=$(printf '%s%s' '-----BEG' 'IN.*PRIVATE KEY-----')
 try .githooks/guard-config.sh "ALWAYS_PATTERNS+=('$marker')"
 check "guard-config.sh may still define a pattern that matches its own text" 0 "$rc"
-firewall=hooks/secret-x.test.sh
+firewall=hooks/secret-patterns.test.sh
 if [[ -n "$ALWAYS_EXEMPT_RE" && "$firewall" =~ $ALWAYS_EXEMPT_RE ]]; then
     firewall_rc=0
 else
@@ -54,6 +54,8 @@ try "$firewall" "account \`$digits\`"
 check "pre-commit applies ALWAYS_EXEMPT_RE to a secret-firewall test file" "$firewall_rc" "$rc"
 try "$firewall" "see $word"
 check "identity still bites in a secret-firewall test file" 1 "$rc"
+try hooks/secret-new.test.sh "account \`$digits\`"
+check "ALWAYS_EXEMPT_RE does not cover a secret-*.test.sh file it does not name" 1 "$rc"
 
 # --- pre-commit: fingerprint forms
 for line in "account \`$digits\`" "the account (\`$digits\`)" "aws_account:$digits" "arn:aws:iam::$digits:role/x" \
@@ -553,13 +555,15 @@ path = "local.toml"/' "$d/.gitleaks.toml"
     git -C "$d" update-index --add --cacheinfo "160000,$(git -C "$d" rev-parse HEAD),sub"
     commit_staged "$d"
     check "a staged submodule is not mistaken for a secret" 0 "$rc"
-    if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-x.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
-        try hooks/secret-x.test.sh "aws $key"
+    if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-patterns.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
+        try hooks/secret-patterns.test.sh "aws $key"
         check "BUILTINS_EXEMPT_RE exempts the secret-firewall test vectors from the built-ins pass" 0 "$rc"
     else
-        try hooks/secret-x.test.sh "aws $key"
+        try hooks/secret-patterns.test.sh "aws $key"
         check "with no BUILTINS_EXEMPT_RE match, the built-ins pass scans every path" 1 "$rc"
     fi
+    try hooks/secret-new.test.sh "aws $key"
+    check "the built-ins pass scans a secret-*.test.sh file BUILTINS_EXEMPT_RE does not name" 1 "$rc"
 fi
 
 # --- pattern sync

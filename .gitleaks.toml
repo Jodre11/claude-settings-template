@@ -132,11 +132,18 @@ targetRules = ["org-sso-url", "org-ad-path", "org-name", "org-internal-project",
 paths = ['''^projects/[^/]+/memory/''']
 
 # The secret firewall's pattern library, its tests' dummy vectors and its design doc necessarily match secret rules,
-# built-ins included, so these paths are exempt from every rule. None holds a real credential.
+# built-ins included, so these paths are exempt from every rule. None holds a real credential. Each is named exactly,
+# as in BUILTINS_EXEMPT_RE in .githooks/guard-config.sh, so a new file gets no exemption until a reviewed commit adds
+# it to both.
 [[allowlists]]
 description = "Secret-firewall pattern library, dummy test vectors and design doc"
 paths = [
     '''^hooks/secret-patterns\.sh$''',
-    '''^hooks/secret-[^/]*\.test\.sh$''',
-    '''^docs/superpowers/specs/[^/]*secret-context-firewall[^/]*\.md$''',
+    '''^hooks/secret-patterns\.test\.sh$''',
+    '''^hooks/secret-bash-guard\.test\.sh$''',
+    '''^hooks/secret-breach-alarm\.test\.sh$''',
+    '''^hooks/secret-output-scrubber\.test\.sh$''',
+    '''^hooks/secret-path-guard\.test\.sh$''',
+    '''^hooks/secret-prompt-guard\.test\.sh$''',
+    '''^docs/superpowers/specs/2026-07-12-secret-context-firewall-design\.md$''',
 ]

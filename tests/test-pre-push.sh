@@ -382,12 +382,16 @@ if have_gitleaks "pre-push gitleaks rows"; then
     raw_commit "$d" docs/old.gitleaks.toml "account \`$digits\`"
     push_env "$d" SKIP_PATTERN_SCAN=1 origin main
     check "gitleaks' custom rules scan a path named like gitleaks.toml" 1 "$rc"
-    if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-x.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
+    if [[ -n "$BUILTINS_EXEMPT_RE" && hooks/secret-patterns.test.sh =~ $BUILTINS_EXEMPT_RE ]]; then
         d=$(push_repo)
-        raw_commit "$d" hooks/secret-x.test.sh "aws $key"
+        raw_commit "$d" hooks/secret-patterns.test.sh "aws $key"
         push_env "$d" SKIP_PATTERN_SCAN=1 origin main
         check "the pre-push built-ins pass honours BUILTINS_EXEMPT_RE" 0 "$rc"
     fi
+    d=$(push_repo)
+    raw_commit "$d" hooks/secret-new.test.sh "aws $key"
+    push_env "$d" SKIP_PATTERN_SCAN=1 origin main
+    check "the pre-push built-ins pass scans a secret-*.test.sh file BUILTINS_EXEMPT_RE does not name" 1 "$rc"
 fi
 
 finish
