@@ -166,6 +166,21 @@ scan_patch() {
     '
 }
 
+# scan_text <label>: read commit metadata on standard input and print "<label>: <line>" for every line that matches
+# ALWAYS_PATTERNS or a local list. The tracked IDENTITY_PATTERNS are public by definition, since guard-config.sh
+# publishes them, and the history of a repository that documents them names them, so they guard file content only.
+# The GitHub noreply alias form (<id>+<user>@users.noreply.github.com), which GitHub publishes on every commit anyway,
+# is removed first, so an author or committer using it passes.
+scan_text() {
+    LC_ALL=C awk -v label="$1" "$guard_awk_common"'
+        {
+            text = tolower($0)
+            gsub(/[0-9]+\+[^@ <>]+@users\.noreply\.github\.com/, "", text)
+            if (line_hits(text, 1, 0, 0)) print label ": " $0
+        }
+    '
+}
+
 # is_local_list <path>: return 0 when <path> names one of the local lists, in any case.
 is_local_list() {
     local lower

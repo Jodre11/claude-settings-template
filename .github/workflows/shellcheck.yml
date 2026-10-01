@@ -25,6 +25,7 @@ jobs:
             -o -path './tests/*.sh' \
             -o -path './tests/lib/*' \
             -o -path './.githooks/pre-commit' \
+            -o -path './.githooks/pre-push' \
             -o -path './.githooks/*.sh' \
             -o -path './tools/aws-secret-field' \
             -o -path './tools/md2clip' \) \
