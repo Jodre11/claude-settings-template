@@ -13,15 +13,22 @@ export GIT_NO_REPLACE_OBJECTS=1
 # The optional, gitignored local lists: one POSIX ERE per line, blank and # lines ignored. identity-patterns.local
 # holds identity markers and is exempt only where LOCAL_IDENTITY_EXEMPT_RE says; always-patterns.local holds
 # secret-shaped literals and bites on every path. Neither may ever be committed. They are read from beside these
-# hooks and, when that differs, from the main worktree's .githooks/, found through git's common directory: a linked
-# worktree's checkout holds no untracked file, so without this its commits and pushes would run with no lists.
+# hooks and, when that differs, from the main worktree's .githooks/, the first entry git worktree list gives: a linked
+# worktree's checkout holds no untracked file, so without this its commits and pushes would run with no lists. The
+# directories are compared as physical paths. When the repository's git directory lives apart from its main worktree
+# (git init --separate-git-dir), git cannot name that worktree from a linked one, so the hooks say so instead of
+# silently reading no main-worktree list.
 local_list_dirs=("$guard_dir")
-guard_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-if [ "${guard_common_dir##*/}" = .git ] && [ -d "${guard_common_dir%/.git}/.githooks" ]; then
-    guard_main_dir="$(cd "${guard_common_dir%/.git}/.githooks" && pwd)"
-    if [ "$guard_main_dir" != "$guard_dir" ]; then
+guard_main_root=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p' || true)
+if [ -n "$guard_main_root" ] && [ -d "$guard_main_root/.githooks" ]; then
+    guard_main_dir="$(cd "$guard_main_root/.githooks" && pwd -P)"
+    if [ "$guard_main_dir" != "$(cd "$guard_dir" && pwd -P)" ]; then
         local_list_dirs+=("$guard_main_dir")
     fi
+elif [ "$(git rev-parse --absolute-git-dir 2>/dev/null || true)" != \
+    "$(cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" && pwd -P)" ]; then
+    echo "⚠ ${hook_name:-Git hook}: cannot find the main worktree from this linked worktree, so its local pattern" \
+        "lists are not read here; put copies (or symlinks) beside these hooks to screen this worktree too." >&2
 fi
 local_list_path_re='^\.githooks/(identity|always)-patterns\.local$'
 

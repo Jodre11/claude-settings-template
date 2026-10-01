@@ -133,6 +133,13 @@ with_list "$d-wt" always "$local_id"
 commit_line "$d-wt" notes.md "profile|$local_id|role"
 check "pre-commit still applies a linked worktree's own local list" 1 "$rc"
 d=$(new_repo)
+git -C "$d" init -q --separate-git-dir "$d-gd"
+with_list "$d" identity "$local_word"
+git -C "$d" worktree add -q -b wt2 "$d-wt2"
+commit_line "$d-wt2" notes.md "see $local_word"
+check_match "a linked worktree whose main worktree git cannot name warns that its lists are not read" \
+    'cannot find the main worktree' "$out"
+d=$(new_repo)
 ln -s "$tmp/no-such-list.txt" "$d/.githooks/identity-patterns.local"
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a dangling local-list symlink" 1 "$rc"
