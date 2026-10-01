@@ -92,6 +92,7 @@ key=$(printf '%s%s%s' AKIA QWERTYUI OPASDFGH)
 placeholder=$(printf '%s%s' 123456 789012)
 profile="application-inference-profile/$(printf '%s%s' abcdef 012345)"
 local_word="qzv$(printf '%s' localmarker)"
+other_word="qzv$(printf '%s' othermarker)"
 local_id=$(printf '%012d' 31337)
 memory=projects/p/memory/m.md
 memory_rc=$(exempt_rc "$memory" "$IDENTITY_EXEMPT_RE")
@@ -155,6 +156,22 @@ with_list() {
     local d="$1" kind="$2"
     shift 2
     printf '%s\n' "$@" >"$d/.githooks/$kind-patterns.local"
+}
+
+# with_ignore <repo> <entry>...: set <repo>'s LOCAL_IDENTITY_IGNORE to the entries, each single-quoted as written, and
+# commit guard-config.sh with the hooks off, so its staged and committed copies are the one the hooks read.
+with_ignore() {
+    local d="$1" entry
+    shift
+    {
+        printf '%s\n' 'LOCAL_IDENTITY_IGNORE=('
+        for entry in "$@"; do
+            printf "    '%s'\n" "$entry"
+        done
+        printf '%s\n' ')'
+    } >>"$d/.githooks/guard-config.sh"
+    git -C "$d" add .githooks/guard-config.sh
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m "set LOCAL_IDENTITY_IGNORE"
 }
 
 # try_listed <kind> <list-line> <path> <line> [VAR=value...]: in a fresh scratch repo whose <kind> local list holds

@@ -300,6 +300,12 @@ whitespace or one awk cannot match as written stops the commit rather than being
 patterns they define. In a linked worktree (`git worktree add`), the hooks also read the main worktree's lists, or
 warn when git cannot name the main worktree (a git directory kept apart with `--separate-git-dir`).
 
+A repository can disregard a local identity pattern that is its own public identity, such as the owner's handle in a
+repository published under it: put the pattern's exact text in `LOCAL_IDENTITY_IGNORE` in `.githooks/guard-config.sh`.
+An entry must equal a line of the list exactly, so a pattern that later changes bites again, and an ignored pattern
+is still checked, so a malformed list still stops the commit. `always-patterns.local` and the tracked patterns cannot
+be opted out of. The array is committed like any other guard setting, so every opt-out is a reviewed change.
+
 ### Bypasses
 
 `SKIP_PATTERN_SCAN=1 git commit` (or `git push`) skips the pattern scan only, for a file that must carry a pattern;

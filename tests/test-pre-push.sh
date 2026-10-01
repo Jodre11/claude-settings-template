@@ -78,6 +78,18 @@ push_to "$d" origin main
 check "pre-push refuses a literal from always-patterns.local" 1 "$rc"
 d=$(push_repo)
 with_list "$d" identity "$local_word"
+with_ignore "$d" "$local_word"
+raw_commit "$d" notes.md "see $local_word" -m "mentions $local_word"
+push_to "$d" origin main
+check "pre-push honours LOCAL_IDENTITY_IGNORE in lines and metadata" 0 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word" "$other_word"
+with_ignore "$d" "$local_word"
+raw_commit "$d" notes.md "see $local_word" -m "mentions $other_word"
+push_to "$d" origin main
+check "pre-push still refuses another local identity word under LOCAL_IDENTITY_IGNORE" 1 "$rc"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
 git -C "$d" worktree add -q -b wt "$d-wt"
 raw_commit "$d-wt" notes.md "see $local_word"
 push_to "$d-wt" origin wt

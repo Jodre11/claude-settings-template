@@ -97,14 +97,31 @@ read_pattern_list() {
     fi
 }
 
+# is_ignored_identity <pattern>: return 0 when <pattern> is, byte for byte, an entry of LOCAL_IDENTITY_IGNORE.
+is_ignored_identity() {
+    local entry
+    for entry in ${LOCAL_IDENTITY_IGNORE[@]+"${LOCAL_IDENTITY_IGNORE[@]}"}; do
+        if [ "$entry" = "$1" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # read_local_lists <kind>: fill local_patterns with the patterns of every <kind>-patterns.local in local_list_dirs,
-# each read and checked by read_pattern_list.
+# each read and checked by read_pattern_list. For the identity lists, a pattern LOCAL_IDENTITY_IGNORE names exactly is
+# then dropped; it is still checked first, so a malformed list stops the scan whatever the repository ignores.
 read_local_lists() {
-    local dir
+    local dir p
     local_patterns=()
     for dir in "${local_list_dirs[@]}"; do
         read_pattern_list "$dir/$1-patterns.local"
-        local_patterns+=(${loaded_patterns[@]+"${loaded_patterns[@]}"})
+        for p in ${loaded_patterns[@]+"${loaded_patterns[@]}"}; do
+            if [ "$1" = identity ] && is_ignored_identity "$p"; then
+                continue
+            fi
+            local_patterns+=("$p")
+        done
     done
 }
 
