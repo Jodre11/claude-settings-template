@@ -89,6 +89,19 @@ raw_commit "$d" notes.md "see $local_word" -m "mentions $other_word"
 push_to "$d" origin main
 check "pre-push still refuses another local identity word under LOCAL_IDENTITY_IGNORE" 1 "$rc"
 d=$(push_repo)
+with_empty "$d" ALWAYS_PATTERNS IDENTITY_PATTERNS
+with_list "$d" identity "$local_word"
+raw_commit "$d" notes.md "see $local_word"
+push_to "$d" origin main
+check "pre-push with empty tracked pattern arrays still applies the local lists" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+d=$(push_repo)
+without_setting "$d" LOCAL_IDENTITY_EXEMPT_RE
+raw_commit "$d" notes.md "clean line"
+push_to "$d" origin main
+check "pre-push refuses when guard-config.sh lacks a setting the hooks read" 1 "$rc"
+check_match "the refusal names the missing setting" 'LOCAL_IDENTITY_EXEMPT_RE' "$out"
+d=$(push_repo)
 with_list "$d" identity "$local_word"
 git -C "$d" worktree add -q -b wt "$d-wt"
 raw_commit "$d-wt" notes.md "see $local_word"

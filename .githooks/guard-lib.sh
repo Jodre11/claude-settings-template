@@ -130,12 +130,12 @@ read_local_lists() {
 # rewritten on the way in. An absent local list exports an empty set, which matches nothing.
 load_patterns() {
     local p
-    for p in "${ALWAYS_PATTERNS[@]}" "${IDENTITY_PATTERNS[@]}"; do
+    for p in ${ALWAYS_PATTERNS[@]+"${ALWAYS_PATTERNS[@]}"} ${IDENTITY_PATTERNS[@]+"${IDENTITY_PATTERNS[@]}"}; do
         check_pattern "$p" .githooks/guard-config.sh
     done
-    GUARD_ALWAYS_RE=$(join_patterns "${ALWAYS_PATTERNS[@]}")
-    GUARD_ALWAYS_LIST=$(printf '%s\n' "${ALWAYS_PATTERNS[@]}")
-    GUARD_IDENTITY_RE=$(join_patterns "${IDENTITY_PATTERNS[@]}")
+    GUARD_ALWAYS_RE=$(join_patterns ${ALWAYS_PATTERNS[@]+"${ALWAYS_PATTERNS[@]}"})
+    GUARD_ALWAYS_LIST=$(printf '%s\n' ${ALWAYS_PATTERNS[@]+"${ALWAYS_PATTERNS[@]}"})
+    GUARD_IDENTITY_RE=$(join_patterns ${IDENTITY_PATTERNS[@]+"${IDENTITY_PATTERNS[@]}"})
     read_local_lists always
     GUARD_LOCAL_ALWAYS_RE=$(join_patterns ${local_patterns[@]+"${local_patterns[@]}"})
     read_local_lists identity

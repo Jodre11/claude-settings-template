@@ -265,6 +265,14 @@ git -C "$d" worktree add -q -b wt "$d-wt"
 commit_line "$d-wt" notes.md "see $local_word"
 check "LOCAL_IDENTITY_IGNORE applies to the main worktree's lists in a linked worktree" 0 "$rc"
 
+# --- an empty tracked array still scans the rest, and a hook that aborts refuses, under bash 3.2 too
+d=$(new_repo)
+with_empty "$d" ALWAYS_PATTERNS IDENTITY_PATTERNS
+with_list "$d" identity "$local_word"
+commit_line "$d" notes.md "see $local_word"
+check "pre-commit with empty tracked pattern arrays still applies the local lists" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+
 # --- gitleaks: no bypass, built-ins on, targeted allowlists
 if have_gitleaks "gitleaks rows"; then
     try notes.md "aws $key" SKIP_PATTERN_SCAN=1
@@ -724,5 +732,11 @@ d=$(sync_copy)
 rm "$d/.githooks/guard-config.sh"
 run_sync "$d"
 check_match "pattern sync fails when it finds no pattern source" 'no pattern source found' "$out"
+
+# --- the suites' own harness: a suite that aborts mid-run must not exit 0, under bash 3.2 too
+rc=0
+bash -c 'set -euo pipefail; source "$1"; : "$guard_no_such_variable"' _ "$repo_root/tests/guard-test-lib.sh" \
+    >/dev/null 2>&1 || rc=$?
+check "a suite that aborts on an unset variable exits non-zero" 1 "$rc"
 
 finish

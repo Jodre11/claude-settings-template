@@ -7,7 +7,8 @@
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# Under an EXIT trap, bash 3.2 exits 0 when an unset variable aborts the suite; suite_done makes that exit 1.
+trap 'rm -rf "$tmp"; if [ "${suite_done:-0}" != 1 ]; then exit 1; fi' EXIT
 export GIT_CONFIG_GLOBAL="$tmp/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
 git config --global user.email test@example.invalid
@@ -174,6 +175,28 @@ with_ignore() {
     git -C "$d" -c core.hooksPath=/dev/null commit -q -m "set LOCAL_IDENTITY_IGNORE"
 }
 
+# with_empty <repo> <array>...: empty each named array in <repo>'s guard-config.sh and commit it with the hooks off.
+with_empty() {
+    local d="$1" name
+    shift
+    for name in "$@"; do
+        NAME="$name" awk '$0 == ENVIRON["NAME"] "=(" { print ENVIRON["NAME"] "=()"; skip = 1; next }
+            skip { if ($0 == ")") skip = 0; next } { print }' "$d/.githooks/guard-config.sh" >"$d/guard-config.sh.new"
+        mv "$d/guard-config.sh.new" "$d/.githooks/guard-config.sh"
+    done
+    git -C "$d" add .githooks/guard-config.sh
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m "empty $*"
+}
+
+# without_setting <repo> <name>: delete the line assigning <name> from <repo>'s guard-config.sh, as in a fork whose
+# copy predates that setting, and commit it with the hooks off.
+without_setting() {
+    NAME="$2" awk 'index($0, ENVIRON["NAME"] "=") != 1' "$1/.githooks/guard-config.sh" >"$1/guard-config.sh.new"
+    mv "$1/guard-config.sh.new" "$1/.githooks/guard-config.sh"
+    git -C "$1" add .githooks/guard-config.sh
+    git -C "$1" -c core.hooksPath=/dev/null commit -q -m "drop $2"
+}
+
 # try_listed <kind> <list-line> <path> <line> [VAR=value...]: in a fresh scratch repo whose <kind> local list holds
 # <list-line>, commit <line> at <path>; set rc and out.
 try_listed() {
@@ -199,6 +222,7 @@ scan_ids() {
 
 # finish: print the summary and exit 1 when any check failed.
 finish() {
+    suite_done=1
     echo ""
     echo "$((passes + failures + skips)) checks: $passes passed, $failures failed, $skips skipped"
     if [[ $failures -gt 0 ]]; then

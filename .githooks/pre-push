@@ -292,7 +292,8 @@ have_gitleaks=0
 if command -v gitleaks >/dev/null 2>&1; then
     have_gitleaks=1
     scan_dir=$(mktemp -d)
-    trap 'rm -rf "$scan_dir"' EXIT
+    # Under an EXIT trap, bash 3.2 exits 0 when an unset variable aborts the hook; guard_done makes that exit 1.
+    trap 'rm -rf "$scan_dir"; if [ "${guard_done:-0}" != 1 ]; then exit 1; fi' EXIT
 else
     echo "⚠ gitleaks not found — skipping the generic secret scan. Install: brew install gitleaks" >&2
 fi
@@ -356,4 +357,5 @@ for entry in ${refs[@]+"${refs[@]}"}; do
     fi
 done
 
+guard_done=1
 echo "✔ Pre-push: $scanned commit(s) scanned; no sensitive patterns detected." >&2
