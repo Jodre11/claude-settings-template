@@ -115,6 +115,16 @@ ln -s "$tmp/outside-list.txt" "$d/.githooks/identity-patterns.local"
 commit_line "$d" notes.md "see $local_word"
 check "pre-commit reads a local list through a symlink" 1 "$rc"
 d=$(new_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" worktree add -q -b wt "$d-wt"
+commit_line "$d-wt" notes.md "see $local_word"
+check "pre-commit applies the main worktree's local lists in a linked worktree" 1 "$rc"
+d=$(new_repo)
+git -C "$d" worktree add -q -b wt "$d-wt"
+with_list "$d-wt" always "$local_id"
+commit_line "$d-wt" notes.md "profile|$local_id|role"
+check "pre-commit still applies a linked worktree's own local list" 1 "$rc"
+d=$(new_repo)
 ln -s "$tmp/no-such-list.txt" "$d/.githooks/identity-patterns.local"
 commit_line "$d" notes.md "clean line"
 check "pre-commit fails closed on a dangling local-list symlink" 1 "$rc"

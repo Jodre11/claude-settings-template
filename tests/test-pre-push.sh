@@ -77,6 +77,12 @@ raw_commit "$d" notes.md "profile|$local_id|role"
 push_to "$d" origin main
 check "pre-push refuses a literal from always-patterns.local" 1 "$rc"
 d=$(push_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" worktree add -q -b wt "$d-wt"
+raw_commit "$d-wt" notes.md "see $local_word"
+push_to "$d-wt" origin wt
+check "pre-push applies the main worktree's local lists in a linked worktree" 1 "$rc"
+d=$(push_repo)
 with_list "$d" identity "$local_word "
 raw_commit "$d" notes.md "clean line"
 push_to "$d" origin main

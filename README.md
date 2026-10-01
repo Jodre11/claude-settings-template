@@ -295,7 +295,7 @@ are ignored. Both are gitignored, either may be a symlink to a list kept elsewhe
 push either one. A list that cannot be read, holds no pattern, or holds a pattern with leading or trailing
 whitespace or one awk cannot match as written stops the commit rather than being skipped. The lists also apply to
 `.githooks/guard-config.sh`, `.githooks/pre-commit` and `.gitleaks.toml`, which are exempt only from the tracked
-patterns they define.
+patterns they define. In a linked worktree (`git worktree add`), the hooks also read the main worktree's lists.
 
 ### Bypasses
 

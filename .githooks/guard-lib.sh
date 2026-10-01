@@ -12,9 +12,17 @@ export GIT_NO_REPLACE_OBJECTS=1
 
 # The optional, gitignored local lists: one POSIX ERE per line, blank and # lines ignored. identity-patterns.local
 # holds identity markers and is exempt only where LOCAL_IDENTITY_EXEMPT_RE says; always-patterns.local holds
-# secret-shaped literals and bites on every path. Neither may ever be committed.
-local_identity_list="$guard_dir/identity-patterns.local"
-local_always_list="$guard_dir/always-patterns.local"
+# secret-shaped literals and bites on every path. Neither may ever be committed. They are read from beside these
+# hooks and, when that differs, from the main worktree's .githooks/, found through git's common directory: a linked
+# worktree's checkout holds no untracked file, so without this its commits and pushes would run with no lists.
+local_list_dirs=("$guard_dir")
+guard_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+if [ "${guard_common_dir##*/}" = .git ] && [ -d "${guard_common_dir%/.git}/.githooks" ]; then
+    guard_main_dir="$(cd "${guard_common_dir%/.git}/.githooks" && pwd)"
+    if [ "$guard_main_dir" != "$guard_dir" ]; then
+        local_list_dirs+=("$guard_main_dir")
+    fi
+fi
 local_list_path_re='^\.githooks/(identity|always)-patterns\.local$'
 
 # The guard files define the tracked patterns (the pre-commit did, before guard-config.sh), so the pattern scans exempt
@@ -81,7 +89,18 @@ read_pattern_list() {
     fi
 }
 
-# load_patterns: check the tracked patterns, read both local lists, and export the four pattern sets and the
+# read_local_lists <kind>: fill local_patterns with the patterns of every <kind>-patterns.local in local_list_dirs,
+# each read and checked by read_pattern_list.
+read_local_lists() {
+    local dir
+    local_patterns=()
+    for dir in "${local_list_dirs[@]}"; do
+        read_pattern_list "$dir/$1-patterns.local"
+        local_patterns+=(${loaded_patterns[@]+"${loaded_patterns[@]}"})
+    done
+}
+
+# load_patterns: check the tracked patterns, read the local lists, and export the four pattern sets and the
 # exemption as GUARD_* variables for the awk scanners, which read them through ENVIRON so that no escape sequence is
 # rewritten on the way in. An absent local list exports an empty set, which matches nothing.
 load_patterns() {
@@ -92,10 +111,10 @@ load_patterns() {
     GUARD_ALWAYS_RE=$(join_patterns "${ALWAYS_PATTERNS[@]}")
     GUARD_ALWAYS_LIST=$(printf '%s\n' "${ALWAYS_PATTERNS[@]}")
     GUARD_IDENTITY_RE=$(join_patterns "${IDENTITY_PATTERNS[@]}")
-    read_pattern_list "$local_always_list"
-    GUARD_LOCAL_ALWAYS_RE=$(join_patterns ${loaded_patterns[@]+"${loaded_patterns[@]}"})
-    read_pattern_list "$local_identity_list"
-    GUARD_LOCAL_IDENTITY_RE=$(join_patterns ${loaded_patterns[@]+"${loaded_patterns[@]}"})
+    read_local_lists always
+    GUARD_LOCAL_ALWAYS_RE=$(join_patterns ${local_patterns[@]+"${local_patterns[@]}"})
+    read_local_lists identity
+    GUARD_LOCAL_IDENTITY_RE=$(join_patterns ${local_patterns[@]+"${local_patterns[@]}"})
     GUARD_IDENTITY_EXEMPT_RE="$IDENTITY_EXEMPT_RE"
     GUARD_LOCAL_IDENTITY_EXEMPT_RE="$LOCAL_IDENTITY_EXEMPT_RE"
     GUARD_ALWAYS_EXEMPT_RE="$ALWAYS_EXEMPT_RE"
