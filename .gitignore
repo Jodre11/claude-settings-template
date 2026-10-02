@@ -7,7 +7,7 @@ config.env
 
 # Generated files (produced by hydrate.sh from .tmpl templates)
 settings.json
-CLAUDE.md
+/CLAUDE.md
 scripts/_aws-sso-common.sh
 skills/datadog-log-link/SKILL.md
 # A temp file hydrate.sh left behind (it removes them on every exit it sees; SIGKILL or power loss can leave one).

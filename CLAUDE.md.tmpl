@@ -19,64 +19,28 @@ These are two distinct edits in two distinct git repos with two distinct push ta
 
 If genuinely ambiguous, ask.
 
-# Global Settings
+# Config repos
 
-This directory (`~/.claude`) is a git repo (`claude-settings`). Commit and push changes when
-editing files here. The repo is cloned independently on each machine (macOS, Windows, WSL, Linux).
-
-## Cross-Platform Architecture
-
-- **`settings.json`** (untracked; generated per machine by `hydrate.sh` from `settings.json.tmpl`) —
-  cross-platform settings. All paths use `~` (expanded by Claude Code for permissions, by bash for
-  hooks/statusLine). Never put absolute or `$HOME` paths here — except `awsAuthRefresh`, which is
-  written by `setup-platform.sh` (see below).
-- **`settings.local.json`** — Claude Code only reads this at the **project** level
-  (`<project>/.claude/settings.local.json`), NOT at the user level (`~/.claude/settings.local.json`).
-  Do not put user-level settings here — they will be silently ignored.
-- **`awsAuthRefresh`** — written into `settings.json` by `scripts/setup-platform.sh` with a
-  platform-specific absolute path. On Windows, Claude Code passes this to CMD (not bash), so `~`
-  and `$HOME` do not expand — the script wraps it with Git Bash and uses absolute Windows paths.
-  On macOS/Linux/WSL it goes through bash so absolute paths work directly. `settings.json` is
-  gitignored, so the per-machine value never reaches git.
-- **Hook scripts** — use `#!/usr/bin/env bash` shebangs. Claude Code runs hook commands through
-  bash on all platforms, so `~` and `$HOME` expand correctly in hook `command` values.
-- After cloning on a new machine, run `~/.claude/hydrate.sh --force`, then
-  `bash ~/.claude/scripts/setup-platform.sh`
-
-## Custom Tools
-
-`~/.claude/tools/` contains source for custom CLI utilities. These are version-controlled but must
-be compiled and installed on a new machine:
-
-- `md2clip` — converts Markdown to rich-text HTML and copies to macOS clipboard (used by
-  `md-to-clipboard` skill). Install: `ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip`
-  - Default target is Teams. `--outlook` keeps `<p>` spacing and adds table borders, which
-    Teams strips and Outlook requires. `--debug` prints the HTML instead of copying.
-  (macOS only)
-
-## Related Repositories
-
-- [dotfiles](__DOTFILES_REPO_URL__) (`~/dotfiles`) — macOS dotfiles managed with
-  GNU Stow. Config files are symlinked into `~`, so edits to e.g. `~/.zshrc` modify the dotfiles
-  repo. After changing any dotfile, remind the user to commit and push in `~/dotfiles`. After
-  installing or removing a Homebrew package, remind the user to regenerate the Brewfile:
-  `brew bundle dump --file=~/dotfiles/Brewfile --force`
-  **Important:** `brew bundle dump` only includes packages currently installed via Homebrew. It
-  silently drops entries for packages installed by other means (e.g. Docker Desktop, Chrome,
-  JetBrains Toolbox). After regenerating, diff the Brewfile and restore any removed entries that
-  were intentionally kept for new-machine provisioning.
+- **Generated files.** A file with a `.tmpl` sibling is a hydrated output: edit the `.tmpl`, preview with
+  `hydrate.sh --diff`, apply (`~/.claude`: `scripts/apply-settings.sh`; `~/dotfiles`: `hydrate.sh`), commit the
+  `.tmpl`. A direct edit to an output (`settings.json`, `CLAUDE.md`, `~/.zshrc`, `~/.gitconfig`) is lost or
+  reverted. Hydrate merges settings: delete a key or entry via `__remove__` in the `.tmpl`.
+- **Local overlays.** Personal additions go in `~/.gitconfig.local` or `~/.ssh/config.local`, never in a `.tmpl`.
+- **Memory writes.** Never put secret-shaped values (account IDs, registry hosts, ARNs, key material, tokens) in
+  memory files: write a placeholder such as `<aws-account-id>` or omit the detail.
+- **dotfiles.** [dotfiles](__DOTFILES_REPO_URL__) (`~/dotfiles`) is managed with GNU Stow: stowed files are symlinks
+  into `~/dotfiles`, so after editing one, commit and push there. After installing or removing a Homebrew package,
+  regenerate the Brewfile as `~/dotfiles/CLAUDE.md` describes.
 
 # Preferences
 
 ## Code Style
 - Indentation: 4 spaces
 - Max line length: 120 characters
-- Add .gitignore for build artifacts and IDE files
-- Add .gitattributes to control line endings cross-platform
-- Add .editorconfig for cross-IDE consistency
-- Follow SOLID design principles
-- Add header comments to public/exported functions
-- Add comments to cognitively complex code
+- Comments: a brief summary doc comment on public/exported APIs; elsewhere only a non-obvious why. This overrides
+  the harness's no-comments default for public APIs only.
+- When creating a new repository, add `.gitignore` (build artefacts, IDE files), `.gitattributes` (line endings) and
+  `.editorconfig`.
 
 ## Argument/Parameter Formatting
 - All arguments/parameters on same line, OR each on its own line (including first)
@@ -99,22 +63,12 @@ be compiled and installed on a new machine:
 - Be terse, formal, direct
 - I am an experienced expert software engineer
 
-## Behavior
+## Behaviour
 - Don't guess. If unsure, search using MCPs, the `web-search` skill, or ask the user
-- When you need URLs, documentation, or current information: use the `web-search` skill rather
-  than guessing or declining. It queries a SearXNG instance (set SEARXNG_URL — see README) — no API key, no tracking.
-
-## Handover workflow
-- When a superpowers phase completes (the end of brainstorming, planning, or an
-  implementation phase) and it is a natural point to reset context, proactively
-  offer `/handover` — do not offer it at arbitrary stopping points, only at these
-  phase seams.
-- `/handover` writes a handover artifact (status/mode/fingerprint + done/next/
-  verify) and pauses for the user to review before they `/clear` or restart.
-- A SessionStart hook detects an active handover for the cwd and instructs the
-  fresh session to `/rehydrate`: read it, reconcile against the working tree, and
-  resume on a clean match or ask on contradiction. Never resume on the handover's
-  say-so without reconciling — the repo is ground truth, the handover is a snapshot.
+- When you need URLs, documentation or current information, use the `web-search` skill rather than guessing or
+  declining; it queries `$SEARXNG_URL` (see the README).
+- When a superpowers phase completes (end of brainstorming, planning or an implementation phase) and it is a natural
+  point to reset context, offer `/handover` — only at these phase seams.
 
 ## Repo Housekeeping (always while we're here)
 
@@ -146,13 +100,9 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 - Clean up your temp files when no longer needed (OS also cleans on reboot)
 - NEVER use `/var/folders/`, `$TMPDIR`, or bare `/tmp/` without the `claude-<session_id>` subdirectory
 
-## Modes & long-running tasks
-- The interactive session has three modes (toggled with Shift+Tab): **default** (prompts on each
-  tool use), **accept-edits** (auto-approves Write/Edit), and **plan** (read-only, no Write/Edit/Bash).
-  Plan mode is the default I usually start in — Shift+Tab cycles through modes
-- For long-running Bash commands or Agent dispatches that don't gate the next step, prefer
-  `run_in_background: true` — the system notifies on completion so I don't have to poll. Reserve
-  foreground execution for cases where the result must inform the very next tool call
+## Background work
+- Run long Bash commands and agent dispatches that don't gate the next step with `run_in_background: true`; you are
+  notified on completion.
 
 ## Agents
 - Always set the `name` parameter when dispatching agents via the Agent tool
@@ -187,12 +137,11 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision
 - Fall back to Grep/Glob for discovery, broad text searches, config files, and non-code files
-- Languages with LSP support enabled in this stack: **C#** (`roslyn-lsp`, wrapping Microsoft's `roslyn-language-server`), **TypeScript/JavaScript** (`typescript-lsp`), **Python** (`pyright-lsp`), **Lua** (`lua-lsp`). Other languages fall back to Grep/Glob
-- If LSP calls fail or no language server is available for the current language, inform the user and suggest installing one
+- If LSP calls fail or no language server serves the language, say so and suggest installing one
 
 ## Playwright
 - Prefer the `playwright-cli` skill over `mcp__playwright__*` tools — it is less token expensive
-- The Playwright Chrome extension is installed, enabling the CLI to connect to an existing Chrome browser instance
+- If the Playwright Chrome extension is installed, the CLI can attach to an existing Chrome
 
 ## Git
 - Do not add Co-Authored-By trailers to commits
@@ -202,18 +151,3 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
   sequence of related PRs, and why the change is needed now. Write this for a non-technical
   audience. Follow this with the detailed technical list of changes, including links to
   related PRs where informative or clarifying.
-
-## Code Inspection (C#)
-- After editing C# files, run JetBrains InspectCode to check for issues beyond build warnings:
-  ```bash
-  jb inspectcode <solution> --output=${CLAUDE_TEMP_DIR}/inspectcode-output.xml --format=Xml --severity=WARNING
-  ```
-- Parse the XML output; fix any `<Issue>` elements before finishing
-
-## C#
-- Use source-generated logging (`[LoggerMessage]` attribute) instead of string interpolation for all logging calls
-- Use **System.Text.Json** with source-generated serialization (AOT compatible)
-
-### Testing
-- Use **Verify.XunitV3** for snapshot testing
-- Use **WireMock.Net** for API/HTTP mocking
