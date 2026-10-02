@@ -60,7 +60,8 @@ IDENTITY_PATTERNS=(
 )
 
 # Paths exempt from IDENTITY_PATTERNS: Claude Code's per-project memory, which names real organisations and
-# repositories by design. Secret-shaped values still bite there.
+# repositories by design. .gitignore keeps it out of git, so the exemption applies only once a private repository
+# opts in there; a public one must not. Secret-shaped values still bite there.
 IDENTITY_EXEMPT_RE='^projects/[^/]+/memory/'
 
 # Paths exempt from identity-patterns.local: the same memory directories.

@@ -62,6 +62,11 @@ projects/*/sessions-index.json
 projects/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*/
 projects/*/.session-aliases
 
+# Claude Code's per-project memory names real organisations, repositories and people, and the git hooks exempt it from
+# the identity scan. To version it in a PRIVATE repository, uncomment the opt-in line; never in a public one.
+projects/*/memory/
+# !projects/*/memory/
+
 # Cached images
 image-cache/
 
