@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the commit side of the git leak guards: .githooks/pre-commit, the local pattern lists it reads,
-# .gitleaks.toml, and the CI check scripts under tests/ that keep them consistent. The helpers and fixtures are in
+# .gitleaks.toml, and tests/test-pattern-sync.sh, which keeps them consistent. The helpers and fixtures are in
 # tests/guard-test-lib.sh, so this file carries no literal the guards flag. Bash 3.2 compatible.
 # Run: bash tests/test-git-guards.sh
 # shellcheck disable=SC2154  # the fixtures, rc, out, repo_root and tmp come from guard-test-lib.sh
@@ -208,6 +208,79 @@ for name in identity-patterns.local always-patterns.local Identity-Patterns.loca
     check "pre-commit refuses to commit .githooks/$name, even with the bypass" 1 "$rc"
     check_match "the refusal names the local list" 'machine-local pattern list' "$out"
 done
+
+# --- LOCAL_IDENTITY_IGNORE: a repository disregards the local identity patterns it names exactly, and nothing else
+d=$(new_repo)
+with_list "$d" identity "$local_word"
+with_ignore "$d" "$local_word"
+commit_line "$d" notes.md "see $local_word"
+check "a local identity pattern LOCAL_IDENTITY_IGNORE names does not bite" 0 "$rc"
+d=$(new_repo)
+with_list "$d" identity "$local_word" "$other_word"
+with_ignore "$d" "$local_word"
+commit_line "$d" notes.md "see $local_word and $other_word"
+check "another local identity pattern on the same line still bites" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+for near in "${local_word}x" "${local_word%?}" "$(printf '%s' "$local_word" | tr '[:lower:]' '[:upper:]')"; do
+    d=$(new_repo)
+    with_list "$d" identity "$local_word"
+    with_ignore "$d" "$near"
+    commit_line "$d" notes.md "see $local_word"
+    check "an ignore entry that is not the pattern's exact text drops nothing: $near" 1 "$rc"
+    check_match "that rejection comes from the pattern scan: $near" 'sensitive pattern detected' "$out"
+done
+d=$(new_repo)
+with_ignore "$d" "$local_word"
+commit_line "$d" notes.md "clean line"
+check "an ignore entry with no local list to match commits" 0 "$rc"
+named=$(grep -c -e LOCAL_IDENTITY_IGNORE -e "$local_word" <<<"$out" || true)
+check "and the hook says nothing about the unmatched entry" 0 "$named"
+d=$(new_repo)
+with_list "$d" always "$local_id"
+with_ignore "$d" "$local_id"
+commit_line "$d" notes.md "profile|$local_id|role"
+check "LOCAL_IDENTITY_IGNORE cannot drop an always-patterns.local pattern" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+d=$(new_repo)
+with_ignore "$d" "$handle"
+commit_line "$d" notes.md "see $handle"
+check "LOCAL_IDENTITY_IGNORE cannot drop a tracked identity pattern" 1 "$rc"
+check_match "the pattern scan, not gitleaks alone, still refuses it" 'sensitive pattern detected' "$out"
+d=$(new_repo)
+awk '/^LOCAL_IDENTITY_IGNORE=\(/ { skip = 1 } !skip { print } skip && /\)$/ { skip = 0 }' \
+    "$d/.githooks/guard-config.sh" >"$d/guard-config.sh.new"
+mv "$d/guard-config.sh.new" "$d/.githooks/guard-config.sh"
+git -C "$d" add .githooks/guard-config.sh
+git -C "$d" -c core.hooksPath=/dev/null commit -q --allow-empty -m "a guard-config.sh from before LOCAL_IDENTITY_IGNORE"
+with_list "$d" identity "$local_word"
+commit_line "$d" notes.md "see $local_word"
+check "a guard-config.sh with no LOCAL_IDENTITY_IGNORE still applies every local identity pattern" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
+d=$(new_repo)
+printf '%s\r\n' "$local_word" >"$d/.githooks/identity-patterns.local"
+with_ignore "$d" "$local_word"
+commit_line "$d" notes.md "see $local_word"
+check "LOCAL_IDENTITY_IGNORE matches a CRLF list's line once its CR is stripped" 0 "$rc"
+d=$(new_repo)
+with_list "$d" identity 'a\sb' "$local_word"
+with_ignore "$d" 'a\sb'
+commit_line "$d" notes.md "clean line"
+check "an ignored local pattern awk cannot match as written still stops the commit" 1 "$rc"
+check_match "that rejection names the unmatchable pattern" 'awk cannot match as written' "$out"
+d=$(new_repo)
+with_list "$d" identity "$local_word"
+with_ignore "$d" "$local_word"
+git -C "$d" worktree add -q -b wt "$d-wt"
+commit_line "$d-wt" notes.md "see $local_word"
+check "LOCAL_IDENTITY_IGNORE applies to the main worktree's lists in a linked worktree" 0 "$rc"
+
+# --- an empty tracked array still scans the rest, and a hook that aborts refuses, under bash 3.2 too
+d=$(new_repo)
+with_empty "$d" ALWAYS_PATTERNS IDENTITY_PATTERNS
+with_list "$d" identity "$local_word"
+commit_line "$d" notes.md "see $local_word"
+check "pre-commit with empty tracked pattern arrays still applies the local lists" 1 "$rc"
+check_match "that rejection comes from the pattern scan" 'sensitive pattern detected' "$out"
 
 # --- gitleaks: no bypass, built-ins on, targeted allowlists
 if have_gitleaks "gitleaks rows"; then
@@ -669,48 +742,10 @@ rm "$d/.githooks/guard-config.sh"
 run_sync "$d"
 check_match "pattern sync fails when it finds no pattern source" 'no pattern source found' "$out"
 
-# --- output-ignore
-# ignore_repo <gitignore-line>...: a scratch repo holding the output-ignore script, a tracked a.conf.tmpl and a
-# .gitignore of the given lines; print its path.
-ignore_repo() {
-    local d
-    d=$(mktemp -d "$tmp/ignore.XXXXXX")
-    git -C "$d" init -q
-    mkdir -p "$d/tests"
-    cp "$repo_root/tests/test-output-ignore.sh" "$d/tests/"
-    printf 'x=__X__\n' >"$d/a.conf.tmpl"
-    printf '%s\n' "$@" >"$d/.gitignore"
-    git -C "$d" add tests a.conf.tmpl .gitignore
-    printf '%s\n' "$d"
-}
-
-# run_ignore <tree>: run <tree>/tests/test-output-ignore.sh; set rc and out.
-run_ignore() {
-    rc=0
-    out=$(bash "$1/tests/test-output-ignore.sh" 2>&1) || rc=$?
-}
-
-all_ignored=(a.conf config.env /.githooks/identity-patterns.local /.githooks/always-patterns.local)
-run_ignore "$repo_root"
-check "every tracked template's output, config.env and the local lists are ignored here" 0 "$rc"
-run_ignore "$(ignore_repo "${all_ignored[@]}")"
-check "output-ignore passes when everything is ignored and untracked" 0 "$rc"
-run_ignore "$(ignore_repo config.env /.githooks/identity-patterns.local /.githooks/always-patterns.local)"
-check_match "output-ignore catches a template output that is not ignored" 'not gitignored: a\.conf' "$out"
-d=$(ignore_repo "${all_ignored[@]}")
-printf 'x=1\n' >"$d/a.conf"
-git -C "$d" add -f a.conf
-run_ignore "$d"
-check_match "output-ignore catches a tracked template output" 'tracked, though it must never be committed: a\.conf' \
-    "$out"
-run_ignore "$(ignore_repo a.conf /.githooks/identity-patterns.local /.githooks/always-patterns.local)"
-check_match "output-ignore requires config.env to be ignored" 'not gitignored: config\.env' "$out"
-run_ignore "$(ignore_repo a.conf config.env /.githooks/identity-patterns.local)"
-check_match "output-ignore requires the local lists to be ignored" 'not gitignored: \.githooks/always-patterns\.local' \
-    "$out"
-d=$(ignore_repo "${all_ignored[@]}")
-git -C "$d" rm -q --cached a.conf.tmpl
-run_ignore "$d"
-check_match "output-ignore fails when no template is tracked" 'no tracked \*\.tmpl found' "$out"
+# --- the suites' own harness: a suite that aborts mid-run must not exit 0, under bash 3.2 too
+rc=0
+bash -c 'set -euo pipefail; source "$1"; : "$guard_no_such_variable"' _ "$repo_root/tests/guard-test-lib.sh" \
+    >/dev/null 2>&1 || rc=$?
+check "a suite that aborts on an unset variable exits non-zero" 1 "$rc"
 
 finish

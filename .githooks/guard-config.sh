@@ -66,6 +66,11 @@ IDENTITY_EXEMPT_RE='^projects/[^/]+/memory/'
 # Paths exempt from identity-patterns.local: the same memory directories.
 LOCAL_IDENTITY_EXEMPT_RE="$IDENTITY_EXEMPT_RE"
 
+# Patterns of identity-patterns.local this repository disregards on every path, for a marker that is its own public
+# identity. Each entry is the exact text of one line of that list; an entry that matches no line drops nothing, so a
+# changed pattern bites again. always-patterns.local and the tracked patterns cannot be opted out of. None here.
+LOCAL_IDENTITY_IGNORE=()
+
 # Paths the built-ins pass skips: the secret firewall's pattern library, its tests' dummy vectors and its design doc,
 # which necessarily match gitleaks' built-in rules and which .gitleaks.toml exempts from every rule. None holds a real
 # credential. Each is named exactly, so a new file gets no exemption until it is added here, and to .gitleaks.toml, in

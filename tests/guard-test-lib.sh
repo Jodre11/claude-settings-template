@@ -1,13 +1,14 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # the suites that source this file read its fixtures, rc and out
-# Shared helpers for the git leak guard suites, tests/test-git-guards.sh and tests/test-pre-push.sh: pass and fail
-# bookkeeping, fixtures assembled at run time, and scratch repos that run copies of the tracked guard files under an
-# isolated git config, so this repository, any local pattern list on this machine and the user's git config are never
-# touched. Sourced, never run. Bash 3.2 compatible.
+# Shared helpers for the git leak guard suites, the tests/test-*.sh files that source it: pass and fail bookkeeping,
+# fixtures assembled at run time, and scratch repos that run copies of the tracked guard files under an isolated git
+# config, so this repository, any local pattern list on this machine and the user's git config are never touched.
+# Sourced, never run. Bash 3.2 compatible.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# Under an EXIT trap, bash 3.2 exits 0 when an unset variable aborts the suite; suite_done makes that exit 1.
+trap 'rm -rf "$tmp"; if [ "${suite_done:-0}" != 1 ]; then exit 1; fi' EXIT
 export GIT_CONFIG_GLOBAL="$tmp/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
 git config --global user.email test@example.invalid
@@ -92,6 +93,7 @@ key=$(printf '%s%s%s' AKIA QWERTYUI OPASDFGH)
 placeholder=$(printf '%s%s' 123456 789012)
 profile="application-inference-profile/$(printf '%s%s' abcdef 012345)"
 local_word="qzv$(printf '%s' localmarker)"
+other_word="qzv$(printf '%s' othermarker)"
 local_id=$(printf '%012d' 31337)
 memory=projects/p/memory/m.md
 memory_rc=$(exempt_rc "$memory" "$IDENTITY_EXEMPT_RE")
@@ -157,6 +159,44 @@ with_list() {
     printf '%s\n' "$@" >"$d/.githooks/$kind-patterns.local"
 }
 
+# with_ignore <repo> <entry>...: set <repo>'s LOCAL_IDENTITY_IGNORE to the entries, each single-quoted as written, and
+# commit guard-config.sh with the hooks off, so its staged and committed copies are the one the hooks read.
+with_ignore() {
+    local d="$1" entry
+    shift
+    {
+        printf '%s\n' 'LOCAL_IDENTITY_IGNORE=('
+        for entry in "$@"; do
+            printf "    '%s'\n" "$entry"
+        done
+        printf '%s\n' ')'
+    } >>"$d/.githooks/guard-config.sh"
+    git -C "$d" add .githooks/guard-config.sh
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m "set LOCAL_IDENTITY_IGNORE"
+}
+
+# with_empty <repo> <array>...: empty each named array in <repo>'s guard-config.sh and commit it with the hooks off.
+with_empty() {
+    local d="$1" name
+    shift
+    for name in "$@"; do
+        NAME="$name" awk '$0 == ENVIRON["NAME"] "=(" { print ENVIRON["NAME"] "=()"; skip = 1; next }
+            skip { if ($0 == ")") skip = 0; next } { print }' "$d/.githooks/guard-config.sh" >"$d/guard-config.sh.new"
+        mv "$d/guard-config.sh.new" "$d/.githooks/guard-config.sh"
+    done
+    git -C "$d" add .githooks/guard-config.sh
+    git -C "$d" -c core.hooksPath=/dev/null commit -q -m "empty $*"
+}
+
+# without_setting <repo> <name>: delete the line assigning <name> from <repo>'s guard-config.sh, as in a fork whose
+# copy predates that setting, and commit it with the hooks off.
+without_setting() {
+    NAME="$2" awk 'index($0, ENVIRON["NAME"] "=") != 1' "$1/.githooks/guard-config.sh" >"$1/guard-config.sh.new"
+    mv "$1/guard-config.sh.new" "$1/.githooks/guard-config.sh"
+    git -C "$1" add .githooks/guard-config.sh
+    git -C "$1" -c core.hooksPath=/dev/null commit -q -m "drop $2"
+}
+
 # try_listed <kind> <list-line> <path> <line> [VAR=value...]: in a fresh scratch repo whose <kind> local list holds
 # <list-line>, commit <line> at <path>; set rc and out.
 try_listed() {
@@ -182,6 +222,7 @@ scan_ids() {
 
 # finish: print the summary and exit 1 when any check failed.
 finish() {
+    suite_done=1
     echo ""
     echo "$((passes + failures + skips)) checks: $passes passed, $failures failed, $skips skipped"
     if [[ $failures -gt 0 ]]; then
