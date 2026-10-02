@@ -97,8 +97,12 @@
       "Bash(git *core.hooksPath*)",
       "Bash(git *core.hookspath*)",
       "Bash(git *--no-gpg-sign*)",
-      "Bash(git *gpgsign*)",
-      "Bash(git *gpgSign*)",
+      "Bash(git *gpgsign=*)",
+      "Bash(git *gpgSign=*)",
+      "Bash(git *gpgsign * *)",
+      "Bash(git *gpgSign * *)",
+      "Bash(git *unset*gpgsign*)",
+      "Bash(git *unset*gpgSign*)",
       "Bash(gh pr merge*)",
       "Bash(gh pr close *--delete-branch*)",
       "Bash(gh pr close -d*)",
@@ -265,6 +269,12 @@
             "command": "~/.claude/hooks/secret-bash-guard.sh",
             "timeout": 5,
             "statusMessage": "Screening for secrets..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/git-signing-ask.sh",
+            "timeout": 5,
+            "statusMessage": "Checking git signing..."
           }
         ]
       },
@@ -398,6 +408,10 @@
         "Bash(cp *)",
         "Bash(curl *)",
         "Write(//tmp/claude-**)"
+      ],
+      "permissions.ask": [
+        "Bash(git *gpgsign*)",
+        "Bash(git *gpgSign*)"
       ]
     }
   }
