@@ -23,8 +23,11 @@ If genuinely ambiguous, ask.
 
 - **Generated files.** A file with a `.tmpl` sibling is a hydrated output: edit the `.tmpl`, preview with
   `hydrate.sh --diff`, apply (`~/.claude`: `scripts/apply-settings.sh`; `~/dotfiles`: `hydrate.sh`), commit the
-  `.tmpl`. A direct edit to an output (`settings.json`, `CLAUDE.md`, `~/.zshrc`, `~/.gitconfig`) is lost or
-  reverted. Hydrate merges settings: delete a key or entry via `__remove__` in the `.tmpl`.
+  `.tmpl`; paths in `settings.json.tmpl` use `~`, never absolute or `$HOME`. A direct edit to an output (`CLAUDE.md`,
+  `~/.zshrc`, `~/.gitconfig`) is lost on the next hydrate. `settings.json` is exempt: a direct edit stays on this
+  machine only (`hooks` excepted) and never reaches git. Hydrate merges settings: delete a key or entry
+  via `__remove__` in the `.tmpl`.
+- **Commits.** After editing a tracked file in `~/.claude`, commit it by explicit path (not memory files) and push.
 - **Local overlays.** Personal additions go in `~/.gitconfig.local` or `~/.ssh/config.local`, never in a `.tmpl`.
 - **Memory writes.** Never put secret-shaped values (account IDs, registry hosts, ARNs, key material, tokens) in
   memory files: write a placeholder such as `<aws-account-id>` or omit the detail.
