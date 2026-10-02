@@ -122,7 +122,7 @@ paths = [
 ]
 
 # Claude Code's per-project memory names real organisations and repositories by design: exempt from the identity
-# rules only, as the hooks exempt it.
+# rules only, as the hooks exempt it. .gitignore keeps it out of git unless a private repository opts in.
 [[allowlists]]
 description = "Auto-memory directories carry organisation identity"
 targetRules = ["org-sso-url", "org-ad-path", "org-name", "org-internal-project", "personal-identity"]
