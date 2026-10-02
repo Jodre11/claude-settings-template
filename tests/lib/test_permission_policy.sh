@@ -70,7 +70,45 @@ test_permission_policy_ask_git() {
         'git push --no-verify' 'git -C /r commit --no-verify -F /tmp/m' 'git config core.hooksPath /dev/null' \
         'git -c core.hookspath=/dev/null commit -m x' 'git commit --no-gpg-sign -m x' \
         'git -c commit.gpgsign=false commit -m x' 'git config commit.gpgSign false' \
-        'git config --global commit.gpgsign false'
+        'git config --global commit.gpgsign false' 'git -C /r -c tag.gpgSign=0 tag -a v1' \
+        'git --config-env=commit.gpgsign=V commit -m x' 'git config set commit.gpgsign false' \
+        'git config --unset commit.gpgsign' 'git config --unset-all tag.gpgSign' 'git config unset commit.gpgsign'
+}
+
+# A trailing " *" also matches the bare command, so the config-write rules end "gpgsign * *": a space must follow the
+# key, and a read that ends at the key stays quiet.
+test_permission_policy_signing_reads_do_not_prompt() {
+    local cmd hits=""
+    for cmd in 'git config --get commit.gpgsign' 'git -C /r config --get rebase.gpgSign' 'git config commit.gpgsign' \
+            'git -C /r config --get-regexp commit.gpgsign|gpg.format|user.signingkey' 'git config --list' \
+            'git commit -S -m x'; do
+        if _pp_hit ask "$cmd"; then
+            hits+=" [$cmd]"
+        fi
+    done
+    assert_equals "" "$hits" "reading the signing setting hits no ask rule"
+}
+
+# A fork hydrated from an older version of this template holds the broad signing ask rules, which also fired on
+# reads; the hydrate must drop them and keep the fork's own ask rules.
+test_permission_policy_old_signing_ask_rules_go() {
+    local rule tmp
+    for rule in 'Bash(git *gpgsign*)' 'Bash(git *gpgSign*)'; do
+        assert_equals true "$(_pp_in '.__remove__.entries["permissions.ask"]' "$rule")" \
+            "__remove__ drops the live over-matching $rule"
+    done
+    tmp=$(mktemp -d)
+    _hy_fixture "$tmp"
+    cp "$REPO_ROOT/settings.json.tmpl" "$tmp/settings.json.tmpl"
+    printf '%s\n' '{"permissions":{"ask":["Bash(git *gpgsign*)","Bash(git *gpgSign*)","Bash(local-only *)"]}}' \
+        >"$tmp/settings.json"
+    _hy_run "$tmp" --force
+    assert_equals 0 "$HY_RC" "the real tmpl hydrates over a live file holding the old signing ask rules"
+    assert_equals '[]' "$(_hy_q "$tmp" '[.permissions.ask[] | select(IN("Bash(git *gpgsign*)",
+        "Bash(git *gpgSign*)"))]')" "the over-matching signing ask rules are gone"
+    assert_equals true "$(_hy_q "$tmp" '.permissions.ask | index("Bash(local-only *)") != null')" \
+        "a local-only ask rule is kept"
+    rm -rf "$tmp"
 }
 
 test_permission_policy_ask_gh() {

@@ -16,6 +16,7 @@ sensitive values out of version control.
 | `reviewer-guard.sh` | Denies mutating git commands to read-only code-review agents |
 | `settings-edit-ask.sh` | Asks before a direct Edit/Write of `settings.json`, which is generated from `settings.json.tmpl` |
 | `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context; screens every pipeline stage |
+| `git-signing-ask.sh` | Asks before a Bash command overrides or removes git signing, in any key spelling; reads of the setting pass |
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
 | `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
