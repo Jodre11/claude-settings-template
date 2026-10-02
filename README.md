@@ -1,6 +1,6 @@
 # Claude Settings Template
 
-Fork-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) harness configuration —
+A GitHub template for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) harness configuration —
 hooks, scripts, tools, and settings with a `config.env` placeholder strategy for keeping
 sensitive values out of version control.
 
@@ -66,9 +66,11 @@ See [Handover workflow](#handover-workflow) for how these fit together.
 
 ## Getting Started
 
-### 1. Fork and clone
+### 1. Create a private copy and clone it
 
-Fork this repo, then clone it as `~/.claude`:
+On GitHub, choose **Use this template → Create a new repository** and set its visibility to
+**Private**. Do not fork: a fork of a public repository is public, and your copy will come to hold
+your own organisation names, accounts and paths. Then clone it as `~/.claude`:
 
 ```bash
 # Back up existing ~/.claude if present
@@ -77,6 +79,14 @@ Fork this repo, then clone it as `~/.claude`:
 git clone git@github.com:youruser/claude-settings.git ~/.claude
 cd ~/.claude
 ```
+
+Claude Code's per-project memory (`projects/*/memory/`) names real organisations, repositories
+and people, so `.gitignore` keeps it out of git. To version it, keep the repository private and
+uncomment the opt-in line in `.gitignore`.
+
+A template copy shares no history with this repository. To take later updates, add it as a
+remote named `template` (the pre-push hook refuses pushes to it); the first merge needs
+`--allow-unrelated-histories`.
 
 ### 2. Configure
 
