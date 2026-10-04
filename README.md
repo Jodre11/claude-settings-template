@@ -41,7 +41,7 @@ workflow runs it on every push to `main`, every pull request into `main`, and on
 | `sso-cache-check.py` | AWS SSO cache walker for token validity checks |
 | `statusline.sh` | Two-row status line renderer; segments self-hide when their payload data is absent |
 | `tests/statusline-test.sh` | Fixture-driven tests for `statusline.sh` (run directly, no framework) |
-| `handover-path.sh` | Resolves the handover-artifact path for the cwd (git root or cwd key); shared by `/handover` and `/rehydrate` |
+| `handover-path.sh` | Resolves the handover-artifact path for the cwd (main-worktree root or cwd key); shared by `/handover` and `/rehydrate` |
 
 ### Skills
 
@@ -171,7 +171,9 @@ with a write-once / verify-on-resume handover:
    - drift that contradicts it (work already done, tests now green) → stop and
      ask. It always discloses which reconciliation mode it used.
 
-**Reconciliation modes.** Inside a git repo the key is the repo root and
+**Reconciliation modes.** Inside a git repo the key is the main worktree's root,
+so a subdirectory or a linked worktree shares the repo's one handover (a key on
+a worktree's own path would be orphaned once the worktree is removed), and
 reconciliation is the working-tree fingerprint check. Outside a repo (a parent
 dir like `~/Repos`, or `$HOME`) the key is the cwd path and reconciliation
 degrades to trust-the-file — rehydrate reads the files the handover names and
