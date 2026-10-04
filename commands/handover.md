@@ -80,9 +80,8 @@ reading code or git log>
 2. **Stop and let them review it** — do not auto-clear or end the session. The
    handover being lossy is the one risk that warrants a human check; a few
    seconds of review is the point.
-3. Tell them: review, then `/clear` (or restart to pick up an update); the
-   SessionStart hook will detect the handover and prompt the fresh session to
-   `/rehydrate`.
+3. Tell them: review, then `/clear` (or restart to pick up an update) and run
+   `/rehydrate` in the fresh session.
 
 Do not retire or mark anything `consumed` here — that happens at `/rehydrate`
 time when the work is confirmed done.
