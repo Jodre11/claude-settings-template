@@ -20,7 +20,7 @@ sensitive values out of version control.
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
 | `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
 | `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID` to Bash |
-| `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
+| `handover-detect.sh` | SessionStart: sweeps consumed and stale handovers; injects nothing (you run `/rehydrate`) |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
 | `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |
 
@@ -41,7 +41,7 @@ workflow runs it on every push to `main`, every pull request into `main`, and on
 | `sso-cache-check.py` | AWS SSO cache walker for token validity checks |
 | `statusline.sh` | Two-row status line renderer; segments self-hide when their payload data is absent |
 | `tests/statusline-test.sh` | Fixture-driven tests for `statusline.sh` (run directly, no framework) |
-| `handover-path.sh` | Resolves the handover-artifact path for the cwd (git root or cwd key); shared by the hook and commands |
+| `handover-path.sh` | Resolves the handover-artifact path for the cwd (git root or cwd key); shared by `/handover` and `/rehydrate` |
 
 ### Skills
 
@@ -164,8 +164,7 @@ with a write-once / verify-on-resume handover:
    can pass with no commit). It then pauses for you to review the draft.
 2. **Reset**: `/clear` for a clean context (the working tree is untouched), or
    restart Claude Code to also pick up an update.
-3. **On the fresh session**, the `handover-detect.sh` SessionStart hook spots the
-   active handover and prompts `/rehydrate`. Rehydrate reads the artifact,
+3. **On the fresh session**, run `/rehydrate`. It reads the artifact,
    recomputes the fingerprint, and **reconciles against the working tree**:
    - clean match → resume;
    - drift that's consistent with the handover → resume;

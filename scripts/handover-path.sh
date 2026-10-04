@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # handover-path.sh — Resolve the handover-artifact path for the current working
-# directory. Single source of truth shared by hooks/handover-detect.sh and the
-# /handover + /rehydrate commands so the key rule is defined exactly once.
+# directory. Single source of truth shared by the /handover + /rehydrate
+# commands so the key rule is defined exactly once.
 #
 # Key rule (matches the staleness model — see README "Handover workflow"):
 #   - Inside a git repo: key on `git rev-parse --show-toplevel` so invoking from
