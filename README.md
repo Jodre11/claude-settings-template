@@ -19,7 +19,7 @@ sensitive values out of version control.
 | `git-signing-ask.sh` | Asks before a Bash command overrides or removes git signing, in any key spelling; reads of the setting pass |
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
 | `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
-| `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context |
+| `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID` to Bash |
 | `handover-detect.sh` | SessionStart: sweeps stale handovers, prompts `/rehydrate` when an active one exists for the cwd |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
 | `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |

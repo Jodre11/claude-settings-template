@@ -3,6 +3,7 @@
 # Reads session_id from stdin JSON, creates the session-scoped temp directory,
 # resolves the slug (c-<abbrev>-<4hex>), and emits hookSpecificOutput with
 # sessionTitle + additionalContext.
+# It also exports CLAUDE_SESSION_ID and CLAUDE_TEMP_DIR to Bash commands via $CLAUDE_ENV_FILE.
 #
 # Slug source of truth:
 #   - Inside tmux: the tmux session name set by the zsh wrapper. The wrapper
@@ -15,12 +16,17 @@ set -euo pipefail
 input=$(cat)
 session_id=$(jq -r '.session_id // empty' <<< "$input")
 
-if [[ -z "$session_id" ]]; then
+# Whole-string match: the ID reaches a sourced env file, where a newline would start a new command.
+if [[ ! "$session_id" =~ ^[A-Za-z0-9-]+$ ]]; then
     exit 0
 fi
 
 temp_dir="/tmp/claude-${session_id}"
 mkdir -p "$temp_dir"
+
+if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
+    printf 'export CLAUDE_SESSION_ID=%s CLAUDE_TEMP_DIR=%s\n' "$session_id" "$temp_dir" >> "$CLAUDE_ENV_FILE" || true
+fi
 
 slug=""
 if [[ -n "${TMUX:-}" ]]; then
