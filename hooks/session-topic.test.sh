@@ -14,6 +14,12 @@ pass=0; fail=0
 ok()  { printf 'PASS: %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf 'FAIL: %s\n' "$1"; fail=$((fail + 1)); }
 
+# mkscratch <name>: set the caller's local $d to a new scratch dir; on failure record a FAIL and return 1, so a test
+# never runs with an empty $d and writes beneath /.
+mkscratch() {
+    d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-$1.XXXX") || { bad "$1: mktemp -d failed"; return 1; }
+}
+
 # Build a multi-line transcript >32 KiB so `head -c 32768` cuts the final JSON
 # line mid-object — the real-world case behind the pipefail-abort bug. The first
 # real prompt follows two harness tag-wrapper lines (which must be skipped). Any
@@ -85,7 +91,7 @@ make_claude() {
 # Claude emits a messy multi-line label to prove normalisation and the head -1
 # pipe-close survives pipefail.
 t1() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t1.XXXX")
+    local d; mkscratch t1 || return
     make_tmux "$d" "c-cf-3a9f" ""
     make_claude "$d" "Fix Auth Bug!" "second line ignored"
     make_transcript "$d/transcript.jsonl"
@@ -102,7 +108,7 @@ t1() {
 
 # Test 2: non-slug (manually renamed) session name → no @topic, no claude.
 t2() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t2.XXXX")
+    local d; mkscratch t2 || return
     make_tmux "$d" "fix auth bug" ""
     make_claude "$d" "whatever"
     make_transcript "$d/transcript.jsonl"
@@ -116,7 +122,7 @@ t2() {
 
 # Test 3: recursion guard — CLAUDE_TOPIC_GUESS set → immediate exit before tmux.
 t3() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t3.XXXX")
+    local d; mkscratch t3 || return
     make_tmux "$d" "c-cf-3a9f" ""
     printf '{}' | CLAUDE_TOPIC_GUESS=1 TMUX=fake PATH="$d:$PATH" "$HOOK"
     sleep 1
@@ -127,7 +133,7 @@ t3() {
 
 # Test 4: subagent turn — agent_type present → no work.
 t4() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t4.XXXX")
+    local d; mkscratch t4 || return
     make_tmux "$d" "c-cf-3a9f" ""
     printf '{"agent_type":"Explore","session_id":"s4","transcript_path":"/x","cwd":"/y"}' \
         | TMUX=fake PATH="$d:$PATH" "$HOOK"
@@ -138,7 +144,7 @@ t4() {
 
 # Test 5: idempotency — @topic already set, no real rename → skip, no re-set.
 t5() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t5.XXXX")
+    local d; mkscratch t5 || return
     make_tmux "$d" "c-cf-3a9f" "original topic"
     make_claude "$d" "new guess"
     make_transcript "$d/transcript.jsonl"
@@ -153,7 +159,7 @@ t5() {
 
 # Test 6: not in tmux — $TMUX unset → skip.
 t6() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t6.XXXX")
+    local d; mkscratch t6 || return
     make_tmux "$d" "c-cf-3a9f" ""
     make_claude "$d" "x"
     make_transcript "$d/transcript.jsonl"
@@ -167,7 +173,7 @@ t6() {
 
 # Test 7: manual /rename mirrors into @topic over an existing guess, no claude.
 t7() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t7.XXXX")
+    local d; mkscratch t7 || return
     make_tmux "$d" "c-cf-3a9f" "fix auth bug"
     make_claude "$d" "should not run"
     make_transcript "$d/transcript.jsonl" "$(ctitle c-cf-3a9f)" "$(ctitle carrots)"
@@ -187,7 +193,7 @@ t7() {
 # Test 8: slug-only custom-titles ignored — a resume's sessionTitle=<slug> writes
 # must NOT be treated as a rename (else resume clobbers the user's name).
 t8() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t8.XXXX")
+    local d; mkscratch t8 || return
     make_tmux "$d" "c-cf-3a9f" "fix auth bug"
     make_claude "$d" "should not run"
     make_transcript "$d/transcript.jsonl" "$(ctitle c-cf-3a9f)" "$(ctitle c-cf-3a9f)"
@@ -202,7 +208,7 @@ t8() {
 
 # Test 9: rename equal to existing @topic → no redundant re-set, no claude.
 t9() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t9.XXXX")
+    local d; mkscratch t9 || return
     make_tmux "$d" "c-cf-3a9f" "carrots"
     make_claude "$d" "should not run"
     make_transcript "$d/transcript.jsonl" "$(ctitle carrots)"
@@ -218,7 +224,7 @@ t9() {
 # Test 10: @topic set BUT @topic_provisional=1 → Stop falls through, writes
 # Haiku guess, clears the flag.
 t10() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t10.XXXX")
+    local d; mkscratch t10 || return
     # The fake tmux must report @topic="fix broken auth token" and
     # @topic_provisional="1" from show-options.
     {
@@ -250,7 +256,7 @@ t10() {
 
 # Test 11: manual /rename with provisional flag → mirror rename + clear flag.
 t11() {
-    local d; d=$(mktemp -d "${CLAUDE_TEMP_DIR:-/tmp}/st-t11.XXXX")
+    local d; mkscratch t11 || return
     {
         echo '#!/usr/bin/env bash'
         echo "if [ \"\$1\" = display-message ]; then echo \"c-cf-3a9f\"; fi"
