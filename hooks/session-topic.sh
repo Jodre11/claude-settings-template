@@ -123,8 +123,11 @@ fi
     # early and SIGPIPEs claude (exit 141); pipefail would propagate it and abort
     # the subshell before the write. The `[[ -z "$topic" ]]` guard below still
     # handles a genuinely empty guess.
+    # Isolated: no transcript, hooks, MCP servers or tools. Not `--bare`, which
+    # breaks first-party OAuth.
     topic=$(printf 'project: %s\nfirst message: %s' "$dir_name" "$prompt" \
-        | CLAUDE_TOPIC_GUESS=1 claude -p --model haiku --system-prompt "$sys" 2>/dev/null \
+        | CLAUDE_TOPIC_GUESS=1 claude -p --model haiku --system-prompt "$sys" --no-session-persistence \
+            --settings '{"disableAllHooks":true}' --strict-mcp-config --tools "" 2>/dev/null \
         | head -1 \
         | tr '[:upper:]' '[:lower:]' || true)
     # Normalise: strip anything but lowercase/digits/space, collapse + trim spaces.

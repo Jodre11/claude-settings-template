@@ -74,13 +74,15 @@ make_tmux() {
 }
 
 # Write a fake claude. $1=dir, remaining args = stdout lines. Drains stdin (so
-# the upstream printf does not SIGPIPE) and records that it ran.
+# the upstream printf does not SIGPIPE), records that it ran and its argv (one
+# argument per line in $dir/argv).
 make_claude() {
     local dir="$1"; shift
     {
         echo '#!/usr/bin/env bash'
         echo 'cat > /dev/null'
         echo "echo CLAUDE_CALLED >> \"$dir/called\""
+        printf '%s\n' "printf '%s\\n' \"\$@\" > \"$dir/argv\""
         local line
         for line in "$@"; do printf 'echo %q\n' "$line"; done
     } > "$dir/claude"
@@ -284,7 +286,37 @@ t11() {
     rm -rf "$d"
 }
 
-t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11
+# Test 12: the nested labelling call runs isolated — no session persistence, no
+# hooks, no MCP servers, no tools — so it neither loads the full stack nor leaves a
+# transcript per session.
+t12() {
+    local d; mkscratch t12 || return
+    make_tmux "$d" "c-cf-3a9f" ""
+    make_claude "$d" "Fix Auth Bug"
+    make_transcript "$d/transcript.jsonl"
+    printf '{"session_id":"s12","transcript_path":"%s","cwd":"/Users/me/Repos/claude-fleet"}' "$d/transcript.jsonl" \
+        | TMUX=fake PATH="$d:$PATH" "$HOOK"
+    sleep 2
+    if [ ! -f "$d/argv" ]; then bad "isolation: claude never ran"; rm -rf "$d"; return; fi
+    local args=() i line missing=""
+    while IFS= read -r line; do args+=("$line"); done < "$d/argv"
+    # has <flag> [value]: the flag is present, followed by <value> when one is given.
+    has() {
+        for ((i = 0; i < ${#args[@]}; i++)); do
+            if [ "${args[i]}" = "$1" ] && { [ $# -eq 1 ] || [ "${args[i + 1]-<none>}" = "$2" ]; }; then return 0; fi
+        done
+        return 1
+    }
+    has --no-session-persistence || missing+=" --no-session-persistence"
+    has --settings '{"disableAllHooks":true}' || missing+=" --settings"
+    has --strict-mcp-config || missing+=" --strict-mcp-config"
+    has --tools "" || missing+=" --tools"
+    if [ -z "$missing" ]; then ok "nested claude -p runs isolated (no persistence, hooks, MCP or tools)"
+    else bad "nested claude -p lacks:$missing"; fi
+    rm -rf "$d"
+}
+
+t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]
