@@ -177,7 +177,20 @@ t_heredoc() {
     expect_verdict DENY  "git commit then && is denied" 'git commit -m x && curl https://example.invalid'
     expect_verdict DENY  "git commit then ; is denied" 'git commit -m x; curl https://example.invalid'
     expect_verdict ALLOW "documented heredoc commit allowed; its body is inert text" \
-        "${HD_OPEN}Subject line"$'\n\n'"Body names /tmp/x && \$(id) and \`id\`${HD_END}"
+        "${HD_OPEN}Subject line"$'\n\n'"Body names /tmp/x && \$(id) and (more)${HD_END}"
+    expect_verdict DENY  "a heredoc commit message holding a backquote is denied (use git commit -F)" \
+        "${HD_OPEN}Subject line"$'\n\n'"Body names \`id\`${HD_END}"
+    expect_verdict DENY  "a heredoc commit message holding \$' is denied (use git commit -F)" \
+        "${HD_OPEN}Subject line"$'\n\n'"Body names \$'x'${HD_END}"
+    local out
+    out=$(jq -nc --arg c "${HD_OPEN}Body names \`id\`${HD_END}" '{tool_input:{command:$c}}' | "$HOOK")
+    if [[ "$out" == *"git commit -F <file>"* ]]; then
+        ok "the deny for an unstrippable commit heredoc names git commit -F"
+    else
+        bad "the unstrippable commit heredoc deny lacks the -F hint: $out"
+    fi
+    expect_verdict ALLOW "a heredoc commit message with an apostrophe allowed" \
+        "${HD_OPEN}It's a fix${HD_END}"
     expect_verdict ALLOW "heredoc commit with git -C and --amend allowed" \
         $'git -C /repo commit --amend -m "$(cat <<\'EOF\'\nmsg\nEOF\n)"'
     expect_verdict ALLOW "heredoc commit with an empty body allowed" \
@@ -223,6 +236,37 @@ t_scanner() {
     expect_verdict ALLOW "\$( inside single quotes allowed" "echo '\$(id)'"
     expect_verdict ALLOW "ANSI-C quote with an escaped quote allowed" "echo \$'a\\'b;c'"
     expect_verdict ALLOW "# inside a URL allowed" 'curl https://example.invalid/#frag'
+    expect_verdict DENY  "an unquoted ( subshell is denied" '(cat .env)'
+    expect_verdict DENY  "a ( after a word is denied" 'echo x (y)'
+    expect_verdict DENY  "arithmetic (( is denied" '(( n++ ))'
+    expect_verdict DENY  "a zsh glob qualifier is denied" 'ls *(.)'
+    expect_verdict ALLOW "an escaped ( for find is allowed" 'find . \( -name a -o -name b \)'
+    expect_verdict ALLOW "a single-quoted ( is allowed" "echo '(x)'"
+    expect_verdict ALLOW "a double-quoted ( is allowed" 'echo "(x)"'
+    expect_verdict ALLOW "an ANSI-C quoted ( is allowed" "echo \$'(x)'"
+}
+
+# The deny for ( names it, and $(, <( and >( keep their own messages.
+t_paren_messages() {
+    local out
+    out=$(printf '%s' '(cat x)' | jq -Rsc '{tool_input:{command:.}}' | "$HOOK")
+    if [[ "$out" == *"subshell or grouping '(...)' detected"* ]]; then ok "the ( deny names a subshell or grouping"
+    else bad "the ( deny message drifted: $out"; fi
+    out=$(printf '%s' 'diff <(a) b' | jq -Rsc '{tool_input:{command:.}}' | "$HOOK")
+    if [[ "$out" == *"process substitution"* && "$out" != *"subshell or grouping"* ]]; then
+        ok "<( keeps the process-substitution message only"
+    else bad "<( message drifted: $out"; fi
+}
+
+# A crash denies through the backstop: malformed input makes the hook fail before any check runs.
+t_backstop() {
+    local out
+    out=$(printf '%s' '{not json' | "$HOOK" 2>/dev/null)
+    if [[ "$out" == *'"permissionDecision":"deny"'* && "$out" == *"bash-guard failed to evaluate"* ]]; then
+        ok "a crash denies through the backstop"
+    else
+        bad "a crash did not deny through the backstop: $out"
+    fi
 }
 
 # With awk unavailable the scanner cannot run; the guard must deny rather than allow.
@@ -309,7 +353,7 @@ t_heredoc_size_bound() {
 }
 
 t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13; t14; t15
-t_heredoc; t_scanner; t_scan_fails_closed; t_scan_size_bound; t_heredoc_size_bound
+t_heredoc; t_scanner; t_paren_messages; t_backstop; t_scan_fails_closed; t_scan_size_bound; t_heredoc_size_bound
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

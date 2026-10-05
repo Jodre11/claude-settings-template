@@ -10,16 +10,16 @@ sensitive values out of version control.
 
 | Hook | Purpose |
 |---|---|
-| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/ask/deny decisions, the quote-aware command scan) |
+| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/ask/deny decisions and the crash backstop, the quote-aware command scan, the `shell_words` tokeniser) |
 | `api-failure-log.sh` | StopFailure: appends one slim record per turn that ended on an API error to `telemetry/api-failures.jsonl` |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
 | `reviewer-guard.sh` | Denies mutating git commands to read-only code-review agents |
 | `settings-edit-ask.sh` | Asks before a direct Edit/Write of `settings.json`, which is generated from `settings.json.tmpl` |
-| `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context; screens every pipeline stage |
+| `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context: screens every word of every pipeline stage, denies shell command strings (`bash -c`, `eval`), and allows a secret fetch only into the vault (`$CLAUDE_SECRET_DIR`) |
 | `git-signing-ask.sh` | Asks before a Bash command overrides or removes git signing, in any key spelling; reads of the setting pass |
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
 | `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
-| `session-init.sh` | Creates session-scoped temp dir, renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID` to Bash |
+| `session-init.sh` | Creates the session-scoped temp dir and, beside it, the secret vault; renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID`/`CLAUDE_SECRET_DIR` to Bash |
 | `handover-detect.sh` | SessionStart: sweeps consumed and stale handovers; injects nothing (you run `/rehydrate`) |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
 | `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |

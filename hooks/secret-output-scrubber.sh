@@ -26,21 +26,23 @@ if [[ "$(hook_field '.hook_event_name')" == PostToolUseFailure ]]; then
     SCRUB_EVENT=PostToolUseFailure
 fi
 
-# Skip scanning results whose target is a firewall self-definition/test/doc file
-# (their contents embed example secret vectors by design — scanning them fires a
-# false breach alarm). Read→file_path, Grep→path, Bash→scan the command string
-# for an exempt path. NOT a content allowlist: real secrets elsewhere still caught.
-target_path=$(hook_field '.tool_input.file_path')
-if [[ -z "$target_path" ]]; then
-    target_path=$(hook_field '.tool_input.path')
-fi
-cmd_str=$(hook_field '.tool_input.command')
-if path_is_scan_exempt "$target_path"; then
-    exit 0
-fi
-if [[ -n "$cmd_str" ]] && path_is_scan_exempt "$cmd_str"; then
-    exit 0
-fi
+# Skip scanning a Read, Grep, Edit or Write whose own path field (file_path, else path) names a firewall
+# self-definition/test/doc file: their contents embed example secret vectors by design, and scanning them fires a
+# false breach alarm. Edit and Write results carry the file's content too. Only those tools' path fields count: a
+# Bash, MCP or other result is always scanned, whatever its command string names. NOT a content allowlist: real
+# secrets elsewhere are still caught.
+# Assigned first: a jq failure inside a case word does not trip the ERR trap, so unreadable input would pass silently.
+tool=$(hook_field '.tool_name')
+case "$tool" in
+    Read|Grep|Edit|Write)
+        target_path=$(hook_field '.tool_input.file_path')
+        if [[ -z "$target_path" ]]; then
+            target_path=$(hook_field '.tool_input.path')
+        fi
+        if path_is_scan_exempt "$target_path"; then
+            exit 0
+        fi ;;
+esac
 
 # raise_alarm <classes> <source-suffix>: set TOOL and CSV for the caller's message, then run the breach responder
 # (ledger with the payload session, OS alert, transcript scrub). Never blocks on failure.

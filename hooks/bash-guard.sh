@@ -6,6 +6,7 @@
 #   3. Process substitution: <(...) or >(...)
 #   4. Control-flow loops (for/while/until) and case statements
 #   5. Temp-directory write policy
+#   6. Subshells and grouping: an unquoted ( (also a zsh glob qualifier or extglob, by intent)
 #
 # The documented git-commit heredoc message is removed first (strip_commit_heredoc, the one
 # sanctioned exemption). The syntax checks then run on a quote-aware skeleton of the command
@@ -13,11 +14,12 @@
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
+hook_backstop deny "bash-guard failed to evaluate; the command is denied. Retry it or simplify it."
 hook_read_input
 
 cmd=$(hook_field '.tool_input.command')
 if [[ -z "$cmd" ]]; then
-    exit 0
+    hook_pass
 fi
 
 checked=$(strip_commit_heredoc "$cmd")
@@ -55,10 +57,14 @@ if [[ "$SHELL_SCAN_FLAGS" == *E* ]]; then
     warnings="${warnings} or the quote scanner failed; put long content in a file)\n"
 fi
 if [[ "$SHELL_SCAN_FLAGS" == *S* ]]; then
-    warnings="${warnings}  - command substitution inside double quotes detected (use separate Bash calls)\n"
+    warnings="${warnings}  - command substitution inside double quotes detected (use separate Bash calls, or"
+    warnings="${warnings} git commit -F <file> for a commit message)\n"
 fi
 if [[ "$SHELL_SCAN_FLAGS" == *U* ]]; then
     warnings="${warnings}  - unterminated quote detected\n"
+fi
+if [[ "$SHELL_SCAN_FLAGS" == *P* ]]; then
+    warnings="${warnings}  - subshell or grouping '(...)' detected (use separate Bash calls)\n"
 fi
 
 # Check for &&
@@ -120,4 +126,4 @@ if [[ -n "$warnings" ]]; then
     hook_deny "$msg"
 fi
 
-exit 0
+hook_pass

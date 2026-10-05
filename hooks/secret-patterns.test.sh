@@ -68,6 +68,100 @@ for p in config.env.example settings.json.tmpl id_rsa.pub README.md src/notes/se
     if path_is_secret "$p"; then bad "benign path wrongly blocked: $p"; else ok "benign path allowed: $p"; fi
 done
 
+# A */X glob also covers the bare name X, and the allow list still applies to a bare name.
+for p in config.env .netrc .pgpass id_rsa id_ed25519 .aws/credentials .strongbox-keyid /proc/self/environ \
+        '$CLAUDE_SECRET_DIR' '$CLAUDE_SECRET_DIR/x.json' '${CLAUDE_SECRET_DIR}/x' /tmp/claude-abc-vault \
+        /tmp/claude-abc-vault/ /tmp/claude-abc-vault/. /private/tmp/claude-abc-vault //tmp/claude-abc-vault; do
+    path_is_secret "$p" && ok "bare or vault secret path blocked: $p" || bad "bare or vault secret path missed: $p"
+done
+for p in config.env.example x/.env.example id_rsa.pub credentials environ /tmp/claude-abc/notes.txt \
+        /Users/x/Repos/claude-tools/modules/key-vault/main.tf; do
+    if path_is_secret "$p"; then bad "benign bare path wrongly blocked: $p"; else ok "benign bare path allowed: $p"; fi
+done
+
+# A nested .env.* file is a secret path, as a root one is; the allow list still applies.
+for p in config/.env.local /app/.env.production; do
+    path_is_secret "$p" && ok "nested .env.* path blocked: $p" || bad "nested .env.* path missed: $p"
+done
+if path_is_secret config/.env.example; then
+    bad "nested .env.example wrongly blocked"
+else
+    ok "nested .env.example allowed"
+fi
+
+# Every glob, with each * written as x, is a secret path: no allow glob cancels a whole secret glob.
+for g in "${SECRET_PATH_GLOBS[@]}"; do
+    p="${g//\*/x}"
+    path_is_secret "$p" && ok "glob instance is secret: $p" || bad "glob instance not secret: $p"
+done
+
+# path_is_secret matches "/<path>" against "/"-adjusted globs; that must equal the direct rule, <path> or /<path>
+# against the globs as written, with neither matching an allow glob.
+shopt -s extglob
+any=$(IFS='|'; printf '@(%s)' "${SECRET_PATH_GLOBS[*]}")
+allow=$(IFS='|'; printf '@(%s)' "${SECRET_PATH_ALLOW[*]}")
+drift=""
+for p in config.env a/config.env .env x.env .env.x secrets secrets/a a/secrets a/secrets/b id_rsa a/id_rsa \
+        .aws/credentials /h/.aws/credentials README.md a.pub x.env.example tmp/secrets.md '' / . .. a/proc/1/environ; do
+    # shellcheck disable=SC2053
+    if [[ ( "$p" == $any || "/$p" == $any ) && "$p" != $allow && "/$p" != $allow ]]; then want=0; else want=1; fi
+    path_is_secret "$p" && got=0 || got=1
+    [[ "$got" == "$want" ]] || drift+=" '$p'"
+done
+[[ -z "$drift" ]] && ok "path_is_secret equals the <path>-or-/<path> rule" || bad "path_is_secret drifted on:$drift"
+
+# The glob list uses * as its only metacharacter, so a glob's literal pieces are plain text (SECRET_PATH_FRAGMENT_RE
+# relies on it), and "/<instance>" of every glob holds one of the fragments.
+odd=""
+for g in "${SECRET_PATH_GLOBS[@]}"; do
+    [[ "$g" == *[\?\[\]]* ]] && odd+=" $g"
+done
+[[ -z "$odd" ]] && ok "no secret path glob uses ? or [" || bad "secret path globs with ? or [:$odd"
+missed=""
+for g in "${SECRET_PATH_GLOBS[@]}"; do
+    p="${g//\*/x}"
+    awk -v p="/$p" -v frag="$SECRET_PATH_FRAGMENT_RE" 'BEGIN { exit !(p ~ frag) }' || missed+=" $p"
+done
+[[ -z "$missed" ]] && ok "every glob instance holds a fragment" || bad "glob instances with no fragment:$missed"
+
+# path_glob_is_secret: a glob in the last component that matches a secret name.
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
+for p in '.env*' 'config/*.env' '.en[v]' '~/.aws/cred*' 'x/*.pem' 'id_*' '.e*x'; do
+    path_glob_is_secret "$p" && ok "secret glob operand blocked: $p" || bad "secret glob operand missed: $p"
+done
+for p in '*' '?*' '*.md' 'a*' 'docs/*.txt' 'notes.tx?'; do
+    if path_glob_is_secret "$p"; then bad "benign glob wrongly blocked: $p"; else ok "benign glob allowed: $p"; fi
+done
+
+# The glob test is bounded: a component too long or too wildcarded, or a test past the per-run budget, is treated
+# as secret without matching (fail closed); within the bound it is matched as before.
+_SECRET_GLOB_TESTS=0
+path_glob_is_secret '*a*b*c*d*e*f' && ok "a six-wildcard component is treated as secret" \
+    || bad "a six-wildcard component was matched"
+path_glob_is_secret "*$(printf 'a%.0s' {1..130})" && ok "a component over 128 characters is treated as secret" \
+    || bad "a long component was matched"
+if path_glob_is_secret '*a*b*c*d*e'; then bad "a five-wildcard component was not matched"; else
+    ok "a five-wildcard component is still matched"; fi
+# With a *, each [ counts with it: a bracket expression costs as much to match as a star. No representative matches
+# these, so they are treated as secret only through the bound.
+path_glob_is_secret '*[q]*[q]*[q]' && ok "three stars and three brackets are treated as secret" \
+    || bad "a component of three stars and three brackets was matched"
+if path_glob_is_secret '*[q]*[q]'; then bad "a four-wildcard bracketed component was not matched"; else
+    ok "a four-wildcard bracketed component is still matched"; fi
+# A bracket-only component matches in linear time, so its brackets are not counted.
+if path_glob_is_secret '[0-9][0-9][0-9][0-9]-[0-9][0-9]'; then
+    bad "a bracket-only date component was treated as secret"
+else
+    ok "a bracket-only date component is matched, not treated as secret"
+fi
+# A component holding ( fails closed: an extglob group inside repeating groups matches in exponential time.
+path_glob_is_secret '*(q|z)' && ok "a component holding ( is treated as secret" \
+    || bad "a component holding ( was matched"
+_SECRET_GLOB_TESTS=$_SECRET_GLOB_BUDGET
+path_glob_is_secret '*.md' && ok "a glob test past the budget is treated as secret" \
+    || bad "a glob test past the budget was matched"
+_SECRET_GLOB_TESTS=0
+
 # path_is_secret joins each glob list into one @(…|…) pattern, so no glob may hold |, ( or ): one would split or close
 # the alternation and change what it matches.
 odd=""

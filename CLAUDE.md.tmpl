@@ -127,11 +127,16 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 - **Carve-out:** the `git commit -m "$(cat <<'EOF' … EOF\n)"` HEREDOC is permitted — it
   carries a literal multi-line commit message that the rules above would otherwise force
   into a clumsy temp-file handoff. This is the ONLY exemption `bash-guard.sh` recognises.
-  For PR bodies always use `gh ... --body-file <path>` (write the body to
-  `${CLAUDE_TEMP_DIR}/pr-body.md` first).
-- These Bash rules are load-bearing, not stylistic: `hooks/secret-bash-guard.sh` screens each
-  pipeline stage by its first word, which is only sound because `bash-guard.sh` denies every
-  other compound form except unquoted `(...)` grouping. Never relax one without the other.
+  The carve-out applies only when the words before `-m` are plain (no quotes, `$` or other
+  shell syntax) and the message holds no backquote, `$'` or stray closing parenthesis (a
+  `1)` list marker); otherwise use `git commit -F <file>`. For PR bodies always use
+  `gh ... --body-file <path>` (write the body to `${CLAUDE_TEMP_DIR}/pr-body.md` first).
+- These Bash rules are load-bearing, not stylistic: `hooks/secret-bash-guard.sh` and
+  `hooks/reviewer-guard.sh` tokenise each command and screen every word of every pipeline
+  stage, which is only sound because `bash-guard.sh` denies every other compound form —
+  `(...)` grouping, command and process substitution, and control flow included — and
+  `secret-bash-guard.sh` denies shell command strings (`bash -c`, `eval`). Never relax one
+  without the other.
 
 ## LSP
 - Prefer LSP (`goToDefinition`, `findReferences`, `goToImplementation`, `incomingCalls`, `outgoingCalls`) over Grep when positioned at a specific symbol and need semantic precision
