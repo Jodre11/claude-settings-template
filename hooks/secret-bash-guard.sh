@@ -161,7 +161,7 @@ scan_words=0
 # X xargs, Q parallel, N watch, O ps, U su/script/flock, S security, L a registry login command. Command position: A
 # wrapper (every later word is at command position too), E env, e export, s set, v eval, Z a single-word fetch tool,
 # f find (-exec starts a wrapper), k kubectl, d gpg and age, h source and the . builtin (a shell reading a script), b
-# { or repeat (a zsh group or loop: denied).
+# { or repeat (a zsh group or loop: denied), M ssh (a wrapper whose later words a remote shell parses again).
 # Every name also goes into plain_names, so shell_words never marks it plain, as do the words the fetch shapes read in
 # the first stage.
 word_classes=(
@@ -197,6 +197,7 @@ word_classes=(
     'cp k kubectl'
     'cp d gpg age'
     'cp h source'
+    'cp M ssh slogin'
 )
 plain_names='! . { -- --debug --v --log-http --verbosity debug'
 for line in "${word_classes[@]}"; do
@@ -268,6 +269,36 @@ _secret_variant() {
         fi
     fi
     [[ "$w" == *[\*\?\[]* ]] && path_glob_is_secret "$w"
+}
+
+# _braces_are_replacements <word>: 0 if every {…} in <word> holds only digits and # % . / +, with no .. beside a digit,
+# as parallel's replacement strings do ({}, {.}, {/.}, {#}, {1}, {+..}), else 1: a perl replacement string ({=…=}) or
+# a brace expansion ({a,b}, {1..3}) is not. A brace left open, or a word over 256 characters, is not either (fail
+# closed).
+_braces_are_replacements() {
+    local i n=${#1} in=0 ch c=""
+    if (( n > 256 )); then
+        return 1
+    fi
+    for (( i = 0; i < n; i++ )); do
+        ch="${1:i:1}"
+        if (( in )); then
+            if [[ "$ch" == '}' ]]; then
+                if [[ "$c" == *[0-9]..* || "$c" == *..[0-9]* ]]; then
+                    return 1
+                fi
+                in=0
+            elif [[ "$ch" != [0-9#%./+] ]]; then
+                return 1
+            else
+                c+="$ch"
+            fi
+        elif [[ "$ch" == '{' ]]; then
+            in=1
+            c=""
+        fi
+    done
+    (( ! in ))
 }
 
 # _no_program <word>: 0 if a shell or interpreter given <word> reads its own input or a special file rather than a
@@ -397,6 +428,12 @@ _stage_end() {
         fi
         if [[ "$act" == *H* ]] && (( shq )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
             _deny_shell "$shn fed by a pipe or redirection"
+        fi
+        if [[ "$act" == *M* ]] && (( ! smc )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
+            _deny_shell "$smn fed by a pipe or redirection"
+        fi
+        if [[ "$act" == *N* && "$wpn" == parallel ]] && (( wpc != 1 )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
+            _deny_shell "parallel with no command, fed by a pipe or redirection"
         fi
         if [[ "$act" == *[KL]* && "$sf" == *I* ]]; then
             _deny_reader "$ipn <$ins"
@@ -837,8 +874,62 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         if [[ "$act" == *U* && "$w" == -[!-]* && "$w" == *c* ]]; then
             _deny_shell "$sun $w"
         fi
-        if [[ "$act" == *N* && "$w" == *[[:space:]]* ]]; then
-            _deny_shell "$wpn '$w'"
+        # watch and parallel run their words through a shell, which parses them again: a word holding whitespace or
+        # shell syntax (quotes and backslashes included, as they would be removed there, and a leading =, zsh's command
+        # expansion) is a command string. Every parallel word counts: with no command template its arguments are the
+        # commands. In parallel's words a brace counts only outside a replacement string.
+        if [[ "$act" == *N* ]]; then
+            if [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\*\?\[]* || "$w" == =* ]]; then
+                _deny_shell "$wpn '$w'"
+            elif [[ "$w" == *[\{\}]* ]]; then
+                if [[ "$wpn" != parallel ]] || ! _braces_are_replacements "$w"; then
+                    _deny_shell "$wpn '$w'"
+                fi
+            fi
+            # parallel with no command template reads its commands from its input: wpc marks the template's first
+            # word. An option word with no = that ends in a letter takes the next word as its value (fail closed: the
+            # value-taking options are too many to list).
+            if [[ "$wpn" == parallel ]] && (( ! wpc )); then
+                if (( wpo )); then
+                    wpo=0
+                elif [[ "$w" == ::: || "$w" == :::+ || "$w" == :::: || "$w" == ::::+ ]]; then
+                    wpc=2
+                elif [[ "$w" == -?* ]]; then
+                    if [[ "$w" != *=* && "$w" == *[A-Za-z] ]]; then wpo=1; fi
+                else
+                    wpc=1
+                fi
+            fi
+        fi
+        # ssh joins its later words with spaces for the remote shell, which parses them again, so a word holding
+        # whitespace or shell syntax is a command string; so is an option naming a local command (LocalCommand,
+        # ProxyCommand, KnownHostsCommand: any ...command=). The first word that is neither an option nor an option's
+        # value is the host, and the next such word (options are parsed after the host too) starts a remote command:
+        # with none, ssh runs its input there. A letter that is not a known flag takes a value (fail closed).
+        if [[ "$act" == *M* ]]; then
+            if [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\{\}\*\?\[]* || "$w" == =* \
+                    || "$w" == *[cC][oO][mM][mM][aA][nN][dD]=* ]]; then
+                _deny_shell "$smn '$w'"
+            fi
+            if (( smc )); then
+                :
+            elif (( smo )); then
+                smo=0
+            elif [[ "$w" == -?* ]]; then
+                # A value-taking letter takes the rest of its bundle, or the next word when it ends the bundle.
+                smx="${w#-}"
+                while [[ -n "$smx" ]]; do
+                    if [[ "${smx:0:1}" != [46AaCfGgKkMNnqsTtVvXxYy] ]]; then
+                        if (( ${#smx} == 1 )); then smo=1; fi
+                        break
+                    fi
+                    smx="${smx:1}"
+                done
+            elif (( smh )); then
+                smc=1
+            else
+                smh=1
+            fi
         fi
         if [[ "$act" == *x* ]]; then
             if (( xan )); then
@@ -941,6 +1032,13 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if [[ "$sf" != *A* ]]; then sf+=A; fi ;;
             b)
                 _deny_group "$nm" ;;
+            M)
+                if [[ "$sf" != *A* ]]; then sf+=A; fi
+                if [[ "$act" != *M* ]]; then act+=M; fi
+                smn="$nm"
+                smo=0
+                smh=0
+                smc=0 ;;
             E)
                 if [[ "$act" != *E* ]]; then
                     act+=E
@@ -1024,7 +1122,9 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             Q)
                 if [[ "$sf" != *X* ]]; then sf+=X; fi
                 if [[ "$act" != *N* ]]; then act+=N; fi
-                wpn=parallel ;;
+                wpn=parallel
+                wpo=0
+                wpc=0 ;;
             N)
                 if [[ "$act" != *N* ]]; then act+=N; fi
                 wpn=watch ;;

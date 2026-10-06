@@ -565,6 +565,60 @@ expect ALLOW "a grep for a pound sign allowed"                      $'grep -n \'
 expect ALLOW "a reader of an accented benign name allowed"          $'cat R\xc3\xa9sum\xc3\xa9.md'
 expect ALLOW "a reader of a ligature benign name allowed"           "cat ${fi_}le.txt"
 
+# ssh joins its remote words with spaces and hands them to the remote shell, which parses them again: a word holding
+# whitespace or shell syntax is a command string, and the remote words are commands.
+expect DENY  "an ssh remote command in one quoted word denied"      "ssh host 'cat .env'"
+expect DENY  "an ssh remote redirection denied"                     "ssh host 'cat<.env'"
+expect DENY  "an ssh remote word holding a backslash denied"        "ssh host 'ca\\t' .env"
+expect DENY  "an ssh remote word holding quotes denied"             "ssh host \"c'a't\" .env"
+expect DENY  "an ssh remote word holding a glob denied"             "ssh host '/bin/c?t' .env"
+expect DENY  "an ssh remote word holding braces denied"             "ssh host 'c{a,}t' .env"
+expect DENY  "an ssh remote word holding a parameter denied"        "ssh host '\$x' .env"
+expect DENY  "an ssh remote env dump denied"                        'ssh host env'
+expect DENY  "an ssh ProxyCommand holding a command string denied"  "ssh -o 'ProxyCommand=sh -c x' host"
+expect DENY  "an ssh behind a wrapper denied"                       "sudo ssh host 'cat .env'"
+expect DENY  "slogin with a remote command string denied"           "slogin host 'cat .env'"
+expect DENY  "an upper-case ssh with a remote command string denied" "SSH host 'cat .env'"
+expect ALLOW "an ssh remote command of plain words allowed"         'ssh host uptime'
+expect ALLOW "an ssh with an identity file and port allowed"        'ssh -i ~/.ssh/deploy_key -p 2222 user@host uptime'
+expect ALLOW "an ssh with options and a forward allowed"            'ssh -o StrictHostKeyChecking=no -L 8080:localhost:80 host'
+expect ALLOW "an ssh listing a remote directory allowed"            'ssh host ls -la /var/log'
+expect ALLOW "an ssh word not at command position allowed"          "echo ssh 'a b'"
+expect ALLOW "an ssh in a later stage leaves an earlier one alone"  "grep -n 'a b' x.txt | ssh host wc -l"
+# watch and parallel run their command words through sh -c too. parallel quotes its arguments (after :::), and its {}
+# is a replacement string, so there only a brace span with , or .. (brace expansion) counts as syntax.
+expect DENY  "a watch word holding a backslash denied"              "watch 'ca\\t' .env"
+expect DENY  "a watch redirection denied"                           "watch 'cat<.env'"
+expect DENY  "a parallel command word holding a backslash denied"   "parallel 'ca\\t' ::: .env"
+expect DENY  "a parallel command word holding brace expansion denied" "parallel 'c{a,}t' ::: .env"
+expect DENY  "a parallel command word holding a parameter denied"   "parallel '\$x' ::: a"
+expect DENY  "a parallel argument with no command template denied"  "parallel ::: 'cat<.env'"
+expect DENY  "a parallel perl replacement string denied"            "parallel echo '{=uc=}' ::: a"
+expect DENY  "a parallel word starting with = denied"               'parallel =cat ::: .env'
+expect ALLOW "a watch of a plain command allowed"                   'watch -n 1 date'
+expect ALLOW "a parallel replacement string allowed"                'parallel echo {} ::: a b'
+expect ALLOW "a parallel replacement string variant allowed"        'parallel gzip -k {.} ::: a.txt'
+expect ALLOW "the other parallel replacement strings allowed"       'parallel echo {/} {//} {/.} {#} {%} {1} {+.} {+..} ::: a'
+expect DENY  "a parallel numeric brace expansion denied"            "parallel echo 'a{1..3}' ::: x"
+# parallel with no command template reads its commands from its input.
+expect DENY  "a fed parallel with no command denied"                'echo x | parallel'
+expect DENY  "a fed parallel with only an option and its value denied" 'echo x | parallel -j 4'
+expect DENY  "a parallel with no command fed by a file denied"      'parallel --tag < x.txt'
+expect ALLOW "a fed parallel with a command allowed"                'ls | parallel gzip'
+expect ALLOW "a fed parallel with an attached option value allowed" 'ls | parallel -j4 --jobs=2 gzip -k'
+# ssh's local-command options run a command on this machine, and ssh with no remote command runs its input there.
+expect DENY  "an ssh LocalCommand option denied"                    'ssh -oPermitLocalCommand=yes -oLocalCommand=env host'
+expect DENY  "an ssh LocalCommand option value denied"              'ssh -o localcommand=env host'
+expect DENY  "an ssh with no remote command fed by a pipe denied"   'echo x | ssh host'
+expect DENY  "an ssh with no remote command fed by a file denied"   'ssh -p 22 -i k host < x.sh'
+expect DENY  "an ssh remote word starting with = denied"            'ssh host =cat .env'
+expect ALLOW "an ssh remote command fed by a pipe allowed"          'echo x | ssh host cat'
+expect ALLOW "an ssh with option values and no command allowed"     'ssh -l user -p 2222 host'
+expect DENY  "a fed ssh with only options after the host denied"    'echo x | ssh host -T'
+expect DENY  "a fed ssh with an option value before the host denied" 'echo x | ssh -P tag host'
+expect DENY  "a fed ssh with an unknown option letter denied"       'echo x | ssh -Z x host'
+expect ALLOW "a fed ssh with options after the host and a command allowed" 'echo x | ssh host -l user cat'
+
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'
 expect DENY  "a bare input redirection from .env denied (zsh READNULLCMD)" '<.env'
@@ -921,6 +975,8 @@ expect_fast DENY "many one-word commands" "$(printf 'a;%.0s' {1..32700})cat .env
 expect_fast DENY "many upper-case command words" "sudo $(printf 'UNEXPAND %.0s' {1..5990})CAT .env"
 # Upper-case words holding a secret fragment, each through the case-insensitive path match.
 expect_fast DENY "many upper-case fragment words" "cat $(printf 'A/.ENVX/B %.0s' {1..5990}).ENV"
+# An ssh walk reads every later word of its stage, plain ones included, up to the word budget.
+expect_fast ALLOW "an ssh with many remote words" "ssh host $(printf 'a %.0s' {1..5990})"
 # Words holding a non-ASCII letter, each folded before screening.
 expect_fast DENY "many words holding a foldable letter" "cat $(printf $'a\xc5\xbfb %.0s' {1..5990}).env"
 # Words at the fold's length bound, each holding foldable letters, through every substitution.
