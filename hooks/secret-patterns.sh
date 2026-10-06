@@ -36,12 +36,20 @@ SECRET_PATH_GLOBS=(
     '.env'
     '*.env'
     '.env.*'
+    '*/.env.*'
     '*/id_rsa'
     '*/id_ed25519'
     '*/.aws/credentials'
     '*/.netrc'
     '*/config.env'
     '*/.pgpass'
+    '*/proc/*/environ'
+    '$CLAUDE_SECRET_DIR'
+    '$CLAUDE_SECRET_DIR/*'
+    '${CLAUDE_SECRET_DIR}'
+    '${CLAUDE_SECRET_DIR}/*'
+    '*/tmp/claude-*-vault'
+    '*/tmp/claude-*-vault/*'
 )
 
 # Overrides: paths that look secret but hold placeholders / public material.
@@ -112,21 +120,113 @@ redact_json_strings() {
         walk(if type == "string" then redact elif type == "object" then with_entries(.key |= redact) else . end)'
 }
 
-# _secret_path_alternations: set _SECRET_PATH_ANY and _SECRET_ALLOW_ANY to @(g1|g2|…) of SECRET_PATH_GLOBS and
-# SECRET_PATH_ALLOW. [[ == ]] matches a pattern as if extglob were on, so one test replaces a loop over the globs:
-# path_is_secret runs once per operand, and a 64 KiB command can carry 30,000 of them. No glob may contain |, ( or ).
+# _secret_path_alternations: join each glob list into one @(…|…) pattern, matched against "/<path>" so a */X glob also
+# covers a bare X (config.env, id_rsa, .aws/credentials from ~). [[ == ]] matches a pattern as if extglob were on, so
+# one test replaces a loop over the globs: path_is_secret runs once per operand, and a 64 KiB command can carry 30,000
+# of them. No glob may contain |, ( or ): one would split or close the alternation. A glob that starts with * is kept
+# as it is (the * also takes the extra /); any other glob gets a leading /, so "/<path>" matches it exactly when
+# <path> does. Also derive SECRET_PATH_REPRESENTATIVES, one name per glob: its last component with every * replaced
+# by x, duplicates dropped; and SECRET_PATH_FRAGMENT_RE, an awk regex of the longest literal piece of each such
+# "/"-adjusted glob (each of . $ { } bracketed): "/<path>" can match a glob only if it holds that piece, so a path
+# matching none cannot be secret.
 _secret_path_alternations() {
-    local IFS='|'
-    _SECRET_PATH_ANY="@(${SECRET_PATH_GLOBS[*]})"
-    _SECRET_ALLOW_ANY="@(${SECRET_PATH_ALLOW[*]})"
+    local IFS='|' g gp last piece rest best seen='|' lb='{' rb='}'
+    local -a any=() allow=() pieces=()
+    SECRET_PATH_REPRESENTATIVES=()
+    for g in "${SECRET_PATH_GLOBS[@]}"; do
+        if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
+        any+=("$gp")
+        best=""
+        rest="$gp"
+        while [[ -n "$rest" ]]; do
+            piece="${rest%%\**}"
+            if (( ${#piece} > ${#best} )); then best="$piece"; fi
+            if [[ "$rest" == *\** ]]; then rest="${rest#*\*}"; else rest=""; fi
+        done
+        best="${best//./[.]}"
+        best="${best//\$/[\$]}"
+        best="${best//$lb/[$lb]}"
+        pieces+=("${best//$rb/[$rb]}")
+        last="${g##*/}"
+        last="${last//\*/x}"
+        if [[ "$seen" != *"|$last|"* ]]; then
+            SECRET_PATH_REPRESENTATIVES+=("$last")
+            seen+="$last|"
+        fi
+    done
+    for g in "${SECRET_PATH_ALLOW[@]}"; do
+        if [[ "$g" == '*'* ]]; then allow+=("$g"); else allow+=("/$g"); fi
+    done
+    _SECRET_PATH_ANY="@(${any[*]})"
+    _SECRET_ALLOW_ANY="@(${allow[*]})"
+    _SECRET_REPRESENTATIVE_LIST="$seen"
+    # shellcheck disable=SC2034  # read by secret-bash-guard.sh
+    SECRET_PATH_FRAGMENT_RE="${pieces[*]}"
 }
 _secret_path_alternations
 
-# path_is_secret <path>: 0 if secret-bearing and not allowlisted, else 1.
+# Bounds on path_glob_is_secret, whose cost under bash 3.2 grows with the wildcards in the operand: glob tests allowed
+# per hook run (one hook run sources this file once), the longest component matched, the most * characters in a matched
+# component plus, when it has a *, its [ characters (next to a *, a bracket expression costs as much to match as
+# another star; alone it is linear), and the running count of tests. A component holding ( is never matched: an
+# extglob group inside repeating groups takes exponential time.
+_SECRET_GLOB_BUDGET=500
+_SECRET_GLOB_MAX_CHARS=128
+_SECRET_GLOB_MAX_WILD=5
+_SECRET_GLOB_TESTS=0
+
+# path_is_secret <path>: 0 if <path> or /<path> matches a secret glob and neither matches an allow glob, else 1.
 path_is_secret() {
     # The alternations are intentional patterns here — do NOT quote them.
     # shellcheck disable=SC2053
-    [[ "$1" == $_SECRET_PATH_ANY && "$1" != $_SECRET_ALLOW_ANY ]]
+    [[ "/$1" == $_SECRET_PATH_ANY && "/$1" != $_SECRET_ALLOW_ANY ]]
+}
+
+# path_glob_is_secret <form>: 0 if the last path component of <form> holds *, ? or [ and, read as a pattern, matches a
+# representative secret name for which path_is_secret holds in its place, else 1. A pattern that does not start with
+# . cannot match a dotfile, and a component made only of * and ? is skipped (it would match every name). A component
+# over _SECRET_GLOB_MAX_CHARS characters, holding (, or with more than _SECRET_GLOB_MAX_WILD * characters (plus [
+# characters, when it has a *), and every test once _SECRET_GLOB_BUDGET have run, is not matched: it is treated as
+# secret (fail closed).
+path_glob_is_secret() {
+    local c="$1" dir="" r
+    # ${1%/*} then a substring, not ${1##*/}: a longest-prefix removal is quadratic in the operand's length.
+    if [[ "$1" == */* ]]; then
+        dir="${1%/*}"
+        c="${1:${#dir}+1}"
+        dir+="/"
+    fi
+    if [[ "$c" != *[\*\?\[]* || "$c" != *[!\*\?]* ]]; then
+        return 1
+    fi
+    # The pattern's literal prefix must start some representative (the list holds each as |r|).
+    r="${c%%[\*\?\[]*}"
+    if [[ -n "$r" && "$_SECRET_REPRESENTATIVE_LIST" != *"|$r"* ]]; then
+        return 1
+    fi
+    # bash 3.2 backtracks per representative on stacked wildcards, so a component too long or too wildcarded to
+    # match cheaply, or any glob test past the per-run budget, is treated as secret (fail closed) instead.
+    _SECRET_GLOB_TESTS=$(( _SECRET_GLOB_TESTS + 1 ))
+    if (( _SECRET_GLOB_TESTS > _SECRET_GLOB_BUDGET || ${#c} > _SECRET_GLOB_MAX_CHARS )) || [[ "$c" == *\(* ]]; then
+        return 0
+    fi
+    r="${c//[!\*]/}"
+    if [[ -n "$r" ]]; then
+        r+="${c//[!\[]/}"
+    fi
+    if (( ${#r} > _SECRET_GLOB_MAX_WILD )); then
+        return 0
+    fi
+    for r in "${SECRET_PATH_REPRESENTATIVES[@]}"; do
+        if [[ "$r" == .* && "$c" != .* ]]; then
+            continue
+        fi
+        # shellcheck disable=SC2053  # c is the operand's own pattern
+        if [[ "$r" == $c ]] && path_is_secret "$dir$r"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # path_is_scan_exempt <path>: 0 if the path is a firewall self-definition/test/

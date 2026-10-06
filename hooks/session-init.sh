@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # session-init.sh — SessionStart hook
-# Reads session_id from stdin JSON, creates the session-scoped temp directory,
+# Reads session_id from stdin JSON, creates the session-scoped temp directory and secret vault,
 # resolves the slug (c-<abbrev>-<4hex>), and emits hookSpecificOutput with
 # sessionTitle + additionalContext.
-# It also exports CLAUDE_SESSION_ID and CLAUDE_TEMP_DIR to Bash commands via $CLAUDE_ENV_FILE.
+# It also exports CLAUDE_SESSION_ID, CLAUDE_TEMP_DIR and CLAUDE_SECRET_DIR to Bash commands via $CLAUDE_ENV_FILE.
 #
 # Slug source of truth:
 #   - Inside tmux: the tmux session name set by the zsh wrapper. The wrapper
@@ -24,8 +24,31 @@ fi
 temp_dir="/tmp/claude-${session_id}"
 mkdir -p "$temp_dir"
 
+# make_vault <vault> <secrets>: creates both directories with mode 0700, failing instead of acting through a symlink
+# or on a directory another user owns: /tmp is shared, so either could have been planted at this path.
+make_vault() {
+    [[ ! -L "$1" ]] || return 1
+    mkdir -p "$2" 2>/dev/null || return 1
+    [[ ! -L "$1" && ! -L "$2" && -O "$1" && -O "$2" ]] || return 1
+    chmod 0700 "$1" "$2" 2>/dev/null
+}
+
+# The secret vault sits beside the session directory, not inside it: secret-path-guard.sh checks only a Grep's root,
+# so a Grep of the session directory would reach a vault inside it. Every path under it matches */secrets/*.
+# A vault that cannot be made safely is left out of the exports; the session directory does not depend on it.
+vault_dir="/tmp/claude-${session_id}-vault"
+secret_dir="${vault_dir}/secrets"
+if ! make_vault "$vault_dir" "$secret_dir"; then
+    secret_dir=""
+fi
+
+exports="CLAUDE_SESSION_ID=${session_id} CLAUDE_TEMP_DIR=${temp_dir}"
+if [[ -n "$secret_dir" ]]; then
+    exports+=" CLAUDE_SECRET_DIR=${secret_dir}"
+fi
+
 if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
-    printf 'export CLAUDE_SESSION_ID=%s CLAUDE_TEMP_DIR=%s\n' "$session_id" "$temp_dir" >> "$CLAUDE_ENV_FILE" || true
+    printf 'export %s\n' "$exports" >> "$CLAUDE_ENV_FILE" || true
 fi
 
 slug=""
@@ -46,6 +69,6 @@ if [[ -z "$slug" ]]; then
 fi
 
 jq -n \
-    --arg ctx "CLAUDE_SESSION_ID=${session_id} CLAUDE_TEMP_DIR=${temp_dir}" \
+    --arg ctx "$exports" \
     --arg title "$slug" \
     '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx, sessionTitle: $title}}'

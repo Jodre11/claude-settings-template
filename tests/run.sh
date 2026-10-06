@@ -27,10 +27,23 @@ for fn in "${test_functions[@]}"; do
     "$fn"
 done
 
-# Hook suites are standalone scripts: PASS/FAIL lines on stdout, non-zero exit on any failure.
+# Hook suites are standalone scripts: PASS/FAIL lines on stdout, non-zero exit on any failure. A suite whose output
+# holds a secret-shaped value fails, naming the suite but printing nothing of its output: the output scrubber scans
+# every Bash result, so a suite that prints a fixture would raise a real breach alarm when run through the Bash tool.
+# The scanner exits 0 on a hit and 1 when clean; any other status means the scan could not run, which also fails.
 printf '\n\033[1m%s\033[0m\n' "hook suites"
 for suite in "${hook_suites[@]}"; do
-    if output=$(bash "$suite" 2>&1); then
+    rc=0
+    output=$(bash "$suite" 2>&1) || rc=$?
+    scan_rc=0
+    # shellcheck disable=SC2016  # $1 belongs to the child bash
+    printf '%s' "$output" | bash -c 'source "$1"; scan_content_for_secrets' _ "$REPO_ROOT/hooks/secret-patterns.sh" \
+        >/dev/null 2>&1 || scan_rc=$?
+    if (( scan_rc == 0 )); then
+        fail "${suite##*/}" "its output holds a secret-shaped value, not shown (exit $rc); build fixtures at run time"
+    elif (( scan_rc != 1 )); then
+        fail "${suite##*/}" "the secret scan could not run (exit $scan_rc), so its output is not shown"
+    elif (( rc == 0 )); then
         pass "${suite##*/}"
     else
         fail "${suite##*/}" "$(grep -E '^FAIL' <<< "$output" || printf 'exited non-zero without a FAIL line')"

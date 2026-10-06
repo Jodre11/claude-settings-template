@@ -23,6 +23,20 @@ verdict() {
 [[ "$(verdict Read '{"tool_input":{"file_path":"config.env.example"}}')" == ALLOW ]] \
     && ok "Read of .example allowed" || bad "Read of .example denied"
 
+# A bare */X name, a vault file and a process environment are secret paths for Read and Grep too.
+for p in config.env .netrc id_rsa /tmp/claude-abc-vault/secrets/gh /proc/self/environ; do
+    [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == DENY ]] \
+        && ok "Read of $p denied" || bad "Read of $p allowed"
+done
+[[ "$(verdict Grep '{"tool_input":{"path":"/tmp/claude-abc-vault/secrets"}}')" == DENY ]] \
+    && ok "Grep of the vault denied" || bad "Grep of the vault allowed"
+[[ "$(verdict Grep '{"tool_input":{"path":"/tmp/claude-abc-vault"}}')" == DENY ]] \
+    && ok "Grep of the vault root denied" || bad "Grep of the vault root allowed"
+for p in /tmp/claude-abc-vault/ /tmp/claude-abc-vault/. /private/tmp/claude-abc-vault //tmp/claude-abc-vault; do
+    [[ "$(verdict Grep "{\"tool_input\":{\"path\":\"$p\"}}")" == DENY ]] \
+        && ok "Grep of the vault root as $p denied" || bad "Grep of the vault root as $p allowed"
+done
+
 # Escape hatch bypasses the guard.
 CLAUDE_ALLOW_SECRET_READ=1
 export CLAUDE_ALLOW_SECRET_READ

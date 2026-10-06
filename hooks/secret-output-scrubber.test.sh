@@ -129,6 +129,57 @@ out=$(jq -nc --arg c "line $AWS_KEY end" '{tool_name: "Read", transcript_path: "
         numLines: 1, startLine: 1, totalLines: 1}}}' | "$HOOK")
 if [[ -z "$out" ]]; then ok "scan-exempt path not alarmed"; else bad "scan-exempt path wrongly scanned"; fi
 
+# 6b. Only a Read, Grep, Edit or Write is exempted, by its own path field: a Bash result is scanned whatever its
+# command names, a trailing comment included, and so is an MCP result carrying an exempt path.
+cmd_payload() {  # cmd_payload <command> <stdout>
+    printf '%s' "$2" | jq -Rsc --arg c "$1" '{tool_name: "Bash", transcript_path: "", tool_input: {command: $c},
+        tool_response: {stdout: ., stderr: "", interrupted: false, isImage: false, noOutputExpected: false}}'
+}
+exempt_cmds=('cat /x/hooks/secret-patterns.sh' 'cat notes.txt # secret-context-firewall'
+    'cat /w/.superpowers/sdd/r.diff')
+for c in "${exempt_cmds[@]}"; do
+    out=$(cmd_payload "$c" "k=$AWS_KEY" | "$HOOK")
+    if [[ "$(jq -r '.hookSpecificOutput.updatedToolOutput.stdout' <<< "$out")" \
+            == 'k=[REDACTED-SECRET-BREACH:aws-access-key]' ]]; then
+        ok "a Bash result is scanned although its command names an exempt path: $c"
+    else
+        bad "a Bash result escaped scanning through its command: $c"
+    fi
+done
+out=$(jq -nc --arg t "token $AWS_KEY" '{tool_name: "mcp__x__y", transcript_path: "",
+    tool_input: {path: "/x/hooks/secret-patterns.sh"}, tool_response: [{type: "text", text: $t}]}' | "$HOOK")
+if [[ "$(jq -c '.hookSpecificOutput.updatedToolOutput' <<< "$out")" \
+        == '[{"type":"text","text":"token [REDACTED-SECRET-BREACH:aws-access-key]"}]' ]]; then
+    ok "an MCP result carrying an exempt path is scanned"
+else
+    bad "an MCP result escaped scanning through its path field"
+fi
+out=$(jq -nc --arg c "x $AWS_KEY" '{tool_name: "Edit", transcript_path: "",
+    tool_input: {file_path: "/x/hooks/secret-bash-guard.test.sh"},
+    tool_response: {filePath: "/x/hooks/secret-bash-guard.test.sh", originalFile: $c}}' | "$HOOK")
+if [[ -z "$out" ]]; then
+    ok "an Edit of an exempt path is not scanned"
+else
+    bad "an exempt Edit was scanned"
+fi
+# A Grep names its target in path, not file_path; a payload with no tool_name is no file tool, whatever path it names.
+out=$(jq -nc --arg c "hit $AWS_KEY" '{tool_name: "Grep", transcript_path: "",
+    tool_input: {path: "/x/hooks/secret-patterns.sh"},
+    tool_response: {mode: "content", numFiles: 1, filenames: ["/x/hooks/secret-patterns.sh"], content: $c}}' | "$HOOK")
+if [[ -z "$out" ]]; then
+    ok "a Grep of an exempt path, given by path, is not scanned"
+else
+    bad "an exempt Grep was scanned"
+fi
+out=$(jq -nc --arg c "line $AWS_KEY end" '{transcript_path: "", tool_input: {file_path: "/x/hooks/secret-patterns.sh"},
+    tool_response: {type: "text", file: {filePath: "/x/hooks/secret-patterns.sh", content: $c}}}' | "$HOOK")
+if [[ "$(jq -r '.hookSpecificOutput.updatedToolOutput.file.content' <<< "$out")" \
+        == 'line [REDACTED-SECRET-BREACH:aws-access-key] end' ]]; then
+    ok "a result with no tool name is scanned although its file_path is exempt"
+else
+    bad "a result with no tool name escaped scanning through its file_path"
+fi
+
 # 7. A result with no string leaves but a secret elsewhere raises the alarm without a rewrite,
 # and the wording does not claim a redaction that never happened.
 out=$(jq -nc --arg c "$AWS_KEY" '{tool_name: "Write", transcript_path: "", tool_input: {content: $c},
@@ -273,6 +324,25 @@ fi
 out=$(fail_payload "Exit code 1${nl}No such file or directory" | "$HOOK")
 if [[ -z "$out" ]]; then ok "a clean failure passes through"; else bad "clean failure decided: $out"; fi
 
+# 10a. A failure follows the same exemption rule: a Bash failure naming an exempt path still alarms, a Read failure
+# of one does not.
+out=$(printf '%s' "Exit code 1${nl}key=$AWS_KEY" | jq -Rsc '{session_id: "s", transcript_path: "",
+    hook_event_name: "PostToolUseFailure", tool_name: "Bash",
+    tool_input: {command: "bash /x/hooks/secret-bash-guard.test.sh"}, error: .}' | "$HOOK")
+if [[ "$(jq -r '.hookSpecificOutput.additionalContext' <<< "$out")" == *'SECRET BREACH'* ]]; then
+    ok "a Bash failure naming an exempt path still alarms"
+else
+    bad "a Bash failure escaped scanning through its command"
+fi
+out=$(printf '%s' "key=$AWS_KEY" | jq -Rsc '{session_id: "s", transcript_path: "",
+    hook_event_name: "PostToolUseFailure", tool_name: "Read",
+    tool_input: {file_path: "/x/hooks/secret-patterns.sh"}, error: .}' | "$HOOK")
+if [[ -z "$out" ]]; then
+    ok "a Read failure of an exempt path is not scanned"
+else
+    bad "an exempt Read failure was scanned"
+fi
+
 # 10b. A multi-line >64 KB failed-call error with the secret near the top must still raise the alarm (this
 # event cannot redact, only detect).
 out=$(fail_payload "Exit code 1${nl}key=${AWS_KEY}${nl}${pad}" | "$HOOK")
@@ -283,10 +353,10 @@ else
     bad "a secret near the top of a >64 KB failed-call error was missed"
 fi
 
-# 11. Fail loud under the right event: a payload the scrubber cannot evaluate yields the 'NOT screened' notice,
-# labelled with the payload's own event.
+# 11. Fail loud under the right event: a payload the scrubber cannot evaluate (a Read whose tool_input is no object)
+# yields the 'NOT screened' notice, labelled with the payload's own event.
 for ev in PostToolUse PostToolUseFailure; do
-    out=$(jq -nc --arg e "$ev" '{hook_event_name: $e, tool_name: "Bash", tool_input: "not-an-object", error: "e"}' \
+    out=$(jq -nc --arg e "$ev" '{hook_event_name: $e, tool_name: "Read", tool_input: "not-an-object", error: "e"}' \
         | "$HOOK" 2>/dev/null)
     if [[ "$(jq -r '.hookSpecificOutput.hookEventName' <<< "$out")" == "$ev" \
         && "$(jq -r '.hookSpecificOutput.additionalContext' <<< "$out")" == *'NOT screened'* ]]; then
@@ -295,6 +365,16 @@ for ev in PostToolUse PostToolUseFailure; do
         bad "unevaluable $ev payload (got: $out)"
     fi
 done
+
+# 11b. Input that is no JSON at all fails loud too. The event is read from the payload, so it is reported as
+# PostToolUse.
+out=$(printf 'x' | "$HOOK" 2>/dev/null)
+if [[ "$(jq -r '.hookSpecificOutput.hookEventName' <<< "$out")" == PostToolUse \
+    && "$(jq -r '.hookSpecificOutput.additionalContext' <<< "$out")" == *'NOT screened'* ]]; then
+    ok "a payload that is not JSON fails loud under PostToolUse"
+else
+    bad "non-JSON payload (got: $out)"
+fi
 
 TMPL="$DIR/../settings.json.tmpl"
 if [[ "$(jq -c '[.hooks.PostToolUseFailure[] | .hooks[] | .command]' "$TMPL")" \

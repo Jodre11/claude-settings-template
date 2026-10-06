@@ -55,6 +55,32 @@ expect deny "git sparse-checkout set is denied"         'git sparse-checkout set
 expect deny "git lfs pull is denied"                    'git lfs pull'            "$REVIEWER"
 expect deny "git replace is denied"                     'git replace HEAD HEAD~1' "$REVIEWER"
 
+hidden=('true | git commit -m x' 'command git commit -m x' 'env git commit -m x' '/usr/bin/git commit -m x'
+    'GIT_DIR=.git git commit -m x' 'git status | xargs git add' 'sudo git -C /repo push' '\git commit -m x')
+for c in "${hidden[@]}"; do
+    expect deny "a reviewer is denied a hidden mutating git: $c"  "$c"                     "$REVIEWER"
+    expect none "a non-reviewer is untouched by: $c"              "$c"                     general-purpose
+done
+# A reviewer's commit is denied at the commit word, before any heredoc text, whatever quotes the message holds.
+expect deny "a reviewer's commit heredoc with an odd quote is denied" \
+    $'git commit -m "$(cat <<\'EOF\'\nSupport 3.5" drives\nEOF\n)"' "$REVIEWER"
+expect none "a non-reviewer's commit heredoc with an odd quote is untouched" \
+    $'git commit -m "$(cat <<\'EOF\'\nSupport 3.5" drives\nEOF\n)"' general-purpose
+# A reviewer never needs the commit carve-out: a command strip_commit_heredoc would change is denied, whatever git
+# subcommand the walk finds.
+expect deny "a reviewer is denied a command the commit heredoc strip would change" \
+    $'git log --grep commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)"' "$REVIEWER"
+expect deny "a | ends the walk of an earlier bare git"         'git --no-pager | git commit -m x' "$REVIEWER"
+expect deny "a ; ends the walk of an earlier bare git"         'git --no-pager ; git commit -m x' "$REVIEWER"
+expect none "a reviewer may run git -C dir diff"               'git -C /repo diff HEAD~1' "$REVIEWER"
+expect none "a reviewer may echo the word git"                 'echo git'                "$REVIEWER"
+expect none "a reviewer may pipe git log into grep"            'git log --oneline | grep fix' "$REVIEWER"
+expect none "a reviewer may name a mutating word as git data"  'git log --grep=commit -- add.sh' "$REVIEWER"
+expect deny "a reviewer is denied git --config-env then commit" 'git --config-env x.y=HOME commit -m x' "$REVIEWER"
+expect none "a non-reviewer is untouched by git --config-env"  'git --config-env x.y=HOME commit -m x' general-purpose
+expect deny "a reviewer's untokenisable command is denied"     $'git status\x1e'         "$REVIEWER"
+expect none "a non-reviewer's untokenisable command is untouched" $'git status\x1e'      general-purpose
+
 expect none "a reviewer may run git status"                    'git status'              "$REVIEWER"
 expect none "a reviewer may run git diff"                      'git diff main...HEAD'    "$REVIEWER"
 expect none "a reviewer may run git log"                       'git log --oneline -5'    "$REVIEWER"
