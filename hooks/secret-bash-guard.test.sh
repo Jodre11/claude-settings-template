@@ -500,6 +500,16 @@ expect ALLOW "cat of a bracket-only date glob allowed" \
     'cat logs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].log'
 expect DENY  "a reader of a too-wildcarded glob is denied (not matched)" 'cat *a*b*c*d*e*f'
 expect ALLOW "a non-reader of a too-wildcarded glob is allowed"          'ls *a*b*c*d*e*f'
+# A quoted ( is literal text, never a glob group, so a pattern or filter holding one is not a secret path.
+expect ALLOW "a grep regex group after a bracket allowed"          "grep -E '[a-z]+(foo|bar)' notes.txt"
+expect ALLOW "a grep regex group between bounded classes allowed" \
+    'LC_ALL=C grep -a -o -E "[^;]{0,250}(LaunchEffort|effortLevel)[^;]{0,250}" /opt/x/claude'
+expect ALLOW "a jq filter of .[] and select allowed"               "jq '.[] | select(.type == \"stdio\")' x.json"
+expect ALLOW "a jq array filter with select allowed"               "jq '[.projects[] | select(.x == 1)]' x.json"
+expect DENY  "a quoted extglob of a secret still denied beside it" "cat '@(x)' .env"
+expect DENY  "a remote copy of a grouped secret glob denied"       "scp 'host:.e?(v|x)' /tmp/claude-x/"
+expect DENY  "a remote copy of an extglob secret name denied"      "rsync 'host:.en@(v)' /tmp/claude-x/"
+expect DENY  "a remote copy whose group supplies the dot denied"   "scp 'host:@(.n)etrc' /tmp/claude-x/"
 
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'
@@ -645,9 +655,13 @@ expect ALLOW "echo of a brace expansion allowed"                   'echo {a,b}'
 
 # Timing. A PreToolUse hook that overruns its 5 s timeout does not block, so a command this hook cannot screen in
 # time passes unscreened. bash-guard denies anything over 64 KiB, so each case is at most 65536 characters, and each
-# must be decided within TIME_LIMIT_MS, half the timeout: a CI runner is two to three times slower per core than a
-# current Mac, so a row that passes there leaves the hook at least twice its worst case inside the timeout.
+# must be decided within TIME_LIMIT_MS, half the timeout, in one of TIME_RUNS runs: a CI runner is two to three times
+# slower per core than a current Mac, so a row that passes there leaves the hook at least twice its worst case inside
+# the timeout. The budget is a speed target that load on a busy machine can push one run past, so a slow run is
+# retried; TIME_HARD_MS, kept below the timeout, bounds every run, and a run that reaches it fails the row at once.
 TIME_LIMIT_MS=2500
+TIME_HARD_MS=4000
+TIME_RUNS=3
 
 # _ms: print the time in milliseconds. bash 5 has EPOCHREALTIME; an older bash falls back to whole seconds, which
 # can fail a row early but never passes one the precise clock would fail.
@@ -660,18 +674,60 @@ _ms() {
     fi
 }
 
-# expect_fast <DENY|ALLOW> <description> <cmd>: pass when the hook decides <cmd> as expected within TIME_LIMIT_MS.
+# expect_fast <DENY|ALLOW> <description> <cmd>: pass when the hook decides <cmd> as expected within TIME_LIMIT_MS in
+# one of TIME_RUNS runs; a wrong verdict or a run of TIME_HARD_MS or more fails at once.
 expect_fast() {
-    local got start elapsed under="${HOOK_BASH:+, $HOOK_BASH}${LC_ALL:+, LC_ALL=$LC_ALL}"
-    start=$(_ms)
-    got=$(run "$3")
-    elapsed=$(( $(_ms) - start ))
-    if [[ "$got" == "$1" && "$elapsed" -lt "$TIME_LIMIT_MS" && ${#3} -le 65536 ]]; then
-        ok "$2 (${#3} characters, ${elapsed} ms$under)"
+    local got start elapsed i times="" under="${HOOK_BASH:+, $HOOK_BASH}${LC_ALL:+, LC_ALL=$LC_ALL}"
+    for (( i = 1; i <= TIME_RUNS; i++ )); do
+        start=$(_ms)
+        got=$(run "$3")
+        elapsed=$(( $(_ms) - start ))
+        times+="${times:+, }${elapsed}"
+        if [[ "$got" != "$1" ]] || (( elapsed >= TIME_HARD_MS || ${#3} > 65536 )); then
+            break
+        fi
+        if (( elapsed < TIME_LIMIT_MS )); then
+            ok "$2 (${#3} characters, ${times} ms$under)"
+            return
+        fi
+    done
+    bad "$2 (${#3} characters$under): want $1 within ${TIME_LIMIT_MS} ms in one of ${TIME_RUNS} runs, each under\
+ ${TIME_HARD_MS} ms, got $got in ${times} ms"
+}
+
+# expect_fast against a stub hook that sleeps for the listed seconds, one per run, with the limits scaled down: a run
+# over the budget is retried, up to three runs; a wrong verdict, or a run at the hard limit, fails at once.
+sdir=$(mktemp -d)
+cat > "$sdir/hook" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+n=$(( $(cat "$STUB_DIR/n") + 1 ))
+echo "$n" > "$STUB_DIR/n"
+sleep "$(sed -n "${n}p" "$STUB_DIR/delays")"
+printf '%s' '{"hookSpecificOutput":{"permissionDecision":"deny"}}'
+EOF
+chmod +x "$sdir/hook"
+export STUB_DIR="$sdir"
+# _stub_case <want verdict> <delays> <want PASS|FAIL> <want runs> <description>
+_stub_case() {
+    local res runs
+    printf '%s\n' $2 > "$sdir/delays"
+    echo 0 > "$sdir/n"
+    res=$(HOOK="$sdir/hook" TIME_LIMIT_MS=1000 TIME_HARD_MS=2000 expect_fast "$1" stub x)
+    runs=$(cat "$sdir/n")
+    if [[ "$res" == "$3: "* && "$runs" == "$4" ]]; then
+        ok "expect_fast: $5"
     else
-        bad "$2 (${#3} characters$under): want $1 within ${TIME_LIMIT_MS} ms, got $got in ${elapsed} ms"
+        bad "expect_fast: $5 (want $3 after $4 runs, got '${res%%:*}' after $runs)"
     fi
 }
+_stub_case DENY  '0'           PASS 1 "a fast run passes at once"
+_stub_case DENY  '1.2 0'       PASS 2 "a run over the budget is retried, and a fast retry passes"
+_stub_case DENY  '1.2 1.2 1.2' FAIL 3 "three runs over the budget fail"
+_stub_case DENY  '2.2 0'       FAIL 1 "a run at the hard limit fails without a retry"
+_stub_case ALLOW '0 0'         FAIL 1 "a wrong verdict fails without a retry"
+rm -rf "$sdir"
+unset STUB_DIR
 
 # Over the bound, the hook denies without screening, whatever the content.
 expect DENY "a command over the scan bound denied" "true $(printf 'a%.0s' {1..70000})"
@@ -784,9 +840,12 @@ expect_fast DENY "many short variant words behind every walk" \
 cls='[[:alnum:][:punct:]]'
 expect_fast DENY "many bracketed glob words" \
     "cat $(printf "*${cls}*${cls}*${cls}*${cls}*${cls}# %.0s" {1..610}).env"
-# A component holding ( fails closed before any match: an extglob group inside repeating groups is exponential.
+# A local component holding ( is skipped before any match, and a host:path one has its groups matched as one *: an
+# extglob group inside repeating groups is exponential.
 expect_fast DENY "many extglob glob words" \
     "cat $(printf "'?+(?|??)+(?|??)+(?|??)+(?|??)+(?|??)#' %.0s" {1..1400}).env"
+expect_fast DENY "many remote extglob glob words" \
+    "scp $(printf "'h:?+(?|??)+(?|??)+(?|??)+(?|??)+(?|??)#' %.0s" {1..1300}).env"
 # Glob words that match inside the bound (two stars, two brackets), up to the test budget, then fail closed.
 cls2='[!abcdefghijklmnopqrstuvwxyz]'
 expect_fast DENY "many glob words inside the bound" \

@@ -154,9 +154,22 @@ if path_glob_is_secret '[0-9][0-9][0-9][0-9]-[0-9][0-9]'; then
 else
     ok "a bracket-only date component is matched, not treated as secret"
 fi
-# A component holding ( fails closed: an extglob group inside repeating groups matches in exponential time.
-path_glob_is_secret '*(q|z)' && ok "a component holding ( is treated as secret" \
-    || bad "a component holding ( was matched"
+# A local operand's ( is literal (bash-guard denies an unquoted one) and no secret name holds one, so it cannot match.
+for p in '*(q|z)' '*@(.env)' '.e?(v|x)' '[^;]{0,9}(a|b)' '.[] | select(.a == 1)' '[.x[] | select(.k == 1)]'; do
+    if path_glob_is_secret "$p"; then bad "a local component holding ( was treated as secret: $p"; else
+        ok "a local component holding ( is not secret: $p"; fi
+done
+# A remote shell may read a ( group in a host:path operand, so there the span from the first ( to the last ), with any
+# extglob operator before it, is matched as a * (a superset of what any group matches; no exponential match), and a (
+# alone makes the component a pattern.
+for p in '*(q|z)' '*@(.env)' '.e?(v|x)' '.en@(v)' '.e(n|x)?' '.en+(v' 'id_r?(s|x)a' '@(.n)etrc' '?(.)pgpass'; do
+    if path_glob_is_secret "$p" remote; then ok "a remote group that could match a secret name is secret: $p"; else
+        bad "a remote group that could match a secret name was missed: $p"; fi
+done
+for p in 'notes(1).txt' 'notes?(1).txt'; do
+    if path_glob_is_secret "$p" remote; then bad "a remote group that cannot match was treated as secret: $p"; else
+        ok "a remote group that cannot match a secret name is not secret: $p"; fi
+done
 _SECRET_GLOB_TESTS=$_SECRET_GLOB_BUDGET
 path_glob_is_secret '*.md' && ok "a glob test past the budget is treated as secret" \
     || bad "a glob test past the budget was matched"

@@ -240,6 +240,8 @@ t_scanner() {
     expect_verdict DENY  "a ( after a word is denied" 'echo x (y)'
     expect_verdict DENY  "arithmetic (( is denied" '(( n++ ))'
     expect_verdict DENY  "a zsh glob qualifier is denied" 'ls *(.)'
+    expect_verdict DENY  "an extglob group inside a word is denied" 'cat .e@(n)v'
+    expect_verdict DENY  "a zsh group inside a word is denied" 'cat .en(v|x)'
     expect_verdict ALLOW "an escaped ( for find is allowed" 'find . \( -name a -o -name b \)'
     expect_verdict ALLOW "a single-quoted ( is allowed" "echo '(x)'"
     expect_verdict ALLOW "a double-quoted ( is allowed" 'echo "(x)"'
