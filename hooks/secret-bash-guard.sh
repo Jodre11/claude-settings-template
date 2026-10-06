@@ -249,6 +249,23 @@ _secret_variant() {
                 || { [[ "$v" == *[\*\?\[\(]* ]] && path_glob_is_secret "$v" remote; }; }; then
             return 0
         fi
+        # A word of two or more colons may put the path after the last (git's :0:path index stage), or after the first
+        # ]: (a bracketed IPv6 host, [::1]:path or user@[fe80::1]:path, whose path may hold a colon): test both.
+        if [[ "$v" == *:* ]]; then
+            v="${w%:*}"
+            v="${w:${#v}+1}"
+            if [[ -n "$v" ]] && { path_is_secret "$v" \
+                    || { [[ "$v" == *[\*\?\[\(]* ]] && path_glob_is_secret "$v" remote; }; }; then
+                return 0
+            fi
+            if [[ "$w" == *]:* ]]; then
+                v="${w#*]:}"
+                if [[ -n "$v" ]] && { path_is_secret "$v" \
+                        || { [[ "$v" == *[\*\?\[\(]* ]] && path_glob_is_secret "$v" remote; }; }; then
+                    return 0
+                fi
+            fi
+        fi
     fi
     [[ "$w" == *[\*\?\[]* ]] && path_glob_is_secret "$w"
 }

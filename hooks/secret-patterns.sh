@@ -181,18 +181,66 @@ path_is_secret() {
     [[ "/$1" == $_SECRET_PATH_ANY && "/$1" != $_SECRET_ALLOW_ANY ]]
 }
 
+# _glob_brackets_as_any <pattern>: set _GLOB_ANY to <pattern> with each bracket expression, and each [ that opens
+# none, read as ?: a superset of what it matches, leaving every ( outside a bracket. A backslash escapes the next
+# character, inside a bracket or out, and a [:class:], [.sym.] or [=eq=] inside a bracket is skipped whole: neither ]
+# closes the bracket.
+_glob_brackets_as_any() {
+    local p="$1" i=0 j e d t n=${#1}
+    _GLOB_ANY=""
+    while (( i < n )); do
+        if [[ "${p:i:1}" == '\' ]]; then
+            _GLOB_ANY+="${p:i:2}"
+            i=$(( i + 2 ))
+            continue
+        fi
+        if [[ "${p:i:1}" != '[' ]]; then
+            _GLOB_ANY+="${p:i:1}"
+            i=$(( i + 1 ))
+            continue
+        fi
+        j=$(( i + 1 ))
+        if [[ "${p:j:1}" == [\!^] ]]; then j=$(( j + 1 )); fi
+        if [[ "${p:j:1}" == ']' ]]; then j=$(( j + 1 )); fi
+        e=-1
+        while (( j < n )); do
+            if [[ "${p:j:1}" == '\' ]]; then
+                j=$(( j + 2 ))
+                continue
+            fi
+            if [[ "${p:j:1}" == ']' ]]; then
+                e=$j
+                break
+            fi
+            d="${p:j+1:1}"
+            if [[ "${p:j:1}" == '[' && "$d" == [:.=] ]]; then
+                t="${p:j+2}"
+                if [[ "$t" == *"$d]"* ]]; then
+                    t="${t%%"$d]"*}"
+                    j=$(( j + ${#t} + 4 ))
+                    continue
+                fi
+            fi
+            j=$(( j + 1 ))
+        done
+        _GLOB_ANY+='?'
+        if (( e < 0 )); then i=$(( i + 1 )); else i=$(( e + 1 )); fi
+    done
+}
+
 # path_glob_is_secret <form> [remote]: 0 if the last path component of <form> holds *, ? or [ and, read as a pattern,
 # matches a representative secret name for which path_is_secret holds in its place, else 1. A pattern that does not
 # start with . cannot match a dotfile, and a component made only of * and ? is skipped (it would match every name). A
-# local component holding ( is skipped too: its ( is literal (bash-guard denies an unquoted one, and fnmatch-style
-# consumers have no groups) and no secret name holds one. Given remote (a host:path operand, which a remote shell may
-# expand), a ( makes the component a pattern, and the span from its first ( to its last ), with any extglob operator
-# before it, is matched as a *: a superset of what a group matches, with no exponential match; the dotfile rule is
-# then dropped, as the group may supply the leading dot. A component over
-# _SECRET_GLOB_MAX_CHARS characters, or with more than _SECRET_GLOB_MAX_WILD * characters (plus [ characters, when it
-# has a *), and every test once _SECRET_GLOB_BUDGET have run, is not matched: it is treated as secret (fail closed).
+# local component holding ( outside a bracket expression is skipped too: that ( is literal (bash-guard denies an
+# unquoted one, and fnmatch-style consumers have no groups) and no secret name holds one; inside a bracket, a ( is a
+# member like any other. Given remote (a host:path operand, which a remote shell may expand), a ( makes the component
+# a pattern, and with its brackets read as ?, the span from its first ( to its last ), with any extglob operator before
+# it, is matched as a *: a superset of what a group matches, with no exponential match; the dotfile rule is then
+# dropped, as the group may supply the leading dot. A component over _SECRET_GLOB_MAX_CHARS characters, or with more
+# than _SECRET_GLOB_MAX_WILD * characters (plus [ characters, when it has a *), and every test once
+# _SECRET_GLOB_BUDGET have run, is not matched: it is treated as secret (fail closed).
 path_glob_is_secret() {
-    local c="$1" dir="" r pre post dots
+    local c="$1" dir="" r s pre post dots
     # ${1%/*} then a substring, not ${1##*/}: a longest-prefix removal is quadratic in the operand's length.
     if [[ "$1" == */* ]]; then
         dir="${1%/*}"
@@ -208,7 +256,7 @@ path_glob_is_secret() {
             r="${r%[@!+]}"
         fi
     else
-        if [[ "$c" != *[\*\?\[]* || "$c" != *[!\*\?]* || "$c" == *\(* ]]; then
+        if [[ "$c" != *[\*\?\[]* || "$c" != *[!\*\?]* ]] || [[ "$c" == *\(* && "$c" != *\[* ]]; then
             return 1
         fi
         r="${c%%[\*\?\[]*}"
@@ -223,13 +271,21 @@ path_glob_is_secret() {
     if (( _SECRET_GLOB_TESTS > _SECRET_GLOB_BUDGET || ${#c} > _SECRET_GLOB_MAX_CHARS )); then
         return 0
     fi
+    s="$c"
+    if [[ "$c" == *\(* && "$c" == *\[* ]]; then
+        _glob_brackets_as_any "$c"
+        s="$_GLOB_ANY"
+    fi
     # dots marks a component whose dotfile filter applies; a group may supply the leading . itself.
     dots=1
-    if [[ "$c" == *\(* ]]; then
-        pre="${c%%\(*}"
+    if [[ "$s" == *\(* ]]; then
+        if [[ "${2:-}" != remote ]]; then
+            return 1
+        fi
+        pre="${s%%\(*}"
         post=""
-        if [[ "$c" == *\(*\)* ]]; then
-            post="${c##*\)}"
+        if [[ "$s" == *\(*\)* ]]; then
+            post="${s##*\)}"
         fi
         c="${pre%[@!+?*]}*$post"
         dots=0

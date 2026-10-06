@@ -159,10 +159,17 @@ for p in '*(q|z)' '*@(.env)' '.e?(v|x)' '[^;]{0,9}(a|b)' '.[] | select(.a == 1)'
     if path_glob_is_secret "$p"; then bad "a local component holding ( was treated as secret: $p"; else
         ok "a local component holding ( is not secret: $p"; fi
 done
+# Inside a bracket expression a ( is a member, which fnmatch-style consumers match, so it does not make a component
+# literal.
+for p in '.en[v(]' '.e[(n]v' 'id_rs[(a]' '.en[!(]' '.en[v\](]' 'id_rs[\]a(]'; do
+    if path_glob_is_secret "$p"; then ok "a bracket holding ( is still matched: $p"; else
+        bad "a bracket holding ( was skipped: $p"; fi
+done
 # A remote shell may read a ( group in a host:path operand, so there the span from the first ( to the last ), with any
 # extglob operator before it, is matched as a * (a superset of what any group matches; no exponential match), and a (
 # alone makes the component a pattern.
-for p in '*(q|z)' '*@(.env)' '.e?(v|x)' '.en@(v)' '.e(n|x)?' '.en+(v' 'id_r?(s|x)a' '@(.n)etrc' '?(.)pgpass'; do
+for p in '*(q|z)' '*@(.env)' '.e?(v|x)' '.en@(v)' '.e(n|x)?' '.en+(v' 'id_r?(s|x)a' '@(.n)etrc' '?(.)pgpass' \
+        '[.]e?(v|x)' '.e[)(]+(v)'; do
     if path_glob_is_secret "$p" remote; then ok "a remote group that could match a secret name is secret: $p"; else
         bad "a remote group that could match a secret name was missed: $p"; fi
 done
