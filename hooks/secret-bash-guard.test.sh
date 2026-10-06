@@ -510,6 +510,13 @@ expect DENY  "a quoted extglob of a secret still denied beside it" "cat '@(x)' .
 expect DENY  "a remote copy of a grouped secret glob denied"       "scp 'host:.e?(v|x)' /tmp/claude-x/"
 expect DENY  "a remote copy of an extglob secret name denied"      "rsync 'host:.en@(v)' /tmp/claude-x/"
 expect DENY  "a remote copy whose group supplies the dot denied"   "scp 'host:@(.n)etrc' /tmp/claude-x/"
+expect DENY  "a remote copy from a bracketed IPv6 host denied"     "scp '[::1]:.e?(v|x)' /tmp/claude-x/"
+expect DENY  "a remote copy from a user at an IPv6 host denied"    "scp 'u@[fe80::1]:.en@(v)' /tmp/claude-x/"
+expect DENY  "an IPv6 remote copy whose group holds a colon denied" "scp '[::1]:.en@(v|:)' /tmp/claude-x/"
+expect DENY  "a git show of an index-stage secret denied"           'git show :0:.netrc'
+expect DENY  "a git show of a merge-stage key denied"               'git show :2:id_rsa'
+expect DENY  "a reader of a bracket holding ( denied"              "cat '.en[v(]'"
+expect DENY  "a git show of a bracket holding ( denied"            "git show 'HEAD:.en[v(]'"
 
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'
@@ -846,6 +853,9 @@ expect_fast DENY "many extglob glob words" \
     "cat $(printf "'?+(?|??)+(?|??)+(?|??)+(?|??)+(?|??)#' %.0s" {1..1400}).env"
 expect_fast DENY "many remote extglob glob words" \
     "scp $(printf "'h:?+(?|??)+(?|??)+(?|??)+(?|??)+(?|??)#' %.0s" {1..1300}).env"
+# Components at the length bound of brackets holding (, each read bracket by bracket before any match.
+expect_fast DENY "many bracket-and-paren glob words" \
+    "cat $(printf "'.$(printf '[(]%.0s' {1..42})' %.0s" {1..500}).env"
 # Glob words that match inside the bound (two stars, two brackets), up to the test budget, then fail closed.
 cls2='[!abcdefghijklmnopqrstuvwxyz]'
 expect_fast DENY "many glob words inside the bound" \
