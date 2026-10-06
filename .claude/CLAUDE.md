@@ -7,6 +7,9 @@ This repo is cloned to `~/.claude` independently on each machine (macOS, Windows
 when you edit files there. Run the tests with `bash tests/run.sh`; on macOS use Homebrew's bash, as the suite needs
 bash 4 or later.
 
+**Quality gate:** push only after a clean local run of the full suite, docs-only and settings-only changes included.
+The tests pin values in `settings.json.tmpl`, so a one-line toggle can fail CI.
+
 ## Cross-Platform Architecture
 
 - **`settings.json`** (untracked; generated per machine by `hydrate.sh` from `settings.json.tmpl`) — cross-platform
