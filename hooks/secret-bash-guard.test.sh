@@ -604,6 +604,7 @@ expect DENY  "a parallel numeric brace expansion denied"            "parallel ec
 expect DENY  "a fed parallel with no command denied"                'echo x | parallel'
 expect DENY  "a fed parallel with only an option and its value denied" 'echo x | parallel -j 4'
 expect DENY  "a parallel with no command fed by a file denied"      'parallel --tag < x.txt'
+expect DENY  "a fed parallel whose only template word is empty denied" "echo x | parallel ''"
 expect ALLOW "a fed parallel with a command allowed"                'ls | parallel gzip'
 expect ALLOW "a fed parallel with an attached option value allowed" 'ls | parallel -j4 --jobs=2 gzip -k'
 # ssh's local-command options run a command on this machine, and ssh with no remote command runs its input there.
@@ -618,6 +619,31 @@ expect DENY  "a fed ssh with only options after the host denied"    'echo x | ss
 expect DENY  "a fed ssh with an option value before the host denied" 'echo x | ssh -P tag host'
 expect DENY  "a fed ssh with an unknown option letter denied"       'echo x | ssh -Z x host'
 expect ALLOW "a fed ssh with options after the host and a command allowed" 'echo x | ssh host -l user cat'
+expect DENY  "a fed ssh whose only remote word is empty denied"     "echo x | ssh host ''"
+expect DENY  "an ssh config read from its input denied"             'echo x | ssh -F /dev/stdin host uptime'
+expect DENY  "an ssh config read from an attached fd path denied"   'ssh -F/dev/fd/3 host uptime'
+expect DENY  "an ssh option value read from its input denied"       'ssh -oPKCS11Provider=/dev/stdin host uptime'
+expect DENY  "an ssh config reaching stdin through .. denied"       'ssh -F /tmp/../dev/stdin host uptime'
+expect DENY  "an ssh config reaching stdin by a relative path denied" 'ssh -F ../../../dev/stdin host uptime'
+expect DENY  "an ssh config of a dev path relative to / denied"     'ssh -F dev/stdin host uptime'
+expect DENY  "an ssh config of stdin relative to /dev denied"       'ssh -F stdin host uptime'
+expect DENY  "an ssh config of an upper-case fd path denied"        'ssh -F /DEV/FD/3 host uptime'
+expect DENY  "an ssh config of a mixed-case fd path denied"         'ssh -F /Dev/Fd/0 host uptime'
+expect DENY  "an ssh config of an upper-case stdin denied"          'ssh -F STDIN host uptime'
+# The root volume folds case, so /DEV/stdin is the shell's own input too.
+expect DENY  "a fed shell reading an upper-case /dev path denied"   'echo x | bash /DEV/stdin'
+expect DENY  "a fed shell reading /dev through .. denied"           'echo x | bash /tmp/../dev/stdin'
+expect DENY  "a fed shell reading a dev path relative to / denied"  'echo x | bash dev/stdin'
+expect DENY  "a fed shell reading an fd path relative to /dev denied" 'echo x | bash fd/0'
+expect DENY  "a fed shell reading stdin relative to /dev denied"    'echo x | bash stdin'
+expect DENY  "a fed shell reading a bare fd number denied"          'echo x | bash 0'
+expect DENY  "an ssh config of a bare fd number denied"             'ssh -F 3 host uptime'
+expect DENY  "an ssh config of an attached bare fd number denied"   'ssh -F3 host uptime'
+expect ALLOW "an ssh port value allowed"                            'ssh -p 22 -p22 -oPort=22 host uptime'
+expect ALLOW "a shell running a script by a .. path allowed"        'bash ../scripts/x.sh'
+expect ALLOW "an ssh config file allowed"                           'ssh -F ~/.ssh/config.d/x host uptime'
+expect ALLOW "an ssh config in the working directory allowed"       'ssh -F ./ssh_config.d/devices host uptime'
+expect ALLOW "an ssh remote read of /proc allowed"                  'ssh host cat /proc/cpuinfo'
 
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'

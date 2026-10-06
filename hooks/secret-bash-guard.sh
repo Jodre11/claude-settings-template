@@ -301,12 +301,22 @@ _braces_are_replacements() {
     (( ! in ))
 }
 
-# _no_program <word>: 0 if a shell or interpreter given <word> reads its own input or a special file rather than a
-# program: anything under /dev/ or /proc/ in any spelling of the leading slashes (fail closed, no list of names).
-_no_program() {
-    local re='^/+(\./+)*(dev|proc)/'
-    [[ "$1" =~ $re ]]
+# _names_input <path> [fd]: 0 if <path> may name this command's own input or a special file (so an ssh option value,
+# or the program a shell or interpreter is given, is not a file of its own), wherever it is resolved from: a .. segment,
+# a dev, proc or fd segment anywhere (/tmp/../dev/stdin, dev/stdin from /, fd/0 from /dev), or a last segment of stdin,
+# stdout or stderr (fail closed: the working directory is unknown here), in any case (the root volume may fold it).
+# Given fd, where a file is expected (a program, a config), an all-digit last segment counts too (0 from /dev/fd).
+_names_input() {
+    local re='(^|/)(\.\.|dev|proc|fd)(/|$)|(^|/)std(in|out|err)$' rc=1
+    if [[ "${2:-}" == fd ]]; then
+        re+='|(^|/)[0-9]+$'
+    fi
+    shopt -s nocasematch
+    if [[ "$1" =~ $re ]]; then rc=0; fi
+    shopt -u nocasematch
+    return $rc
 }
+
 
 # _deny_group <form>: deny a zsh grouping or loop at command position.
 _deny_group() {
@@ -761,14 +771,14 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 shv="${w//[!oO]/}"
                 shv="${shv//o/O}"
             elif [[ "$w" != [-+]* ]]; then
-                # The program: a shell reading a secret file as its script prints it in its errors. A path under /dev/
-                # or /proc/ (/dev/stdin, /dev/fd/0) is the shell's own input, not a program, so a shell given one stays
-                # unresolved (a fed one is denied at stage end). Every program word is still read: one that names
-                # a secret is a reader deny either way.
+                # The program: a shell reading a secret file as its script prints it in its errors. A path that may
+                # name its own input (/dev/stdin, /DEV/fd/0, dev/stdin, a .. path: _names_input) is not a program, so a
+                # shell given one stays unresolved (a fed one is denied at stage end). Every program word is still
+                # read: one that names a secret is a reader deny either way.
                 if (( wsec )); then
                     _deny_reader "$shn $w"
                 fi
-                if ! _no_program "$w"; then
+                if ! _names_input "$w" fd; then
                     act="${act//H/}"
                 fi
             fi
@@ -786,7 +796,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if (( wsec )); then
                     _deny_reader "$ipn $w"
                 fi
-                if ! _no_program "$w"; then
+                if ! _names_input "$w" fd; then
                     act="${act//K/}"
                 fi
             fi
@@ -896,7 +906,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     wpc=2
                 elif [[ "$w" == -?* ]]; then
                     if [[ "$w" != *=* && "$w" == *[A-Za-z] ]]; then wpo=1; fi
-                else
+                elif [[ -n "$w" ]]; then
                     wpc=1
                 fi
             fi
@@ -911,20 +921,37 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     || "$w" == *[cC][oO][mM][mM][aA][nN][dD]=* ]]; then
                 _deny_shell "$smn '$w'"
             fi
+            # An option value naming this command's own input (-F /dev/stdin, -oX=/dev/fd/3) reads what the command
+            # line supplies, and so may a config file (-F) named by a bare fd number; an empty word is no command, as
+            # ssh joins it to nothing.
             if (( smc )); then
                 :
             elif (( smo )); then
                 smo=0
+                if _names_input "$w" "$smf" || { [[ "$w" == *=* ]] && _names_input "${w#*=}"; }; then
+                    _deny_shell "$smn option value '$w'"
+                fi
             elif [[ "$w" == -?* ]]; then
+                if [[ "$w" == *=* ]] && _names_input "${w#*=}"; then
+                    _deny_shell "$smn option value '$w'"
+                fi
                 # A value-taking letter takes the rest of its bundle, or the next word when it ends the bundle.
                 smx="${w#-}"
                 while [[ -n "$smx" ]]; do
                     if [[ "${smx:0:1}" != [46AaCfGgKkMNnqsTtVvXxYy] ]]; then
-                        if (( ${#smx} == 1 )); then smo=1; fi
+                        smf=""
+                        if [[ "${smx:0:1}" == F ]]; then smf=fd; fi
+                        if (( ${#smx} == 1 )); then
+                            smo=1
+                        elif _names_input "${smx:1}" "$smf"; then
+                            _deny_shell "$smn option value '$w'"
+                        fi
                         break
                     fi
                     smx="${smx:1}"
                 done
+            elif [[ -z "$w" ]]; then
+                :
             elif (( smh )); then
                 smc=1
             else
@@ -1037,6 +1064,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if [[ "$act" != *M* ]]; then act+=M; fi
                 smn="$nm"
                 smo=0
+                smf=""
                 smh=0
                 smc=0 ;;
             E)
