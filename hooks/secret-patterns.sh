@@ -168,8 +168,7 @@ _secret_path_alternations
 # Bounds on path_glob_is_secret, whose cost under bash 3.2 grows with the wildcards in the operand: glob tests allowed
 # per hook run (one hook run sources this file once), the longest component matched, the most * characters in a matched
 # component plus, when it has a *, its [ characters (next to a *, a bracket expression costs as much to match as
-# another star; alone it is linear), and the running count of tests. A component holding ( is never matched: an
-# extglob group inside repeating groups takes exponential time.
+# another star; alone it is linear), and the running count of tests.
 _SECRET_GLOB_BUDGET=500
 _SECRET_GLOB_MAX_CHARS=128
 _SECRET_GLOB_MAX_WILD=5
@@ -182,33 +181,58 @@ path_is_secret() {
     [[ "/$1" == $_SECRET_PATH_ANY && "/$1" != $_SECRET_ALLOW_ANY ]]
 }
 
-# path_glob_is_secret <form>: 0 if the last path component of <form> holds *, ? or [ and, read as a pattern, matches a
-# representative secret name for which path_is_secret holds in its place, else 1. A pattern that does not start with
-# . cannot match a dotfile, and a component made only of * and ? is skipped (it would match every name). A component
-# over _SECRET_GLOB_MAX_CHARS characters, holding (, or with more than _SECRET_GLOB_MAX_WILD * characters (plus [
-# characters, when it has a *), and every test once _SECRET_GLOB_BUDGET have run, is not matched: it is treated as
-# secret (fail closed).
+# path_glob_is_secret <form> [remote]: 0 if the last path component of <form> holds *, ? or [ and, read as a pattern,
+# matches a representative secret name for which path_is_secret holds in its place, else 1. A pattern that does not
+# start with . cannot match a dotfile, and a component made only of * and ? is skipped (it would match every name). A
+# local component holding ( is skipped too: its ( is literal (bash-guard denies an unquoted one, and fnmatch-style
+# consumers have no groups) and no secret name holds one. Given remote (a host:path operand, which a remote shell may
+# expand), a ( makes the component a pattern, and the span from its first ( to its last ), with any extglob operator
+# before it, is matched as a *: a superset of what a group matches, with no exponential match; the dotfile rule is
+# then dropped, as the group may supply the leading dot. A component over
+# _SECRET_GLOB_MAX_CHARS characters, or with more than _SECRET_GLOB_MAX_WILD * characters (plus [ characters, when it
+# has a *), and every test once _SECRET_GLOB_BUDGET have run, is not matched: it is treated as secret (fail closed).
 path_glob_is_secret() {
-    local c="$1" dir="" r
+    local c="$1" dir="" r pre post dots
     # ${1%/*} then a substring, not ${1##*/}: a longest-prefix removal is quadratic in the operand's length.
     if [[ "$1" == */* ]]; then
         dir="${1%/*}"
         c="${1:${#dir}+1}"
         dir+="/"
     fi
-    if [[ "$c" != *[\*\?\[]* || "$c" != *[!\*\?]* ]]; then
-        return 1
+    if [[ "${2:-}" == remote ]]; then
+        if [[ "$c" != *[\*\?\[\(]* || "$c" != *[!\*\?]* ]]; then
+            return 1
+        fi
+        r="${c%%[\*\?\[\(]*}"
+        if [[ "${c:${#r}:1}" == '(' ]]; then
+            r="${r%[@!+]}"
+        fi
+    else
+        if [[ "$c" != *[\*\?\[]* || "$c" != *[!\*\?]* || "$c" == *\(* ]]; then
+            return 1
+        fi
+        r="${c%%[\*\?\[]*}"
     fi
     # The pattern's literal prefix must start some representative (the list holds each as |r|).
-    r="${c%%[\*\?\[]*}"
     if [[ -n "$r" && "$_SECRET_REPRESENTATIVE_LIST" != *"|$r"* ]]; then
         return 1
     fi
     # bash 3.2 backtracks per representative on stacked wildcards, so a component too long or too wildcarded to
     # match cheaply, or any glob test past the per-run budget, is treated as secret (fail closed) instead.
     _SECRET_GLOB_TESTS=$(( _SECRET_GLOB_TESTS + 1 ))
-    if (( _SECRET_GLOB_TESTS > _SECRET_GLOB_BUDGET || ${#c} > _SECRET_GLOB_MAX_CHARS )) || [[ "$c" == *\(* ]]; then
+    if (( _SECRET_GLOB_TESTS > _SECRET_GLOB_BUDGET || ${#c} > _SECRET_GLOB_MAX_CHARS )); then
         return 0
+    fi
+    # dots marks a component whose dotfile filter applies; a group may supply the leading . itself.
+    dots=1
+    if [[ "$c" == *\(* ]]; then
+        pre="${c%%\(*}"
+        post=""
+        if [[ "$c" == *\(*\)* ]]; then
+            post="${c##*\)}"
+        fi
+        c="${pre%[@!+?*]}*$post"
+        dots=0
     fi
     r="${c//[!\*]/}"
     if [[ -n "$r" ]]; then
@@ -218,7 +242,7 @@ path_glob_is_secret() {
         return 0
     fi
     for r in "${SECRET_PATH_REPRESENTATIVES[@]}"; do
-        if [[ "$r" == .* && "$c" != .* ]]; then
+        if (( dots )) && [[ "$r" == .* && "$c" != .* ]]; then
             continue
         fi
         # shellcheck disable=SC2053  # c is the operand's own pattern

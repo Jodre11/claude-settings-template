@@ -222,7 +222,8 @@ fi
 
 # _secret_variant <word>: 0 if a form inside <word> names a secret path: the value after its first = (--opt=V, NAME=V,
 # if=V), the word minus its first two characters when it is -xV, or the text after its first : (REV:path, host:path);
-# or, when its last component is a glob, the word or one of those forms matches a secret name. An --exclude= or
+# or, when its last component is a glob, the word or one of those forms matches a secret name (after a :, a ( group
+# counts as a glob: a remote shell may expand it). An --exclude= or
 # --exclude-dir= value names files to skip, not to read. A form with an empty value is skipped, and the glob test runs
 # only on a form that holds a glob character: a word of many short separators would otherwise pay both for nothing.
 _secret_variant() {
@@ -244,7 +245,8 @@ _secret_variant() {
     fi
     if [[ "$w" == *:* ]]; then
         v="${w#*:}"
-        if [[ -n "$v" ]] && { path_is_secret "$v" || { [[ "$v" == *[\*\?\[]* ]] && path_glob_is_secret "$v"; }; }; then
+        if [[ -n "$v" ]] && { path_is_secret "$v" \
+                || { [[ "$v" == *[\*\?\[\(]* ]] && path_glob_is_secret "$v" remote; }; }; then
             return 0
         fi
     fi
