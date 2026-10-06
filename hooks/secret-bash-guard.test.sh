@@ -812,12 +812,17 @@ expect_fast DENY "a commit heredoc behind many option words" \
 
 # Desktops and CI runners usually run a UTF-8 locale, and glibc's regex engine is many times slower in a multibyte
 # locale than in C: time the rows under one whenever the system has one, whatever locale this suite was started in.
+utf8_locale=""
 for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | grep -qx "$l"; then
+    if locale -a 2>/dev/null | grep -Fqx "$l"; then
+        utf8_locale="$l"
         export LC_ALL="$l"
         break
     fi
 done
+if [[ -z "$utf8_locale" ]]; then
+    echo "NOTE: none of C.UTF-8 or en_US.UTF-8 is installed, so the timing rows run in the session locale"
+fi
 timing_rows
 # The hooks run under #!/usr/bin/env bash, which on a stock Mac is bash 3.2: time every row there too.
 if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 ]]; then

@@ -8,8 +8,8 @@
 # the raw command: under load the tokenised pass could approach the 5 s hook timeout, which would fail open on a
 # command this check alone can deny at once.
 set -uo pipefail
-# Match bytes, whatever the session's locale: in a multibyte locale glibc's regex engine takes many times longer on the
-# fetch forms (past the hook timeout on a CI runner), and its . and bracket expressions skip invalid UTF-8.
+# Match and count bytes, whatever the session's locale: in a multibyte locale glibc's regex engine takes many times
+# longer on the fetch forms, past the hook timeout on a CI runner.
 export LC_ALL=C
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
@@ -140,8 +140,8 @@ fi
 # command here too, so this hook never screens an input its timing was not measured on and does not rely on another
 # hook's deny to stay inside its timeout.
 if (( ${#cmd} > SHELL_SCAN_MAX_CHARS )); then
-    msg="SECRET-SCAN BLOCK: a command over ${SHELL_SCAN_MAX_CHARS} characters is not screened. Put long content in"
-    msg+=" a file."
+    msg="SECRET-SCAN BLOCK: a command over ${SHELL_SCAN_MAX_CHARS} bytes is not screened. Put long content in a"
+    msg+=" file."
     hook_deny "$msg"
 fi
 
