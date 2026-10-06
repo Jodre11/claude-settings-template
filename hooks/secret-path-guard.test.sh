@@ -37,6 +37,13 @@ for p in /tmp/claude-abc-vault/ /tmp/claude-abc-vault/. /private/tmp/claude-abc-
         && ok "Grep of the vault root as $p denied" || bad "Grep of the vault root as $p allowed"
 done
 
+# A case-insensitive file system (macOS, Windows) opens .ENV as .env: names compare case-insensitively.
+for p in .ENV Secrets/app.json a/.ssh/ID_RSA infra/TLS.PEM $'creds.\xc5\xbfecret' $'a/.ssh/id_r\xc5\xbfa' \
+        $'tls.\xe2\x84\xaaey'; do
+    [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == DENY ]] \
+        && ok "Read of $p denied" || bad "Read of $p allowed"
+done
+
 # Escape hatch bypasses the guard.
 CLAUDE_ALLOW_SECRET_READ=1
 export CLAUDE_ALLOW_SECRET_READ

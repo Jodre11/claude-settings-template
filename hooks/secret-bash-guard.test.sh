@@ -518,6 +518,53 @@ expect DENY  "a git show of a merge-stage key denied"               'git show :2
 expect DENY  "a reader of a bracket holding ( denied"              "cat '.en[v(]'"
 expect DENY  "a git show of a bracket holding ( denied"            "git show 'HEAD:.en[v(]'"
 
+# Names compare case-insensitively: a case-insensitive file system (macOS, Windows) opens .ENV as .env and runs CAT as
+# cat, and git's icase pathspec magic folds case as it matches.
+expect DENY  "a reader of an upper-case .env denied"                'cat .ENV'
+expect DENY  "a reader of a mixed-case secrets dir denied"          'cat Secrets/app.json'
+expect DENY  "a reader of an upper-case key denied"                 'cat ~/.ssh/ID_RSA'
+expect DENY  "a reader of an upper-case glob of .env denied"        "cat '.EN?'"
+expect DENY  "an input redirection from an upper-case .env denied"  'cat < .ENV'
+expect ALLOW "a reader of an upper-case .env.example allowed"       'cat .ENV.EXAMPLE'
+expect DENY  "an upper-case reader denied"                          'CAT .env'
+expect DENY  "a mixed-case reader denied"                           'Cat .env'
+expect DENY  "an upper-case reader by path denied"                  '/BIN/CAT .env'
+expect DENY  "an upper-case grep denied"                            'GREP -n x .env'
+expect DENY  "an upper-case git reader denied"                      'GIT show HEAD:.env'
+expect DENY  "an upper-case printenv denied"                        'PRINTENV'
+expect DENY  "an upper-case env dump denied"                        'ENV'
+expect DENY  "an upper-case shell string denied"                    "BASH -c 'cat .env'"
+expect DENY  "an upper-case reader behind a wrapper denied"         'sudo CAT .env'
+expect ALLOW "an upper-case reader of a benign file allowed"        'CAT README.md'
+expect ALLOW "an upper-case word that names no command allowed"     'echo HELLO WORLD'
+expect DENY  "a git icase pathspec of .env denied"                  "git log -p -- ':(icase).ENV'"
+expect DENY  "a git icase pathspec among other magic denied"        "git log -p -- ':(top,icase).Env'"
+expect DENY  "a git grep icase pathspec denied"                     "git grep x -- ':(icase).NETRC'"
+expect DENY  "a git icase pathspec glob denied"                     "git log -p -- ':(icase).EN?'"
+expect DENY  "git --icase-pathspecs of an upper-case path denied"   'git --icase-pathspecs log -p -- .ENV'
+expect DENY  "GIT_ICASE_PATHSPECS of an upper-case path denied"     'GIT_ICASE_PATHSPECS=1 git log -p -- .ENV'
+expect ALLOW "a git icase pathspec of a benign file allowed"        "git log -p -- ':(icase)README.md'"
+# Pathspec magic that narrows matching still names the secret path after it.
+for m in '(top)' '(literal)' '(attr:x)' '(glob)**/' '/' '/:'; do
+    expect DENY "a git pathspec with magic $m naming .env denied"   "git log -p -- ':$m.env'"
+done
+expect ALLOW "a git pathspec with magic naming a benign dir allowed" "git log --oneline -- ':(top)src'"
+expect ALLOW "a git exclude pathspec of a benign glob allowed"      "git diff -- ':(exclude)*.lock'"
+# APFS folds case fully, so a non-ASCII letter whose fold is ASCII (long s, Kelvin sign, sharp s, the ff/fi/st
+# ligatures) opens the ASCII-named file and runs the ASCII-named program. Byte escapes keep the rows locale-free.
+ls_=$'\xc5\xbf'; kv_=$'\xe2\x84\xaa'; ff_=$'\xef\xac\x80'; fi_=$'\xef\xac\x81'; st_=$'\xef\xac\x86'
+expect DENY  "a reader of a long-s secret name denied"              "cat creds.${ls_}ecret"
+expect DENY  "a reader of a long-s key denied"                      "cat ~/.ssh/id_r${ls_}a"
+expect DENY  "a reader of a Kelvin-sign key file denied"            "cat tls.${kv_}ey"
+expect DENY  "a reader of a ligature keyid denied"                  "cat .${st_}rongbox-keyid"
+expect DENY  "an input redirection from a long-s secret denied"     "cat < creds.${ls_}ecret"
+expect DENY  "a ligature reader name denied"                        "di${ff_} .env /dev/null"
+expect DENY  "a long-s reader name denied"                          "${ls_}ed -n 1p .env"
+expect DENY  "a git pathspec of a long-s secret denied"             "git log -p -- 'creds.${ls_}ecret'"
+expect ALLOW "a grep for a pound sign allowed"                      $'grep -n \'\xc2\xa35\' notes.md'
+expect ALLOW "a reader of an accented benign name allowed"          $'cat R\xc3\xa9sum\xc3\xa9.md'
+expect ALLOW "a reader of a ligature benign name allowed"           "cat ${fi_}le.txt"
+
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'
 expect DENY  "a bare input redirection from .env denied (zsh READNULLCMD)" '<.env'
@@ -870,6 +917,15 @@ expect_fast DENY "a long run of dot words behind every walk" \
 expect_fast DENY "a wrapper and many dot words" "sudo $(printf '. %.0s' {1..32700})"
 # Separators count toward the budget too: 32 700 one-word commands.
 expect_fast DENY "many one-word commands" "$(printf 'a;%.0s' {1..32700})cat .env"
+# Upper-case command names, each folded before its class lookup, up to the word budget.
+expect_fast DENY "many upper-case command words" "sudo $(printf 'UNEXPAND %.0s' {1..5990})CAT .env"
+# Upper-case words holding a secret fragment, each through the case-insensitive path match.
+expect_fast DENY "many upper-case fragment words" "cat $(printf 'A/.ENVX/B %.0s' {1..5990}).ENV"
+# Words holding a non-ASCII letter, each folded before screening.
+expect_fast DENY "many words holding a foldable letter" "cat $(printf $'a\xc5\xbfb %.0s' {1..5990}).env"
+# Words at the fold's length bound, each holding foldable letters, through every substitution.
+expect_fast DENY "long words holding foldable letters" \
+    "$(printf -- $'--o=%04080d\xc5\xbf\xef\xac\x80\xc3\x9f ' {1..15})cat .env"
 # gpg candidates each followed by a run of option-shaped words: the raw decrypt form scans the run for each.
 expect_fast DENY "many gpg words with options" "$(printf 'gpg -x y %.0s' {1..7000})"
 # A commit heredoc behind a long run of option words on both sides of commit, 32 452 characters, just under the strip's

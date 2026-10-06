@@ -366,10 +366,10 @@ function add(ch) {
     if (length(buf) > MAXB) { printf "w%s", buf; buf = ""; long = 1 }
 }
 function plain(b,   nm) {
-    if (b == "" || b ~ /[$=:*?[]/ || b ~ /^-[^-]/ || ("/" b) ~ frag) return 0
+    if (b == "" || b ~ /[$=:*?[\200-\377]/ || b ~ /^-[^-]/ || tolower("/" b) ~ frag) return 0
     nm = b
     sub(/.*\//, "", nm)
-    return !(nm in CLS)
+    return !(tolower(nm) in CLS)
 }
 function end_word() {
     if (!inw) return
@@ -474,9 +474,10 @@ END {
 # r<op> <target> (a redirection: the operator as written with any fd prefix, one space, then the target word), | (a
 # pipe, | or |&) and ; (any other separator: ; & && || newline ( ), and <( or >( ). $'…' keeps its content undecoded.
 # # does not start a comment: zsh honours one only under INTERACTIVE_COMMENTS, so its text is screened as words.
-# Parameters, ~, braces and globs stay as written. Given <names> (space-separated words) and <fragments> (an awk
-# regex), a word of at most 256 characters becomes p<word> instead when it is plain: not empty, no $ = : * ? [, not a
-# single-dash option, "/<word>" not matching <fragments>, and its basename not in <names>. Sets SW_OK=1, or
+# Parameters, ~, braces and globs stay as written. Given <names> (space-separated lower-case words) and <fragments> (a
+# lower-case awk regex), a word of at most 256 characters becomes p<word> instead when it is plain: not empty, no $ = :
+# * ? [ and no non-ASCII byte, not a single-dash option, "/<word>" lower-cased not matching <fragments>, and its
+# basename lower-cased not in <names> (a case-insensitive file system runs CAT as cat). Sets SW_OK=1, or
 # SW_OK=0 with SW_WORDS empty when <cmd> is over SHELL_SCAN_MAX_CHARS, holds \x1e or \x1f, or awk fails. Walk SW_WORDS
 # forward with ${SW_WORDS[@]+"${SW_WORDS[@]}"}: bash 3.2 treats an empty array as unbound under set -u, and indexes an
 # array in O(index). Always returns 0.

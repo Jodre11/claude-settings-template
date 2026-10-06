@@ -120,22 +120,82 @@ redact_json_strings() {
         walk(if type == "string" then redact elif type == "object" then with_entries(.key |= redact) else . end)'
 }
 
+_ASCII_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+_ASCII_LOWER=abcdefghijklmnopqrstuvwxyz
+
+# ascii_lower <word>: set ASCII_LOWER to <word> with A-Z folded to a-z and every other character kept (bash 3.2 has
+# no ${word,,}).
+ascii_lower() {
+    local s="$1" ch p i
+    ASCII_LOWER=""
+    for (( i = 0; i < ${#s}; i++ )); do
+        ch="${s:i:1}"
+        p="${_ASCII_UPPER%%"$ch"*}"
+        if (( ${#p} < 26 )); then ch="${_ASCII_LOWER:${#p}:1}"; fi
+        ASCII_LOWER+="$ch"
+    done
+}
+
+# Every non-ASCII letter whose full case fold (Unicode CaseFolding.txt, C and F) is ASCII, each before its fold: APFS
+# folds case fully, so creds.<long s>ecret opens creds.secret and di<ff ligature> runs diff. Byte escapes, as bash
+# 3.2 has no \u: long s, Kelvin sign, sharp s, capital sharp s, then the ligatures ff fi fl ffi ffl, long st and st.
+_NAME_FOLDS=(
+    $'\xc5\xbf' 's' $'\xe2\x84\xaa' 'k' $'\xc3\x9f' 'ss' $'\xe1\xba\x9e' 'ss'
+    $'\xef\xac\x80' 'ff' $'\xef\xac\x81' 'fi' $'\xef\xac\x82' 'fl' $'\xef\xac\x83' 'ffi' $'\xef\xac\x84' 'ffl'
+    $'\xef\xac\x85' 'st' $'\xef\xac\x86' 'st'
+)
+# One bracket of the letters, not an @(…) alternation: *@(…)* is super-linear on a long word. In a C locale the
+# bracket holds their bytes instead, a superset that name_fold resolves.
+_NAME_FOLD_ANY=""
+for (( _i = 0; _i < ${#_NAME_FOLDS[@]}; _i += 2 )); do
+    _NAME_FOLD_ANY+="${_NAME_FOLDS[_i]}"
+done
+_NAME_FOLD_ANY="*[$_NAME_FOLD_ANY]*"
+unset _i
+
+# name_fold <word>: set NAME_FOLD to <word> with each letter of _NAME_FOLDS written as its ASCII fold. A caller on a
+# hot path tests [[ <word> == $_NAME_FOLD_ANY ]] first.
+name_fold() {
+    local s="$1" i
+    for (( i = 0; i < ${#_NAME_FOLDS[@]}; i += 2 )); do
+        s="${s//"${_NAME_FOLDS[i]}"/${_NAME_FOLDS[i+1]}}"
+    done
+    # shellcheck disable=SC2034  # read by the guards
+    NAME_FOLD="$s"
+}
+
+# _glob_fold <glob>: set _GLOB_FOLD to <glob> with each ASCII letter written as a bracket of both its cases, so the
+# pattern matches case-insensitively with no shopt toggled per test. The globs hold no bracket of their own.
+_glob_fold() {
+    local ch p i
+    ascii_lower "$1"
+    _GLOB_FOLD=""
+    for (( i = 0; i < ${#ASCII_LOWER}; i++ )); do
+        ch="${ASCII_LOWER:i:1}"
+        p="${_ASCII_LOWER%%"$ch"*}"
+        if (( ${#p} < 26 )); then ch="[$ch${_ASCII_UPPER:${#p}:1}]"; fi
+        _GLOB_FOLD+="$ch"
+    done
+}
+
 # _secret_path_alternations: join each glob list into one @(…|…) pattern, matched against "/<path>" so a */X glob also
 # covers a bare X (config.env, id_rsa, .aws/credentials from ~). [[ == ]] matches a pattern as if extglob were on, so
 # one test replaces a loop over the globs: path_is_secret runs once per operand, and a 64 KiB command can carry 30,000
 # of them. No glob may contain |, ( or ): one would split or close the alternation. A glob that starts with * is kept
 # as it is (the * also takes the extra /); any other glob gets a leading /, so "/<path>" matches it exactly when
-# <path> does. Also derive SECRET_PATH_REPRESENTATIVES, one name per glob: its last component with every * replaced
-# by x, duplicates dropped; and SECRET_PATH_FRAGMENT_RE, an awk regex of the longest literal piece of each such
-# "/"-adjusted glob (each of . $ { } bracketed): "/<path>" can match a glob only if it holds that piece, so a path
-# matching none cannot be secret.
+# <path> does. Both alternations fold ASCII case: a case-insensitive file system (macOS, Windows) opens .ENV as .env.
+# Also derive SECRET_PATH_REPRESENTATIVES, one name per glob: its last component with every * replaced by x,
+# duplicates dropped; and SECRET_PATH_FRAGMENT_RE, an awk regex of the longest literal piece of each such "/"-adjusted
+# glob, lower-cased (each of . $ { } bracketed): "/<path>", lower-cased, can match a glob only if it holds that piece,
+# so a path matching none cannot be secret.
 _secret_path_alternations() {
     local IFS='|' g gp last piece rest best seen='|' lb='{' rb='}'
     local -a any=() allow=() pieces=()
     SECRET_PATH_REPRESENTATIVES=()
     for g in "${SECRET_PATH_GLOBS[@]}"; do
         if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
-        any+=("$gp")
+        _glob_fold "$gp"
+        any+=("$_GLOB_FOLD")
         best=""
         rest="$gp"
         while [[ -n "$rest" ]]; do
@@ -143,7 +203,8 @@ _secret_path_alternations() {
             if (( ${#piece} > ${#best} )); then best="$piece"; fi
             if [[ "$rest" == *\** ]]; then rest="${rest#*\*}"; else rest=""; fi
         done
-        best="${best//./[.]}"
+        ascii_lower "$best"
+        best="${ASCII_LOWER//./[.]}"
         best="${best//\$/[\$]}"
         best="${best//$lb/[$lb]}"
         pieces+=("${best//$rb/[$rb]}")
@@ -155,7 +216,9 @@ _secret_path_alternations() {
         fi
     done
     for g in "${SECRET_PATH_ALLOW[@]}"; do
-        if [[ "$g" == '*'* ]]; then allow+=("$g"); else allow+=("/$g"); fi
+        if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
+        _glob_fold "$gp"
+        allow+=("$_GLOB_FOLD")
     done
     _SECRET_PATH_ANY="@(${any[*]})"
     _SECRET_ALLOW_ANY="@(${allow[*]})"
@@ -238,8 +301,17 @@ _glob_brackets_as_any() {
 # it, is matched as a *: a superset of what a group matches, with no exponential match; the dotfile rule is then
 # dropped, as the group may supply the leading dot. A component over _SECRET_GLOB_MAX_CHARS characters, or with more
 # than _SECRET_GLOB_MAX_WILD * characters (plus [ characters, when it has a *), and every test once
-# _SECRET_GLOB_BUDGET have run, is not matched: it is treated as secret (fail closed).
+# _SECRET_GLOB_BUDGET have run, is not matched: it is treated as secret (fail closed). The match folds ASCII case, as
+# git's icase pathspec magic does; nocasematch is set for it and cleared after, so a caller must not rely on it.
 path_glob_is_secret() {
+    local rc=0
+    shopt -s nocasematch
+    _path_glob_match "$@" || rc=1
+    shopt -u nocasematch
+    return $rc
+}
+
+_path_glob_match() {
     local c="$1" dir="" r s pre post dots
     # ${1%/*} then a substring, not ${1##*/}: a longest-prefix removal is quadratic in the operand's length.
     if [[ "$1" == */* ]]; then

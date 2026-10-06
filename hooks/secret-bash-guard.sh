@@ -498,6 +498,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             op="${el%% *}"
             op="${op#r}"
             tgt="${el#* }"
+            # shellcheck disable=SC2053  # _NAME_FOLD_ANY is an intentional pattern
+            if (( ${#tgt} <= 4096 )) && [[ "$tgt" == $_NAME_FOLD_ANY ]]; then
+                name_fold "$tgt"
+                tgt="$NAME_FOLD"
+            fi
             case "$op" in
                 *'<<<')
                     if [[ "$sf" != *F* ]]; then sf+=F; fi
@@ -562,6 +567,13 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             continue ;;
     esac
     w="${el:1}"
+    # A file system that folds case fully opens a name in a non-ASCII letter that folds to ASCII as its ASCII
+    # spelling, so the word is screened as that spelling.
+    # shellcheck disable=SC2053  # _NAME_FOLD_ANY is an intentional pattern
+    if (( ${#w} <= 4096 )) && [[ "$w" == $_NAME_FOLD_ANY ]]; then
+        name_fold "$w"
+        w="$NAME_FOLD"
+    fi
     nw=$(( nw + 1 ))
     scan_words=$(( scan_words + 1 ))
     if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
@@ -586,6 +598,12 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         nm="${w:${#nm}+1}"
     else
         nm="$w"
+    fi
+    # A case-insensitive file system runs CAT as cat, so a name is classified lower-cased. No class name is longer
+    # than 16 characters.
+    if (( ${#nm} <= 16 )) && [[ "$nm" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+        ascii_lower "$nm"
+        nm="$ASCII_LOWER"
     fi
     atcmd=0
 

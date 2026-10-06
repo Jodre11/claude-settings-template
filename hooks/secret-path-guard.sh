@@ -19,7 +19,8 @@ if [[ -z "$path" ]]; then
     path=$(hook_field '.tool_input.path')
 fi
 
-if [[ -n "$path" ]] && path_is_secret "$path"; then
+name_fold "$path"
+if [[ -n "$path" ]] && path_is_secret "$NAME_FOLD"; then
     hook_deny "SECRET-PATH BLOCK: '$path' matches a secret-bearing path (e.g. **/secrets/**, .env, *.pem, .strongbox-keyid). Reading it would pull a secret into context. Have a script write the value to \$CLAUDE_TEMP_DIR and consume it there, or set CLAUDE_ALLOW_SECRET_READ=1 for a deliberate one-off."
 fi
 exit 0

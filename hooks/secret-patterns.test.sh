@@ -95,23 +95,60 @@ for g in "${SECRET_PATH_GLOBS[@]}"; do
     path_is_secret "$p" && ok "glob instance is secret: $p" || bad "glob instance not secret: $p"
 done
 
+# ascii_lower folds A-Z only, leaving every other character as it is.
+ASCII_LOWER='not set'
+ascii_lower 'CaT-9_X./Zz'
+[[ "$ASCII_LOWER" == 'cat-9_x./zz' ]] && ok "ascii_lower folds A-Z" || bad "ascii_lower gave '$ASCII_LOWER'"
+ascii_lower ''
+[[ -z "$ASCII_LOWER" ]] && ok "ascii_lower of an empty word is empty" || bad "ascii_lower of '' gave '$ASCII_LOWER'"
+
+# name_fold writes each non-ASCII letter that case-folds to ASCII as its fold (APFS opens creds.ſecret as
+# creds.secret, and a ﬀ ligature as ff), leaving every other character as it is.
+NAME_FOLD='not set'
+fold_in=$'aſKßẞﬀﬁﬂﬃﬄﬅﬆ-Résumé-£5'
+fold_want=$'askssssfffiflffifflstst-Résumé-£5'
+name_fold "$fold_in"
+[[ "$NAME_FOLD" == "$fold_want" ]] && ok "name_fold folds the ASCII-folding letters" \
+    || bad "name_fold gave '$NAME_FOLD'"
+name_fold 'plain/ascii.txt'
+[[ "$NAME_FOLD" == 'plain/ascii.txt' ]] && ok "name_fold leaves ASCII as it is" || bad "name_fold gave '$NAME_FOLD'"
+
+# Names compare case-insensitively: a case-insensitive file system (macOS, Windows) opens .ENV as .env, and git's
+# icase pathspec magic folds case too. The allow list folds in the same way.
+for p in .ENV Secrets/app.json a/.ssh/ID_RSA CONFIG.ENV x.PEM .Env.Local .AWS/Credentials a/.NetRC; do
+    path_is_secret "$p" && ok "a secret path in another case blocked: $p" || bad "a secret path in another case missed: $p"
+done
+for p in .ENV.EXAMPLE ID_RSA.PUB README.MD; do
+    if path_is_secret "$p"; then bad "a benign path in another case blocked: $p"; else
+        ok "a benign path in another case allowed: $p"; fi
+done
+for g in "${SECRET_PATH_GLOBS[@]}"; do
+    p="${g//\*/x}"
+    path_is_secret "${p^^}" && ok "upper-case glob instance is secret: ${p^^}" \
+        || bad "upper-case glob instance not secret: ${p^^}"
+done
+
 # path_is_secret matches "/<path>" against "/"-adjusted globs; that must equal the direct rule, <path> or /<path>
-# against the globs as written, with neither matching an allow glob.
+# against the globs as written, with neither matching an allow glob, every name compared case-insensitively.
 shopt -s extglob
 any=$(IFS='|'; printf '@(%s)' "${SECRET_PATH_GLOBS[*]}")
 allow=$(IFS='|'; printf '@(%s)' "${SECRET_PATH_ALLOW[*]}")
 drift=""
 for p in config.env a/config.env .env x.env .env.x secrets secrets/a a/secrets a/secrets/b id_rsa a/id_rsa \
-        .aws/credentials /h/.aws/credentials README.md a.pub x.env.example tmp/secrets.md '' / . .. a/proc/1/environ; do
+        .aws/credentials /h/.aws/credentials README.md a.pub x.env.example tmp/secrets.md '' / . .. a/proc/1/environ \
+        CONFIG.ENV .Env SECRETS/a A/Id_Rsa X.PUB X.ENV.Example A/PROC/1/ENVIRON; do
+    shopt -s nocasematch
     # shellcheck disable=SC2053
     if [[ ( "$p" == $any || "/$p" == $any ) && "$p" != $allow && "/$p" != $allow ]]; then want=0; else want=1; fi
+    shopt -u nocasematch
     path_is_secret "$p" && got=0 || got=1
     [[ "$got" == "$want" ]] || drift+=" '$p'"
 done
 [[ -z "$drift" ]] && ok "path_is_secret equals the <path>-or-/<path> rule" || bad "path_is_secret drifted on:$drift"
 
 # The glob list uses * as its only metacharacter, so a glob's literal pieces are plain text (SECRET_PATH_FRAGMENT_RE
-# relies on it), and "/<instance>" of every glob holds one of the fragments.
+# relies on it), and "/<instance>" of every glob, in either case and lowered as the tokeniser lowers it, holds one of
+# the fragments.
 odd=""
 for g in "${SECRET_PATH_GLOBS[@]}"; do
     [[ "$g" == *[\?\[\]]* ]] && odd+=" $g"
@@ -120,7 +157,9 @@ done
 missed=""
 for g in "${SECRET_PATH_GLOBS[@]}"; do
     p="${g//\*/x}"
-    awk -v p="/$p" -v frag="$SECRET_PATH_FRAGMENT_RE" 'BEGIN { exit !(p ~ frag) }' || missed+=" $p"
+    for q in "$p" "${p^^}"; do
+        awk -v p="/$q" -v frag="$SECRET_PATH_FRAGMENT_RE" 'BEGIN { exit !(tolower(p) ~ frag) }' || missed+=" $q"
+    done
 done
 [[ -z "$missed" ]] && ok "every glob instance holds a fragment" || bad "glob instances with no fragment:$missed"
 
@@ -132,6 +171,17 @@ done
 for p in '*' '?*' '*.md' 'a*' 'docs/*.txt' 'notes.tx?'; do
     if path_glob_is_secret "$p"; then bad "benign glob wrongly blocked: $p"; else ok "benign glob allowed: $p"; fi
 done
+# A glob in another case matches a secret name too (git's icase pathspec magic folds case as it matches).
+for p in '.EN?' 'ID_*' 'x/*.PEM' '.En[V]' 'CONFIG/*.Env'; do
+    path_glob_is_secret "$p" && ok "a secret glob in another case blocked: $p" \
+        || bad "a secret glob in another case missed: $p"
+done
+for p in '.E?(N|X)V' '(ICASE).ENV' '(top,icase).En?'; do
+    if path_glob_is_secret "$p" remote; then ok "a remote group in another case is secret: $p"; else
+        bad "a remote group in another case was missed: $p"; fi
+done
+if path_glob_is_secret 'README.M?'; then bad "a benign upper-case glob wrongly blocked"; else
+    ok "a benign upper-case glob allowed"; fi
 
 # The glob test is bounded: a component too long or too wildcarded, or a test past the per-run budget, is treated
 # as secret without matching (fail closed); within the bound it is matched as before.
