@@ -518,6 +518,133 @@ expect DENY  "a git show of a merge-stage key denied"               'git show :2
 expect DENY  "a reader of a bracket holding ( denied"              "cat '.en[v(]'"
 expect DENY  "a git show of a bracket holding ( denied"            "git show 'HEAD:.en[v(]'"
 
+# Names compare case-insensitively: a case-insensitive file system (macOS, Windows) opens .ENV as .env and runs CAT as
+# cat, and git's icase pathspec magic folds case as it matches.
+expect DENY  "a reader of an upper-case .env denied"                'cat .ENV'
+expect DENY  "a reader of a mixed-case secrets dir denied"          'cat Secrets/app.json'
+expect DENY  "a reader of an upper-case key denied"                 'cat ~/.ssh/ID_RSA'
+expect DENY  "a reader of an upper-case glob of .env denied"        "cat '.EN?'"
+expect DENY  "an input redirection from an upper-case .env denied"  'cat < .ENV'
+expect ALLOW "a reader of an upper-case .env.example allowed"       'cat .ENV.EXAMPLE'
+expect DENY  "an upper-case reader denied"                          'CAT .env'
+expect DENY  "a mixed-case reader denied"                           'Cat .env'
+expect DENY  "an upper-case reader by path denied"                  '/BIN/CAT .env'
+expect DENY  "an upper-case grep denied"                            'GREP -n x .env'
+expect DENY  "an upper-case git reader denied"                      'GIT show HEAD:.env'
+expect DENY  "an upper-case printenv denied"                        'PRINTENV'
+expect DENY  "an upper-case env dump denied"                        'ENV'
+expect DENY  "an upper-case shell string denied"                    "BASH -c 'cat .env'"
+expect DENY  "an upper-case reader behind a wrapper denied"         'sudo CAT .env'
+expect ALLOW "an upper-case reader of a benign file allowed"        'CAT README.md'
+expect ALLOW "an upper-case word that names no command allowed"     'echo HELLO WORLD'
+expect DENY  "a git icase pathspec of .env denied"                  "git log -p -- ':(icase).ENV'"
+expect DENY  "a git icase pathspec among other magic denied"        "git log -p -- ':(top,icase).Env'"
+expect DENY  "a git grep icase pathspec denied"                     "git grep x -- ':(icase).NETRC'"
+expect DENY  "a git icase pathspec glob denied"                     "git log -p -- ':(icase).EN?'"
+expect DENY  "git --icase-pathspecs of an upper-case path denied"   'git --icase-pathspecs log -p -- .ENV'
+expect DENY  "GIT_ICASE_PATHSPECS of an upper-case path denied"     'GIT_ICASE_PATHSPECS=1 git log -p -- .ENV'
+expect ALLOW "a git icase pathspec of a benign file allowed"        "git log -p -- ':(icase)README.md'"
+# Pathspec magic that narrows matching still names the secret path after it.
+for m in '(top)' '(literal)' '(attr:x)' '(glob)**/' '/' '/:'; do
+    expect DENY "a git pathspec with magic $m naming .env denied"   "git log -p -- ':$m.env'"
+done
+expect ALLOW "a git pathspec with magic naming a benign dir allowed" "git log --oneline -- ':(top)src'"
+expect ALLOW "a git exclude pathspec of a benign glob allowed"      "git diff -- ':(exclude)*.lock'"
+# APFS folds case fully, so a non-ASCII letter whose fold is ASCII (long s, Kelvin sign, sharp s, the ff/fi/st
+# ligatures) opens the ASCII-named file and runs the ASCII-named program. Byte escapes keep the rows locale-free.
+ls_=$'\xc5\xbf'; kv_=$'\xe2\x84\xaa'; ff_=$'\xef\xac\x80'; fi_=$'\xef\xac\x81'; st_=$'\xef\xac\x86'
+expect DENY  "a reader of a long-s secret name denied"              "cat creds.${ls_}ecret"
+expect DENY  "a reader of a long-s key denied"                      "cat ~/.ssh/id_r${ls_}a"
+expect DENY  "a reader of a Kelvin-sign key file denied"            "cat tls.${kv_}ey"
+expect DENY  "a reader of a ligature keyid denied"                  "cat .${st_}rongbox-keyid"
+expect DENY  "an input redirection from a long-s secret denied"     "cat < creds.${ls_}ecret"
+expect DENY  "a ligature reader name denied"                        "di${ff_} .env /dev/null"
+expect DENY  "a long-s reader name denied"                          "${ls_}ed -n 1p .env"
+expect DENY  "a git pathspec of a long-s secret denied"             "git log -p -- 'creds.${ls_}ecret'"
+expect ALLOW "a grep for a pound sign allowed"                      $'grep -n \'\xc2\xa35\' notes.md'
+expect ALLOW "a reader of an accented benign name allowed"          $'cat R\xc3\xa9sum\xc3\xa9.md'
+expect ALLOW "a reader of a ligature benign name allowed"           "cat ${fi_}le.txt"
+
+# ssh joins its remote words with spaces and hands them to the remote shell, which parses them again: a word holding
+# whitespace or shell syntax is a command string, and the remote words are commands.
+expect DENY  "an ssh remote command in one quoted word denied"      "ssh host 'cat .env'"
+expect DENY  "an ssh remote redirection denied"                     "ssh host 'cat<.env'"
+expect DENY  "an ssh remote word holding a backslash denied"        "ssh host 'ca\\t' .env"
+expect DENY  "an ssh remote word holding quotes denied"             "ssh host \"c'a't\" .env"
+expect DENY  "an ssh remote word holding a glob denied"             "ssh host '/bin/c?t' .env"
+expect DENY  "an ssh remote word holding braces denied"             "ssh host 'c{a,}t' .env"
+expect DENY  "an ssh remote word holding a parameter denied"        "ssh host '\$x' .env"
+expect DENY  "an ssh remote env dump denied"                        'ssh host env'
+expect DENY  "an ssh ProxyCommand holding a command string denied"  "ssh -o 'ProxyCommand=sh -c x' host"
+expect DENY  "an ssh behind a wrapper denied"                       "sudo ssh host 'cat .env'"
+expect DENY  "slogin with a remote command string denied"           "slogin host 'cat .env'"
+expect DENY  "an upper-case ssh with a remote command string denied" "SSH host 'cat .env'"
+expect ALLOW "an ssh remote command of plain words allowed"         'ssh host uptime'
+expect ALLOW "an ssh with an identity file and port allowed"        'ssh -i ~/.ssh/deploy_key -p 2222 user@host uptime'
+expect ALLOW "an ssh with options and a forward allowed"            'ssh -o StrictHostKeyChecking=no -L 8080:localhost:80 host'
+expect ALLOW "an ssh listing a remote directory allowed"            'ssh host ls -la /var/log'
+expect ALLOW "an ssh word not at command position allowed"          "echo ssh 'a b'"
+expect ALLOW "an ssh in a later stage leaves an earlier one alone"  "grep -n 'a b' x.txt | ssh host wc -l"
+# watch and parallel run their command words through sh -c too. parallel quotes its arguments (after :::), and its {}
+# is a replacement string, so there only a brace span with , or .. (brace expansion) counts as syntax.
+expect DENY  "a watch word holding a backslash denied"              "watch 'ca\\t' .env"
+expect DENY  "a watch redirection denied"                           "watch 'cat<.env'"
+expect DENY  "a parallel command word holding a backslash denied"   "parallel 'ca\\t' ::: .env"
+expect DENY  "a parallel command word holding brace expansion denied" "parallel 'c{a,}t' ::: .env"
+expect DENY  "a parallel command word holding a parameter denied"   "parallel '\$x' ::: a"
+expect DENY  "a parallel argument with no command template denied"  "parallel ::: 'cat<.env'"
+expect DENY  "a parallel perl replacement string denied"            "parallel echo '{=uc=}' ::: a"
+expect DENY  "a parallel word starting with = denied"               'parallel =cat ::: .env'
+expect ALLOW "a watch of a plain command allowed"                   'watch -n 1 date'
+expect ALLOW "a parallel replacement string allowed"                'parallel echo {} ::: a b'
+expect ALLOW "a parallel replacement string variant allowed"        'parallel gzip -k {.} ::: a.txt'
+expect ALLOW "the other parallel replacement strings allowed"       'parallel echo {/} {//} {/.} {#} {%} {1} {+.} {+..} ::: a'
+expect DENY  "a parallel numeric brace expansion denied"            "parallel echo 'a{1..3}' ::: x"
+# parallel with no command template reads its commands from its input.
+expect DENY  "a fed parallel with no command denied"                'echo x | parallel'
+expect DENY  "a fed parallel with only an option and its value denied" 'echo x | parallel -j 4'
+expect DENY  "a parallel with no command fed by a file denied"      'parallel --tag < x.txt'
+expect DENY  "a fed parallel whose only template word is empty denied" "echo x | parallel ''"
+expect ALLOW "a fed parallel with a command allowed"                'ls | parallel gzip'
+expect ALLOW "a fed parallel with an attached option value allowed" 'ls | parallel -j4 --jobs=2 gzip -k'
+# ssh's local-command options run a command on this machine, and ssh with no remote command runs its input there.
+expect DENY  "an ssh LocalCommand option denied"                    'ssh -oPermitLocalCommand=yes -oLocalCommand=env host'
+expect DENY  "an ssh LocalCommand option value denied"              'ssh -o localcommand=env host'
+expect DENY  "an ssh with no remote command fed by a pipe denied"   'echo x | ssh host'
+expect DENY  "an ssh with no remote command fed by a file denied"   'ssh -p 22 -i k host < x.sh'
+expect DENY  "an ssh remote word starting with = denied"            'ssh host =cat .env'
+expect ALLOW "an ssh remote command fed by a pipe allowed"          'echo x | ssh host cat'
+expect ALLOW "an ssh with option values and no command allowed"     'ssh -l user -p 2222 host'
+expect DENY  "a fed ssh with only options after the host denied"    'echo x | ssh host -T'
+expect DENY  "a fed ssh with an option value before the host denied" 'echo x | ssh -P tag host'
+expect DENY  "a fed ssh with an unknown option letter denied"       'echo x | ssh -Z x host'
+expect ALLOW "a fed ssh with options after the host and a command allowed" 'echo x | ssh host -l user cat'
+expect DENY  "a fed ssh whose only remote word is empty denied"     "echo x | ssh host ''"
+expect DENY  "an ssh config read from its input denied"             'echo x | ssh -F /dev/stdin host uptime'
+expect DENY  "an ssh config read from an attached fd path denied"   'ssh -F/dev/fd/3 host uptime'
+expect DENY  "an ssh option value read from its input denied"       'ssh -oPKCS11Provider=/dev/stdin host uptime'
+expect DENY  "an ssh config reaching stdin through .. denied"       'ssh -F /tmp/../dev/stdin host uptime'
+expect DENY  "an ssh config reaching stdin by a relative path denied" 'ssh -F ../../../dev/stdin host uptime'
+expect DENY  "an ssh config of a dev path relative to / denied"     'ssh -F dev/stdin host uptime'
+expect DENY  "an ssh config of stdin relative to /dev denied"       'ssh -F stdin host uptime'
+expect DENY  "an ssh config of an upper-case fd path denied"        'ssh -F /DEV/FD/3 host uptime'
+expect DENY  "an ssh config of a mixed-case fd path denied"         'ssh -F /Dev/Fd/0 host uptime'
+expect DENY  "an ssh config of an upper-case stdin denied"          'ssh -F STDIN host uptime'
+# The root volume folds case, so /DEV/stdin is the shell's own input too.
+expect DENY  "a fed shell reading an upper-case /dev path denied"   'echo x | bash /DEV/stdin'
+expect DENY  "a fed shell reading /dev through .. denied"           'echo x | bash /tmp/../dev/stdin'
+expect DENY  "a fed shell reading a dev path relative to / denied"  'echo x | bash dev/stdin'
+expect DENY  "a fed shell reading an fd path relative to /dev denied" 'echo x | bash fd/0'
+expect DENY  "a fed shell reading stdin relative to /dev denied"    'echo x | bash stdin'
+expect DENY  "a fed shell reading a bare fd number denied"          'echo x | bash 0'
+expect DENY  "an ssh config of a bare fd number denied"             'ssh -F 3 host uptime'
+expect DENY  "an ssh config of an attached bare fd number denied"   'ssh -F3 host uptime'
+expect ALLOW "an ssh port value allowed"                            'ssh -p 22 -p22 -oPort=22 host uptime'
+expect ALLOW "a shell running a script by a .. path allowed"        'bash ../scripts/x.sh'
+expect ALLOW "an ssh config file allowed"                           'ssh -F ~/.ssh/config.d/x host uptime'
+expect ALLOW "an ssh config in the working directory allowed"       'ssh -F ./ssh_config.d/devices host uptime'
+expect ALLOW "an ssh remote read of /proc allowed"                  'ssh host cat /proc/cpuinfo'
+
 # Input redirection, here-strings and the environment.
 expect DENY  "a leading input redirection from .env denied"        '<.env cat'
 expect DENY  "a bare input redirection from .env denied (zsh READNULLCMD)" '<.env'
@@ -870,6 +997,17 @@ expect_fast DENY "a long run of dot words behind every walk" \
 expect_fast DENY "a wrapper and many dot words" "sudo $(printf '. %.0s' {1..32700})"
 # Separators count toward the budget too: 32 700 one-word commands.
 expect_fast DENY "many one-word commands" "$(printf 'a;%.0s' {1..32700})cat .env"
+# Upper-case command names, each folded before its class lookup, up to the word budget.
+expect_fast DENY "many upper-case command words" "sudo $(printf 'UNEXPAND %.0s' {1..5990})CAT .env"
+# Upper-case words holding a secret fragment, each through the case-insensitive path match.
+expect_fast DENY "many upper-case fragment words" "cat $(printf 'A/.ENVX/B %.0s' {1..5990}).ENV"
+# An ssh walk reads every later word of its stage, plain ones included, up to the word budget.
+expect_fast ALLOW "an ssh with many remote words" "ssh host $(printf 'a %.0s' {1..5990})"
+# Words holding a non-ASCII letter, each folded before screening.
+expect_fast DENY "many words holding a foldable letter" "cat $(printf $'a\xc5\xbfb %.0s' {1..5990}).env"
+# Words at the fold's length bound, each holding foldable letters, through every substitution.
+expect_fast DENY "long words holding foldable letters" \
+    "$(printf -- $'--o=%04080d\xc5\xbf\xef\xac\x80\xc3\x9f ' {1..15})cat .env"
 # gpg candidates each followed by a run of option-shaped words: the raw decrypt form scans the run for each.
 expect_fast DENY "many gpg words with options" "$(printf 'gpg -x y %.0s' {1..7000})"
 # A commit heredoc behind a long run of option words on both sides of commit, 32 452 characters, just under the strip's
