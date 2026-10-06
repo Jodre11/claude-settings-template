@@ -662,7 +662,7 @@ _ms() {
 
 # expect_fast <DENY|ALLOW> <description> <cmd>: pass when the hook decides <cmd> as expected within TIME_LIMIT_MS.
 expect_fast() {
-    local got start elapsed under="${HOOK_BASH:+, $HOOK_BASH}"
+    local got start elapsed under="${HOOK_BASH:+, $HOOK_BASH}${LC_ALL:+, LC_ALL=$LC_ALL}"
     start=$(_ms)
     got=$(run "$3")
     elapsed=$(( $(_ms) - start ))
@@ -810,6 +810,14 @@ expect_fast DENY "a commit heredoc behind many option words" \
     "git$(printf ' -a%.0s' {1..5400}) commit$(printf ' -b%.0s' {1..5400}) $hd"
 }
 
+# Desktops and CI runners usually run a UTF-8 locale, and glibc's regex engine is many times slower in a multibyte
+# locale than in C: time the rows under one whenever the system has one, whatever locale this suite was started in.
+for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | grep -qx "$l"; then
+        export LC_ALL="$l"
+        break
+    fi
+done
 timing_rows
 # The hooks run under #!/usr/bin/env bash, which on a stock Mac is bash 3.2: time every row there too.
 if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 ]]; then

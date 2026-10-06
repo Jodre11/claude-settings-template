@@ -8,6 +8,9 @@
 # the raw command: under load the tokenised pass could approach the 5 s hook timeout, which would fail open on a
 # command this check alone can deny at once.
 set -uo pipefail
+# Match bytes, whatever the session's locale: in a multibyte locale glibc's regex engine takes many times longer on the
+# fetch forms (past the hook timeout on a CI runner), and its . and bracket expressions skip invalid UTF-8.
+export LC_ALL=C
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
 source "$DIR/secret-patterns.sh"
