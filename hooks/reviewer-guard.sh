@@ -45,19 +45,31 @@ if (( ! SW_OK )); then
     hook_deny "$msg"
 fi
 GW_ACTIVE=0
+# git remote mutates refs or config unless its next word, past -v, is absent, show or get-url.
+remote_next=0
 for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     case "$el" in
         w*) ;;
         '|'|';')
             GW_ACTIVE=0
+            remote_next=0
             continue ;;
         *) continue ;;
     esac
     w="${el:1}"
-    if (( GW_ACTIVE )); then
+    if (( remote_next )); then
+        case "$w" in
+            -v|--verbose) ;;
+            show|get-url) remote_next=0 ;;
+            *) hook_deny "$msg" ;;
+        esac
+    elif (( GW_ACTIVE )); then
         git_walk_word "$w"
         if (( ! GW_ACTIVE )) && git_sub_mutating "$GW_SUB"; then
             hook_deny "$msg"
+        fi
+        if (( ! GW_ACTIVE )) && [[ "$GW_SUB" == remote ]]; then
+            remote_next=1
         fi
     elif [[ "$w" == git || "$w" == */git ]]; then
         git_walk_start

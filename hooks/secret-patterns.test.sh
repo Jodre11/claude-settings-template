@@ -9,12 +9,17 @@ pass=0; fail=0
 ok()  { printf 'PASS: %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf 'FAIL: %s\n' "$1"; fail=$((fail + 1)); }
 
+# Secret-shaped fixtures are assembled at run time, so no line of this file matches a value pattern as written.
+aws_key="AKIA""IOSFODNN7EXAMPLE"
+gh_pat="ghp_""012345678901234567890123456789abcdef"
+pk_head="-----BEG""IN RSA PRIVATE KEY-----"
+
 # scan_content_for_secrets: true positives
-scan_content_for_secrets 'id=AKIAIOSFODNN7EXAMPLE end' >/dev/null \
+scan_content_for_secrets "id=${aws_key} end" >/dev/null \
     && ok "AWS access key detected" || bad "AWS access key missed"
-scan_content_for_secrets '-----BEGIN RSA PRIVATE KEY-----' >/dev/null \
+scan_content_for_secrets "$pk_head" >/dev/null \
     && ok "private key header detected" || bad "private key header missed"
-scan_content_for_secrets 'token ghp_012345678901234567890123456789abcdef' >/dev/null \
+scan_content_for_secrets "token ${gh_pat}" >/dev/null \
     && ok "github PAT detected" || bad "github PAT missed"
 
 # scan_content_for_secrets: clean text is a true negative
@@ -25,8 +30,8 @@ else
 fi
 
 # redact_secrets: value removed, marker present
-red=$(redact_secrets 'x AKIAIOSFODNN7EXAMPLE y')
-[[ "$red" != *AKIAIOSFODNN7EXAMPLE* && "$red" == *"[REDACTED-SECRET-BREACH:aws-access-key]"* ]] \
+red=$(redact_secrets "x ${aws_key} y")
+[[ "$red" != *"$aws_key"* && "$red" == *"[REDACTED-SECRET-BREACH:aws-access-key]"* ]] \
     && ok "AWS key redacted to marker" || bad "AWS key not redacted"
 
 # redact_secrets over a transcript line: a PEM block is one JSON string there, its line breaks escaped as \n. The
@@ -240,13 +245,92 @@ for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
 done
 [[ -z "$odd" ]] && ok "no secret path glob holds |, ( or )" || bad "secret path globs that break the alternation:$odd"
 
-# path_is_scan_exempt: firewall self-definition/test/doc files are exempt from
-# output scanning (they embed example vectors by design); ordinary files are not.
-for p in a/hooks/secret-patterns.sh b/hooks/secret-path-guard.test.sh docs/2026-07-12-secret-context-firewall-design.md /x/.superpowers/sdd/review.diff /y/.claude/breach-ledger.log; do
+# path_is_scan_exempt: firewall self-definition and doc files are exempt from
+# output scanning (they embed example vectors by design); test and ordinary files are not.
+for p in a/hooks/secret-patterns.sh docs/2026-07-12-secret-context-firewall-design.md /x/.superpowers/sdd/review.diff /y/.claude/breach-ledger.log; do
     path_is_scan_exempt "$p" && ok "scan-exempt: $p" || bad "scan NOT exempt (should be): $p"
 done
-for p in src/app.js README.md hooks/bash-guard.sh ''; do
+for p in src/app.js README.md hooks/bash-guard.sh b/hooks/secret-path-guard.test.sh ''; do
     if path_is_scan_exempt "$p"; then bad "wrongly scan-exempt: '$p'"; else ok "scanned (not exempt): '$p'"; fi
+done
+
+# Every firewall suite builds its secret-shaped fixtures at run time, so none holds one as written and the output
+# scrubber need not skip them.
+held=""
+for f in "$DIR"/secret-*.test.sh; do
+    if scan_content_for_secrets "$(cat "$f")" >/dev/null; then
+        held+=" ${f##*/}"
+    fi
+done
+[[ -z "$held" ]] && ok "no firewall suite holds a secret-shaped value as written" \
+    || bad "firewall suites holding a secret-shaped value as written:$held"
+
+# SSH private keys under any common name, the whole ~/.ssh directory but the client's own public files, and the
+# credential files of registries, clusters, the GitHub CLI and package managers are secret paths.
+for p in a/.ssh/id_ecdsa a/.ssh/id_dsa a/.ssh/id_ed25519_sk id_rsa_work a/.ssh/work_ed25519 a/.ssh/deploy_key x_rsa \
+        x_dsa x_ecdsa a/.docker/config.json a/.config/containers/auth.json /run/user/501/containers/auth.json \
+        a/.kube/config a/.config/gh/hosts.yml .git-credentials a/.git-credentials .npmrc a/.npmrc .pypirc \
+        /proc/1/environ /proc/self/environ /proc/thread-self/environ /proc/self/task/1/environ \
+        /proc/thread-self/task/1/environ /run/containers/0/auth.json; do
+    path_is_secret "$p" && ok "credential path blocked: $p" || bad "credential path missed: $p"
+done
+for p in a/.ssh/id_ed25519.pub a/.ssh/known_hosts a/.ssh/known_hosts.old a/.ssh/config a/.ssh/authorized_keys \
+        src/id_generator.py a/config.json a/auth.json a/.kube/cache/x a/.config/gh/config.yml \
+        src/containers/auth.json src/proc/handlers/environ; do
+    if path_is_secret "$p"; then bad "benign path wrongly blocked: $p"; else ok "benign path allowed: $p"; fi
+done
+# An allow glob never overrides a secret match for a path holding a .. segment: the segment can climb out of the
+# allowed name into a secret one.
+for p in a/.ssh/known_hosts/../id_rsa a/.ssh/known_hosts.x/../deploy_key a/b.pub/../.env a/.ssh/known_hosts.x \
+        a/.ssh/known_hosts_backup; do
+    path_is_secret "$p" && ok "traversal past an allow glob blocked: $p" \
+        || bad "traversal past an allow glob missed: $p"
+done
+
+# The directory probe matches in awk: SECRET_PATH_AWK_RE and SECRET_ALLOW_AWK_RE, applied to "/<path>" lower-cased,
+# decide exactly as path_is_secret does.
+odd=""
+for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
+    [[ "$g" == *[\+\^\\]* ]] && odd+=" $g"
+done
+[[ -z "$odd" ]] && ok "no path glob holds + ^ or \\" || bad "path globs the awk forms cannot carry:$odd"
+drift=""
+for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
+    p="${g//\*/x}"
+    for q in "$p" "${p^^}" "a/$p" "/abs/$p"; do
+        path_is_secret "$q" && want=0 || want=1
+        LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" \
+            'BEGIN { t = tolower(p); exit !(t ~ s && t !~ a) }' && got=0 || got=1
+        [[ "$got" == "$want" ]] || drift+=" '$q'"
+    done
+done
+for q in README.md src/a.py .env.example x/.env.local '' / . .. a/proc/1/environ /tmp/claude-a-vault/secrets/g; do
+    path_is_secret "$q" && want=0 || want=1
+    LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" \
+        'BEGIN { t = tolower(p); exit !(t ~ s && t !~ a) }' && got=0 || got=1
+    [[ "$got" == "$want" ]] || drift+=" '$q'"
+done
+[[ -z "$drift" ]] && ok "the awk glob forms agree with path_is_secret" || bad "the awk glob forms drift on:$drift"
+n=${#_NAME_FOLDS[@]}
+IFS=$'\x1f' read -r -a folds <<< "$SECRET_FOLDS_AWK"
+[[ "${#folds[@]}" == "$n" ]] && ok "SECRET_FOLDS_AWK carries every fold pair" \
+    || bad "SECRET_FOLDS_AWK holds ${#folds[@]} of $n fold entries"
+
+# dir_is_secret: a directory that is secret, or that holds a directory-named secret (credentials under .aws, anything
+# under secrets, .ssh or the vault), or above one by a literal path (gh/hosts.yml under .config). An anywhere-name
+# (.env, *.pem) does not make every directory secret.
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
+for d in '~/.aws' a/.ssh secrets a/secrets/ /tmp/claude-abc-vault /tmp/claude-abc-vault/secrets '$CLAUDE_SECRET_DIR' \
+        /proc/1 a/.kube a/.docker a/.config/gh a/.config/containers a/.config /run/user/501/containers; do
+    dir_is_secret "$d" && ok "a secret directory: $d" || bad "a secret directory missed: $d"
+done
+for d in src /tmp '~' / . .. src/containers src/containers/Foo src/proc/handlers; do
+    if dir_is_secret "$d"; then bad "a plain directory counted as secret: $d"; else ok "a plain directory: $d"; fi
+done
+# near: only a secret directly in the directory counts.
+dir_is_secret a/.aws near && ok "near: a/.aws holds a secret directly" || bad "near: a/.aws missed"
+for d in a/.config src/proc; do
+    if dir_is_secret "$d" near; then bad "near: $d counted as secret"; else ok "near: $d holds none directly"; fi
 done
 
 echo "-----"; echo "passed: $pass  failed: $fail"; [ "$fail" -eq 0 ]

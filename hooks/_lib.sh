@@ -5,9 +5,68 @@
 #   hook_read_input
 #   cmd=$(hook_field '.tool_input.command')
 
-# Read stdin into HOOK_INPUT global. Must be called before hook_field.
+# Read stdin into HOOK_INPUT global, starting the run's clock (hook_clock_start). Must be called before hook_field.
 hook_read_input() {
+    hook_clock_start
     HOOK_INPUT=$(cat)
+}
+
+# The run-wide deadline for the steps whose cost the command's size does not bound (wildcard expansion and the
+# directory probe): together they end HOOK_DEADLINE_MS after the clock starts, well inside the hook's 5 s timeout,
+# after which a hook does not block. bash 5 times it with EPOCHREALTIME; an older bash has whole seconds only
+# (SECONDS), so there the deadline falls a second early or late and each step is also bounded by PROBE_WATCHDOG_S.
+HOOK_DEADLINE_MS=1500
+HOOK_T0=""
+
+# hook_clock_start: start the run's clock. With no clock started, each step is bounded by PROBE_WATCHDOG_S alone.
+hook_clock_start() {
+    if [[ -n "${EPOCHREALTIME:-}" ]]; then
+        HOOK_T0="${EPOCHREALTIME/[.,]/}"
+    else
+        SECONDS=0
+        HOOK_T0=s
+    fi
+}
+
+# hook_time_left: set HOOK_LEFT_MS to the milliseconds the next bounded step may take: the time left before the
+# deadline, 0 once it has passed.
+hook_time_left() {
+    local now left=$(( PROBE_WATCHDOG_S * 1000 ))
+    if [[ "$HOOK_T0" == s ]]; then
+        now=$(( ( (HOOK_DEADLINE_MS + 999) / 1000 - SECONDS ) * 1000 ))
+        if (( now < left )); then left=$now; fi
+    elif [[ -n "$HOOK_T0" ]]; then
+        now="${EPOCHREALTIME/[.,]/}"
+        left=$(( HOOK_DEADLINE_MS - (now - HOOK_T0) / 1000 ))
+    fi
+    if (( left < 0 )); then left=0; fi
+    HOOK_LEFT_MS=$left
+}
+
+# hook_bounded <out> <command> [<arg>...]: run <command> in the background, its stdout into the file <out>, and kill it
+# (and its children) once the time hook_time_left gives has passed. The caller tells a complete run from a cut one by
+# an end marker the command writes last. Returns 3, running nothing, when no time is left.
+hook_bounded() {
+    local out="$1" p w s
+    shift
+    hook_time_left
+    if (( HOOK_LEFT_MS <= 0 )); then
+        return 3
+    fi
+    printf -v s '%d.%03d' $(( HOOK_LEFT_MS / 1000 )) $(( HOOK_LEFT_MS % 1000 ))
+    ( "$@" ) >"$out" 2>/dev/null </dev/null &
+    p=$!
+    (
+        sleep "$s"
+        pkill -TERM -P "$p" 2>/dev/null
+        kill -TERM "$p" 2>/dev/null
+    ) >/dev/null 2>&1 </dev/null &
+    w=$!
+    wait "$p" 2>/dev/null || :
+    kill "$w" 2>/dev/null || :
+    # Reaped here, bash 3.2 prints no "Terminated" notice for the killed watchdog on the hook's stderr.
+    wait "$w" 2>/dev/null || :
+    return 0
 }
 
 # Extract a field from HOOK_INPUT via jq. Returns empty string if missing.
@@ -74,11 +133,23 @@ hook_deny() {
     _hook_decision deny "$1"
 }
 
-# hook_pass: end the hook with no decision (the native permission rules decide). A hook that installs hook_backstop
-# must leave through hook_pass or a decision helper; any other exit counts as a crash.
+# hook_pass: end the hook with no decision (the native permission rules decide), or with the ask hook_hold_ask
+# recorded. A hook that installs hook_backstop must leave through hook_pass or a decision helper; any other exit counts
+# as a crash.
 hook_pass() {
+    if [[ -n "${_HOOK_HELD_ASK:-}" ]]; then
+        _hook_decision ask "$_HOOK_HELD_ASK"
+    fi
     _HOOK_SETTLED=1
     exit 0
+}
+
+# hook_hold_ask <reason>: record an ask for hook_pass to emit once screening is done, so any later deny wins over it.
+# The first reason recorded is kept.
+hook_hold_ask() {
+    if [[ -z "${_HOOK_HELD_ASK:-}" ]]; then
+        _HOOK_HELD_ASK="$1"
+    fi
 }
 
 # hook_backstop <ask|deny> <reason>: install an EXIT trap that emits <decision> with <reason> when the hook exits
@@ -160,10 +231,14 @@ git_walk_word() {
 # submodule/sparse-checkout/lfs/replace count as mutating in every form, read forms included: no reviewer prompt uses
 # them, and the orchestrator, not a reviewer, creates review worktrees.
 git_sub_mutating() {
+    # init, clone, bisect, read-tree, checkout-index, maintenance and bundle write the repository or its working tree;
+    # reflog counts in every form, as worktree does; stage is add. remote is left out: reviewer-guard.sh sees the word
+    # after it and allows only its read forms.
     case "$1" in
         commit|add|rm|mv|push|reset|checkout|switch|restore|stash|rebase|merge|revert|cherry-pick|clean|am|apply|\
         update-ref|update-index|write-tree|commit-tree|fast-import|filter-branch|gc|prune|repack|fetch|pull|\
-        worktree|notes|submodule|sparse-checkout|lfs|replace)
+        worktree|notes|submodule|sparse-checkout|lfs|replace|init|clone|bisect|read-tree|checkout-index|\
+        maintenance|bundle|reflog|stage)
             return 0 ;;
     esac
     return 1
@@ -507,4 +582,437 @@ shell_words() {
     fi
     SW_OK=1
     return 0
+}
+
+# norm_path <path> <cwd> [literal]: set NORM_PATH to <path> made absolute against <cwd>, with a leading ~ or ~/
+# expanded (and, unless literal, a leading $HOME or ${HOME}), . and .. segments collapsed lexically and repeated or
+# trailing slashes dropped. Returns 1, with NORM_PATH empty, when <path> starts ~user or, unless literal, holds any
+# other $: the hook cannot resolve it. The path is split once and the result built as a string, so the cost is linear
+# in its length: cutting one segment at a time copies the rest of the path for each.
+# shellcheck disable=SC2034  # NORM_PATH is read by the calling hook
+norm_path() {
+    local p="$1" seg out="" nf=0 IFS=/
+    local -a parts=()
+    # shellcheck disable=SC2088  # a literal ~ prefix is matched here, then expanded by hand
+    case "$p" in
+        '~') p="$HOME" ;;
+        '~/'*) p="$HOME/${p:2}" ;;
+        '~'*) NORM_PATH=""; return 1 ;;
+    esac
+    if [[ "${3:-}" != literal ]]; then
+        case "$p" in
+            '$HOME'|'${HOME}') p="$HOME" ;;
+            '$HOME/'*) p="$HOME/${p:6}" ;;
+            '${HOME}/'*) p="$HOME/${p:8}" ;;
+        esac
+        if [[ "$p" == *'$'* ]]; then
+            NORM_PATH=""
+            return 1
+        fi
+    fi
+    if [[ "$p" != /* ]]; then
+        p="$2/$p"
+    fi
+    if [[ "$-" == *f* ]]; then
+        nf=1
+    fi
+    set -f
+    # shellcheck disable=SC2206  # split on / with pathname expansion off
+    parts=($p)
+    if (( ! nf )); then
+        set +f
+    fi
+    for seg in ${parts[@]+"${parts[@]}"}; do
+        case "$seg" in
+            ''|.) ;;
+            ..) out="${out%/*}" ;;
+            *) out+="/$seg" ;;
+        esac
+    done
+    NORM_PATH="${out:-/}"
+}
+
+# probe_root_too_wide <abs>: 0 if the normalised absolute path <abs> is /, $HOME or an ancestor of it, or an ancestor of
+# the secret vault (/tmp/claude-<id>-vault, under /tmp and /private/tmp): a recursive read there reaches ~/.aws, ~/.ssh
+# or the vault, so it is denied without listing.
+# shellcheck disable=SC2194  # the fixed vault path is the subject and the root the pattern
+probe_root_too_wide() {
+    if [[ "$1" == / ]]; then
+        return 0
+    fi
+    case "$HOME/" in "$1"/*) return 0 ;; esac
+    case /tmp/claude-x-vault/ in "$1"/*) return 0 ;; esac
+    case /private/tmp/claude-x-vault/ in "$1"/*) return 0 ;; esac
+    return 1
+}
+
+# glob_quote <path>: set GLOB_QUOTED to <path> with each \ * ? [ escaped, so a pathname expansion reads it literally.
+# shellcheck disable=SC2034  # GLOB_QUOTED is read by the calling hook
+glob_quote() {
+    local s="${1//\\/\\\\}"
+    s="${s//\*/\\*}"
+    s="${s//\?/\\?}"
+    GLOB_QUOTED="${s//\[/\\[}"
+}
+
+# probe_glob_plain <glob>: 0 if <glob> is a plain name glob: ASCII letters, digits and . _ - * ? only. The tools the
+# probe models (rg, the grep family) split, anchor or match /, **, braces, brackets and ! in ways bash's pattern
+# matching does not, so only a plain glob may narrow a probe: matched in bash, any other could drop a file the tool
+# reads.
+probe_glob_plain() {
+    case "$1" in
+        ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._*?-]*) return 1 ;;
+    esac
+    return 0
+}
+
+# The directory probe: a content-printing recursive read is denied when its root holds a secret file. Every root of one
+# hook run is listed by one pipeline, filtered in one awk pass and bounded: it stops after PROBE_MAX_ENTRIES entries,
+# and a background watchdog kills it at the run-wide deadline (hook_bounded; a hook that times out does not block).
+# Callers source secret-patterns.sh, which supplies the regexes.
+PROBE_MAX_ENTRIES=100000
+PROBE_MAX_ROOTS=64
+PROBE_MAX_HITS=50
+PROBE_WATCHDOG_S=1
+
+# probe_reset: forget every probe root.
+probe_reset() {
+    PROBE_N=0
+    PROBE_KIND=()
+    PROBE_ROOT=()
+    PROBE_FORM=()
+    PROBE_INC=()
+    PROBE_EXC=()
+    PROBE_XDIR=()
+    _PROBE_KEYS=$'\x1e'
+}
+probe_reset
+
+# probe_add <kind> <root> <form> [<include> <exclude> <exclude-dir>]: add the absolute directory <root>, listed by
+# <kind>: git (git ls-files -co --exclude-standard in a work tree, with nested repositories and submodules listed in
+# full, else find), tracked (git ls-files in a work tree,
+# else find), find, or findL (find -L). <form> names the reader in a decision. The glob lists (\x1f-separated bash
+# patterns) narrow the hits; a glob holding { is ignored. A repeated entry is ignored; returns 1 once PROBE_MAX_ROOTS
+# are held.
+# shellcheck disable=SC2034  # PROBE_FORM is read by the calling hook
+probe_add() {
+    local key="$1"$'\x1f'"$2"$'\x1f'"${4:-}"$'\x1f'"${5:-}"$'\x1f'"${6:-}"
+    if [[ "$_PROBE_KEYS" == *$'\x1e'"$key"$'\x1e'* ]]; then
+        return 0
+    fi
+    if (( PROBE_N >= PROBE_MAX_ROOTS )); then
+        return 1
+    fi
+    _PROBE_KEYS+="$key"$'\x1e'
+    PROBE_KIND[PROBE_N]="$1"
+    PROBE_ROOT[PROBE_N]="$2"
+    PROBE_FORM[PROBE_N]="$3"
+    PROBE_INC[PROBE_N]="${4:-}"
+    PROBE_EXC[PROBE_N]="${5:-}"
+    PROBE_XDIR[PROBE_N]="${6:-}"
+    PROBE_N=$(( PROBE_N + 1 ))
+}
+
+# _dhs_find <root> [-L]: list every entry under <root>, relative to it, skipping .git and node_modules.
+_dhs_find() {
+    cd "$1" || return 1
+    command find ${2:+"$2"} . \( -name .git -o -name node_modules \) -prune -o -print
+}
+
+# _dhs_git <root> <ls-files option>...: list the work tree's files under <root>, one per line, and return git's status,
+# or tr's when git's is 0. The list is read NUL-separated: git C-quotes a name holding " \ or a control character in its
+# line form whatever core.quotepath says, and a quoted name matches no glob. tr runs in the C locale, as a UTF-8 tr
+# stops at a name that is not valid UTF-8; any tr failure still reads as a failed listing.
+_dhs_git() {
+    local r="$1"
+    local -a ps=()
+    shift
+    if git -C "$r" ls-files -z "$@" | LC_ALL=C tr '\0' '\n'; then
+        ps=("${PIPESTATUS[@]}")
+    else
+        ps=("${PIPESTATUS[@]}")
+    fi
+    if [[ "${ps[0]}" != 0 ]]; then
+        return "${ps[0]}"
+    fi
+    return "${ps[1]}"
+}
+
+# _dhs_nested <root>: list in full each untracked nested repository (git prints one dir/ entry) and each submodule (one
+# gitlink entry) under the work tree <root>, as rg descends into both. Return 1 if any listing step fails or a reported
+# path is not a directory.
+_dhs_nested() {
+    local r="$1" d dirs seen=$'\n' rc=0
+    dirs=$(
+        set -o pipefail
+        git -C "$r" ls-files -z -co --exclude-standard | LC_ALL=C tr '\0' '\n' | LC_ALL=C awk '/\/$/' || exit 1
+        git -C "$r" ls-files -z -s | LC_ALL=C tr '\0' '\n' \
+            | LC_ALL=C awk 'index($0, "160000 ") == 1 { sub(/^[^\t]*\t/, ""); print }' || exit 1
+    ) || return 1
+    while IFS= read -r d; do
+        d="${d%/}"
+        case "$seen" in *$'\n'"$d"$'\n'*) continue ;; esac
+        seen+="$d"$'\n'
+        if [[ -z "$d" ]]; then
+            continue
+        elif [[ -d "$r/$d" ]]; then
+            (cd "$r" && command find "./$d" \( -name .git -o -name node_modules \) -prune -o -print) || rc=1
+        else
+            rc=1
+        fi
+    done <<<"$dirs"
+    return "$rc"
+}
+
+# _dhs_list: the default lister. For each probe root print \002<index>\t<root>, then its entries, then \003<status>.
+_dhs_list() {
+    local i=0 rc k r
+    while (( i < PROBE_N )); do
+        k="${PROBE_KIND[i]}"
+        r="${PROBE_ROOT[i]}"
+        printf '\002%s\t%s\n' "$i" "$r"
+        rc=0
+        case "$k" in
+            git|tracked)
+                if [[ "$(git -C "$r" rev-parse --is-inside-work-tree 2>/dev/null)" != true ]]; then
+                    _dhs_find "$r" || rc=$?
+                elif [[ "$k" == git ]]; then
+                    _dhs_git "$r" -co --exclude-standard || rc=$?
+                    if ! _dhs_nested "$r" && (( rc == 0 )); then
+                        rc=1
+                    fi
+                else
+                    _dhs_git "$r" --cached || rc=$?
+                fi ;;
+            findL) _dhs_find "$r" -L || rc=$? ;;
+            *) _dhs_find "$r" || rc=$? ;;
+        esac
+        printf '\003%s\n' "$rc"
+        i=$(( i + 1 ))
+    done
+}
+
+# The probe's filter. A \002<i>\t<root> line starts root <i>, a \003<status> line ends it, and any other line is an
+# entry relative to the root (a leading ./ dropped), or a full path when no root has started. Each entry is folded (the
+# _NAME_FOLDS letters, then ASCII case) and tested as "/<path>" against the secret and allow regexes, which is
+# path_is_secret's rule. Prints H<i>\t<path> per hit, up to maxh; then C if the cap stopped it, F if a lister failed,
+# and E<entries> last. With fin set, E is printed only when the last line was a lone \004, the end marker of a producer
+# that may be killed part way: its cut output then reads as unfinished.
+_DHS_AWK='
+BEGIN { US = sprintf("%c", 31); nf = split(folds, F, US); idx = -1; pre = "" }
+fin && $0 == "\004" { done = 1; next }
+substr($0, 1, 1) == "\002" {
+    t = substr($0, 2); i = index(t, "\t"); idx = substr(t, 1, i - 1); pre = substr(t, i + 1); next
+}
+substr($0, 1, 1) == "\003" { if (substr($0, 2) != "0") failed = 1; next }
+{
+    done = 0
+    if (++n > cap) { capped = 1; exit }
+    p = $0
+    if (substr(p, 1, 2) == "./") p = substr(p, 3)
+    if (pre != "") p = pre "/" p
+    t = p
+    if (t ~ /[\200-\377]/) for (j = 1; j < nf; j += 2) gsub(F[j], F[j + 1], t)
+    t = tolower("/" t)
+    if (t ~ sre && t !~ are) {
+        print "H" idx "\t" p
+        if (++hits >= maxh) exit
+    }
+}
+END {
+    if (capped) print "C"
+    else if (failed) print "F"
+    if (!fin || done) print "E" n + 0
+}'
+
+# _dhs_glob <glob> <rel>: 0 if <glob> matches the relative path <rel> as grep and rg match one: against the basename
+# when the glob has no /, else against the whole path, a leading **/ also matching at the top.
+_dhs_glob() {
+    # shellcheck disable=SC2053  # the glob is a pattern
+    if [[ "$1" != */* ]]; then
+        [[ "${2##*/}" == $1 ]]
+    else
+        [[ "$2" == $1 ]] || { [[ "$1" == '**/'* ]] && [[ "$2" == ${1#'**/'} ]]; }
+    fi
+}
+
+# _dhs_keep <index> <path>: 0 unless root <index>'s narrowing drops <path>: an include list none of whose globs it
+# matches, an exclude glob it matches, or an exclude-dir glob that one of its directories matches.
+_dhs_keep() {
+    local inc="${PROBE_INC[$1]}" exc="${PROBE_EXC[$1]}" xd="${PROBE_XDIR[$1]}" rel g d ok=0
+    rel="${2#"${PROBE_ROOT[$1]}"/}"
+    if [[ -n "$inc" ]]; then
+        while [[ -n "$inc" ]]; do
+            g="${inc%%$'\x1f'*}"
+            if [[ "$inc" == *$'\x1f'* ]]; then inc="${inc#*$'\x1f'}"; else inc=""; fi
+            if [[ "$g" == *'{'* ]] || _dhs_glob "$g" "$rel"; then
+                ok=1
+                break
+            fi
+        done
+        if (( ! ok )); then
+            return 1
+        fi
+    fi
+    while [[ -n "$exc" ]]; do
+        g="${exc%%$'\x1f'*}"
+        if [[ "$exc" == *$'\x1f'* ]]; then exc="${exc#*$'\x1f'}"; else exc=""; fi
+        if [[ -n "$g" && "$g" != *'{'* ]] && _dhs_glob "$g" "$rel"; then
+            return 1
+        fi
+    done
+    while [[ -n "$xd" ]]; do
+        g="${xd%%$'\x1f'*}"
+        if [[ "$xd" == *$'\x1f'* ]]; then xd="${xd#*$'\x1f'}"; else xd=""; fi
+        if [[ -z "$g" || "$g" == *'{'* || "$rel" != */* ]]; then
+            continue
+        fi
+        d="${rel%/*}"
+        while [[ -n "$d" ]]; do
+            # shellcheck disable=SC2053  # the glob is a pattern
+            if [[ "${d##*/}" == $g ]]; then
+                return 1
+            fi
+            if [[ "$d" == */* ]]; then d="${d%/*}"; else d=""; fi
+        done
+    done
+    return 0
+}
+
+# _dhs_run <lister>: the probe's pipeline, the lister's output filtered by _DHS_AWK.
+_dhs_run() {
+    set +o pipefail
+    "$1" 2>/dev/null </dev/null | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh="$PROBE_MAX_HITS" \
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+}
+
+# dir_holds_secret [<lister>]: list every probe root with <lister> (default _dhs_list) in one bounded pipeline. Returns
+# 0 when a root holds a secret file its narrowing keeps, setting DHS_HITS (up to three paths, comma-separated) and
+# DHS_IDX (the first hit's root); 1 when none does; 2 when the listing is inconclusive, setting DHS_WHY to the reason.
+# shellcheck disable=SC2034  # DHS_WHY is read by the calling hook
+dir_holds_secret() {
+    local lister="${1:-_dhs_list}" out line i path n=0 capped=0 failed=0 finished=0 hits=0
+    DHS_HITS=""
+    DHS_IDX=""
+    DHS_WHY=""
+    if (( PROBE_N == 0 )); then
+        return 1
+    fi
+    if ! out=$(mktemp "${TMPDIR:-/tmp}/claude-probe.XXXXXX" 2>/dev/null); then
+        DHS_WHY="no scratch file could be made"
+        return 2
+    fi
+    if ! hook_bounded "$out" _dhs_run "$lister"; then
+        rm -f "$out"
+        DHS_WHY="the hook ran out of time before listing it"
+        return 2
+    fi
+    while IFS= read -r line; do
+        case "$line" in
+            H*)
+                n=$(( n + 1 ))
+                i="${line:1}"
+                i="${i%%$'\t'*}"
+                path="${line#*$'\t'}"
+                if _dhs_keep "$i" "$path"; then
+                    if (( hits < 3 )); then
+                        DHS_HITS+="${DHS_HITS:+, }$path"
+                    fi
+                    if [[ -z "$DHS_IDX" ]]; then
+                        DHS_IDX="$i"
+                    fi
+                    hits=$(( hits + 1 ))
+                fi ;;
+            C) capped=1 ;;
+            F) failed=1 ;;
+            E*) finished=1 ;;
+        esac
+    done <"$out"
+    rm -f "$out"
+    if (( hits > 0 )); then
+        return 0
+    fi
+    if (( ! finished )); then
+        DHS_WHY="it could not be listed in the time the hook has"
+    elif (( capped )); then
+        DHS_WHY="it holds more than $PROBE_MAX_ENTRIES entries"
+    elif (( n >= PROBE_MAX_HITS )); then
+        DHS_WHY="it holds more secret-named files than the narrowing can check"
+    elif (( failed )); then
+        DHS_WHY="part of it could not be listed"
+    else
+        return 1
+    fi
+    return 2
+}
+
+# _wh_run <pattern>: expand the absolute <pattern>, then write the end marker, through _DHS_AWK.
+_wh_run() {
+    set +o pipefail
+    { compgen -G "$1" 2>/dev/null; printf '\004\n'; } | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh=1 -v fin=1 \
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+}
+
+# wild_holds_secret <pattern>: expand <pattern> (an absolute path glob whose directory part glob_quote escaped) and test
+# every match as the probe tests an entry, bounded by the run-wide deadline (hook_bounded). Returns 0 with WH_HIT the
+# first secret match, 1 if none, 2 past PROBE_MAX_ENTRIES, 3 when it could not be expanded in time.
+# shellcheck disable=SC2034  # WH_HIT is read by the calling hook
+wild_holds_secret() {
+    local out line rc=0
+    WH_HIT=""
+    hook_time_left
+    if (( HOOK_LEFT_MS <= 0 )) || ! out=$(mktemp "${TMPDIR:-/tmp}/claude-wild.XXXXXX" 2>/dev/null); then
+        return 3
+    fi
+    hook_bounded "$out" _wh_run "$1" || rc=$?
+    if (( rc == 0 )); then
+        rc=3
+        while IFS= read -r line; do
+            case "$line" in
+                H*) WH_HIT="${line#*$'\t'}"; rc=0; break ;;
+                C) rc=2; break ;;
+                E*) rc=1 ;;
+            esac
+        done <"$out"
+    fi
+    rm -f "$out"
+    return "$rc"
+}
+
+# _glob_run <pattern>: expand <pattern> and write the end marker after it, in one process, keeping the first 65 lines.
+_glob_run() {
+    set +o pipefail
+    { compgen -G "$1" 2>/dev/null; printf '\004\n'; } | head -n 65
+}
+
+# glob_dirs <pattern>: set GLOB_DIRS to the newline-separated matches of <pattern> (one ending in /, so directories),
+# bounded by the run-wide deadline (hook_bounded): all of them, or 65 when there are more. Returns 0, or 3 when it could
+# not be expanded in time. 65 lines with no end marker are 65 matches, whether more were cut or never printed.
+# shellcheck disable=SC2034  # GLOB_DIRS is read by the calling hook
+glob_dirs() {
+    local out rc=0 m="" rest n=0
+    GLOB_DIRS=""
+    hook_time_left
+    if (( HOOK_LEFT_MS <= 0 )) || ! out=$(mktemp "${TMPDIR:-/tmp}/claude-glob.XXXXXX" 2>/dev/null); then
+        return 3
+    fi
+    hook_bounded "$out" _glob_run "$1" || rc=$?
+    if (( rc == 0 )); then
+        IFS= read -r -d '' m <"$out" || :
+        rest="$m"
+        while (( n < 65 )) && [[ "$rest" == *$'\n'* ]]; do
+            rest="${rest#*$'\n'}"
+            n=$(( n + 1 ))
+        done
+        if [[ "$m" == *$'\004\n' ]]; then
+            m="${m%$'\004\n'}"
+            GLOB_DIRS="${m%$'\n'}"
+        elif (( n >= 65 )); then
+            GLOB_DIRS="${m%$'\n'}"
+        else
+            rc=3
+        fi
+    fi
+    rm -f "$out"
+    return "$rc"
 }

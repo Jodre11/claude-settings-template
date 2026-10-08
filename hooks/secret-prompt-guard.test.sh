@@ -10,7 +10,8 @@ run() {
     [[ "$out" == *'"decision":"block"'* ]] && echo BLOCK || echo PASS
 }
 
-[[ "$(run 'my key is AKIAIOSFODNN7EXAMPLE please use it')" == BLOCK ]] \
+key="AKIA""IOSFODNN7EXAMPLE"
+[[ "$(run "my key is ${key} please use it")" == BLOCK ]] \
     && ok "prompt with AWS key blocked" || bad "prompt with AWS key passed"
 [[ "$(run 'please refactor the auth module')" == PASS ]] \
     && ok "clean prompt passed" || bad "clean prompt blocked"
