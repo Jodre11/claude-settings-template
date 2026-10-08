@@ -89,6 +89,18 @@ expect none "a reviewer may run a non-git tool"                'jq --version'   
 expect none "a general-purpose subagent is not a reviewer"     'git commit -m x'         general-purpose
 expect none "an ordinary main session is untouched"            'git commit -m x'         '' ''
 expect none "a payload with no command is ignored"             ''                        "$REVIEWER"
+# init, clone, bisect, read-tree, checkout-index, maintenance and bundle write the repository or its working tree, and
+# reflog counts in every form; stage is add; remote mutates except in its read forms (no argument, -v, show, get-url).
+for c in 'git init x' 'git clone https://example.invalid/r.git' 'git bisect start' 'git read-tree -u HEAD' \
+        'git checkout-index -a -f' 'git maintenance run' 'git bundle create x.bundle HEAD' 'git reflog' \
+        'git reflog expire --all' 'git stage x' 'git remote update' 'git remote prune origin' \
+        'git remote add x y' 'git remote set-url origin z' 'git remote -v update' 'git remote | git remote rm x'; do
+    expect deny "a reviewer is denied $c"                               "$c"                     "$REVIEWER"
+done
+for c in 'git remote' 'git remote -v' 'git remote --verbose' 'git remote show origin' 'git remote get-url origin' \
+        'git remote -v | grep origin' 'git remote show origin | git log -1'; do
+    expect none "a reviewer may run $c"                                 "$c"                     "$REVIEWER"
+done
 
 # The old allow half auto-approved these by first word. This hook must never allow anything, for any caller.
 probes=('command rm -rf /tmp/claude-x /home/me' 'npx -y cowsay hi' "python3 -c 'print(1)'" 'find . -name x -delete'

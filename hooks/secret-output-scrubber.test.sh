@@ -155,8 +155,8 @@ else
     bad "an MCP result escaped scanning through its path field"
 fi
 out=$(jq -nc --arg c "x $AWS_KEY" '{tool_name: "Edit", transcript_path: "",
-    tool_input: {file_path: "/x/hooks/secret-bash-guard.test.sh"},
-    tool_response: {filePath: "/x/hooks/secret-bash-guard.test.sh", originalFile: $c}}' | "$HOOK")
+    tool_input: {file_path: "/x/hooks/secret-patterns.sh"},
+    tool_response: {filePath: "/x/hooks/secret-patterns.sh", originalFile: $c}}' | "$HOOK")
 if [[ -z "$out" ]]; then
     ok "an Edit of an exempt path is not scanned"
 else

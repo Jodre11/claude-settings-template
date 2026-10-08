@@ -27,7 +27,7 @@ if [[ "$(hook_field '.hook_event_name')" == PostToolUseFailure ]]; then
 fi
 
 # Skip scanning a Read, Grep, Edit or Write whose own path field (file_path, else path) names a firewall
-# self-definition/test/doc file: their contents embed example secret vectors by design, and scanning them fires a
+# self-definition or doc file: their contents embed example secret vectors by design, and scanning them fires a
 # false breach alarm. Edit and Write results carry the file's content too. Only those tools' path fields count: a
 # Bash, MCP or other result is always scanned, whatever its command string names. NOT a content allowlist: real
 # secrets elsewhere are still caught.

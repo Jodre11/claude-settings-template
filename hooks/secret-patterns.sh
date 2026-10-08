@@ -37,13 +37,50 @@ SECRET_PATH_GLOBS=(
     '*.env'
     '.env.*'
     '*/.env.*'
+    # The exact names stay: each is a representative a glob operand such as id_rs? is matched against.
     '*/id_rsa'
+    '*/id_dsa'
+    '*/id_ecdsa'
     '*/id_ed25519'
+    '*/id_rsa*'
+    '*/id_dsa*'
+    '*/id_ecdsa*'
+    '*/id_ed25519*'
+    '*_rsa'
+    '*_dsa'
+    '*_ecdsa'
+    '*_ed25519'
+    '*/.ssh/*'
     '*/.aws/credentials'
     '*/.netrc'
     '*/config.env'
     '*/.pgpass'
-    '*/proc/*/environ'
+    '*/.docker/config.json'
+    # podman's auth file: ~/.config/containers (macOS, and Linux's fallback), $XDG_RUNTIME_DIR/containers, and the
+    # rootful /run/containers/<uid> (/etc/containers holds only registry configuration).
+    '*/.config/containers/auth.json'
+    '*/run/*/containers/auth.json'
+    '*/run/containers/*/auth.json'
+    '*/.kube/config'
+    '*/.config/gh/hosts.yml'
+    '*/.git-credentials'
+    '*/.npmrc'
+    '*/.pypirc'
+    # A process's environment: /proc/<pid> starts with a digit, spelt out as * is the lists' only metacharacter.
+    '*/proc/0*/environ'
+    '*/proc/1*/environ'
+    '*/proc/2*/environ'
+    '*/proc/3*/environ'
+    '*/proc/4*/environ'
+    '*/proc/5*/environ'
+    '*/proc/6*/environ'
+    '*/proc/7*/environ'
+    '*/proc/8*/environ'
+    '*/proc/9*/environ'
+    '*/proc/self/environ'
+    '*/proc/thread-self/environ'
+    '*/proc/self/task/*/environ'
+    '*/proc/thread-self/task/*/environ'
     '$CLAUDE_SECRET_DIR'
     '$CLAUDE_SECRET_DIR/*'
     '${CLAUDE_SECRET_DIR}'
@@ -58,20 +95,21 @@ SECRET_PATH_ALLOW=(
     '*.tmpl'
     '*config.env.example'
     '*.example'
+    '*/.ssh/known_hosts'
+    '*/.ssh/known_hosts.old'
+    '*/.ssh/config'
+    '*/.ssh/authorized_keys'
 )
 
-# Self-referential paths whose CONTENTS legitimately embed secret-shaped example
-# vectors: the pattern library itself, the firewall tests, the design docs, and
-# the SDD scratch dir (diffs/reports). The PostToolUse scrubber skips scanning a
-# tool result whose target is one of these — otherwise every Read/Grep/cat of the
-# firewall's own source fires a false breach alarm, training the alarm to be
-# ignored. This is a PATH skip, NOT a content allowlist: a real secret in any
-# ordinary file is still detected; only the firewall's own definition/test/doc
-# files are exempt. Kept tight so collision with a genuine secret file is
-# implausible; Layer 1 still guards the original source reads regardless.
+# Self-referential paths whose CONTENTS legitimately embed secret-shaped example vectors: the pattern library itself,
+# the design docs, and the SDD scratch dir (diffs/reports). The PostToolUse scrubber skips scanning a tool result whose
+# target is one of these — otherwise every Read/Grep/cat of the firewall's own source fires a false breach alarm,
+# training the alarm to be ignored. This is a PATH skip, NOT a content allowlist: a real secret in any ordinary file
+# is still detected; only the firewall's own definition and doc files are exempt (its tests build their fixtures at
+# run time, so they are scanned). Kept tight so collision with a genuine secret file is implausible; Layer 1 still
+# guards the original source reads regardless.
 SECRET_SCAN_SKIP_PATHS=(
     '*/hooks/secret-patterns.sh'
-    '*/hooks/secret-*.test.sh'
     '*secret-context-firewall*'
     '*/breach-ledger.log'
     '*/.superpowers/*'
@@ -151,6 +189,11 @@ for (( _i = 0; _i < ${#_NAME_FOLDS[@]}; _i += 2 )); do
     _NAME_FOLD_ANY+="${_NAME_FOLDS[_i]}"
 done
 _NAME_FOLD_ANY="*[$_NAME_FOLD_ANY]*"
+# The same pairs, \x1f-separated, for the directory probe's awk pass.
+SECRET_FOLDS_AWK=""
+for (( _i = 0; _i < ${#_NAME_FOLDS[@]}; _i++ )); do
+    SECRET_FOLDS_AWK+="${SECRET_FOLDS_AWK:+$'\x1f'}${_NAME_FOLDS[_i]}"
+done
 unset _i
 
 # name_fold <word>: set NAME_FOLD to <word> with each letter of _NAME_FOLDS written as its ASCII fold. A caller on a
@@ -178,6 +221,18 @@ _glob_fold() {
     done
 }
 
+# _glob_awk_re <glob>: set _GLOB_AWK_RE to <glob>, lower-cased, as an awk ERE body: each of . $ { } bracketed and each
+# * written .* (the globs use no other metacharacter).
+_glob_awk_re() {
+    local lb='{' rb='}' s
+    ascii_lower "$1"
+    s="${ASCII_LOWER//./[.]}"
+    s="${s//\$/[\$]}"
+    s="${s//$lb/[$lb]}"
+    s="${s//$rb/[$rb]}"
+    _GLOB_AWK_RE="${s//\*/.*}"
+}
+
 # _secret_path_alternations: join each glob list into one @(…|…) pattern, matched against "/<path>" so a */X glob also
 # covers a bare X (config.env, id_rsa, .aws/credentials from ~). [[ == ]] matches a pattern as if extglob were on, so
 # one test replaces a loop over the globs: path_is_secret runs once per operand, and a 64 KiB command can carry 30,000
@@ -188,14 +243,18 @@ _glob_fold() {
 # duplicates dropped; and SECRET_PATH_FRAGMENT_RE, an awk regex of the longest literal piece of each such "/"-adjusted
 # glob, lower-cased (each of . $ { } bracketed): "/<path>", lower-cased, can match a glob only if it holds that piece,
 # so a path matching none cannot be secret.
+# Also derive SECRET_PATH_AWK_RE and SECRET_ALLOW_AWK_RE: both lists as anchored awk EREs over the lower-cased
+# "/<path>", which the directory probe applies to every entry it lists.
 _secret_path_alternations() {
     local IFS='|' g gp last piece rest best seen='|' lb='{' rb='}'
-    local -a any=() allow=() pieces=()
+    local -a any=() allow=() pieces=() sre=() are=()
     SECRET_PATH_REPRESENTATIVES=()
     for g in "${SECRET_PATH_GLOBS[@]}"; do
         if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
         _glob_fold "$gp"
         any+=("$_GLOB_FOLD")
+        _glob_awk_re "$gp"
+        sre+=("$_GLOB_AWK_RE")
         best=""
         rest="$gp"
         while [[ -n "$rest" ]]; do
@@ -219,12 +278,18 @@ _secret_path_alternations() {
         if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
         _glob_fold "$gp"
         allow+=("$_GLOB_FOLD")
+        _glob_awk_re "$gp"
+        are+=("$_GLOB_AWK_RE")
     done
     _SECRET_PATH_ANY="@(${any[*]})"
     _SECRET_ALLOW_ANY="@(${allow[*]})"
     _SECRET_REPRESENTATIVE_LIST="$seen"
     # shellcheck disable=SC2034  # read by secret-bash-guard.sh
     SECRET_PATH_FRAGMENT_RE="${pieces[*]}"
+    # shellcheck disable=SC2034  # read by the directory probe in _lib.sh
+    SECRET_PATH_AWK_RE="^(${sre[*]})$"
+    # shellcheck disable=SC2034  # read by the directory probe in _lib.sh
+    SECRET_ALLOW_AWK_RE="^(${are[*]})$"
 }
 _secret_path_alternations
 
@@ -237,11 +302,77 @@ _SECRET_GLOB_MAX_CHARS=128
 _SECRET_GLOB_MAX_WILD=5
 _SECRET_GLOB_TESTS=0
 
-# path_is_secret <path>: 0 if <path> or /<path> matches a secret glob and neither matches an allow glob, else 1.
+# path_is_secret <path>: 0 if <path> or /<path> matches a secret glob and neither matches an allow glob, else 1. A path
+# holding a .. segment ignores the allow globs: the segment can climb out of an allowed name into a secret one.
 path_is_secret() {
+    local p="/$1"
     # The alternations are intentional patterns here — do NOT quote them.
     # shellcheck disable=SC2053
-    [[ "/$1" == $_SECRET_PATH_ANY && "/$1" != $_SECRET_ALLOW_ANY ]]
+    [[ "$p" == $_SECRET_PATH_ANY ]] || return 1
+    if [[ "$p" == */../* || "$p" == */.. ]]; then
+        return 0
+    fi
+    # shellcheck disable=SC2053
+    [[ "$p" != $_SECRET_ALLOW_ANY ]]
+}
+
+# Directory representatives: one name per glob whose last component is * or a literal under a directory part
+# (*/.aws/credentials, */secrets/*, */.ssh/*), kept when it is not secret under a neutral directory too (so .env and
+# *.pem, secret anywhere, are left out). A pattern last component (claude-*-vault) names entries of /tmp, which stays
+# an ordinary directory. A */ glob whose later components are all literal also gives each proper suffix of them
+# (gh/hosts.yml from */.config/gh/hosts.yml), so a directory above the secret one (~/.config) counts too.
+_secret_dir_representatives() {
+    local g last rest seen='|'
+    local -a cand
+    SECRET_DIR_REPRESENTATIVES=()
+    for g in "${SECRET_PATH_GLOBS[@]}"; do
+        if [[ "$g" != */* ]]; then
+            continue
+        fi
+        cand=()
+        last="${g##*/}"
+        if [[ "$last" != *\** || "$last" == '*' ]]; then
+            cand+=("${last//\*/x}")
+        fi
+        if [[ "$g" == '*/'* ]]; then
+            rest="${g#\*/}"
+            if [[ "$rest" != *[\*\?\[]* ]]; then
+                while [[ "$rest" == */*/* ]]; do
+                    rest="${rest#*/}"
+                    cand+=("$rest")
+                done
+            fi
+        fi
+        for last in ${cand[@]+"${cand[@]}"}; do
+            if [[ "$seen" != *"|$last|"* ]] && ! path_is_secret "/n/$last"; then
+                SECRET_DIR_REPRESENTATIVES+=("$last")
+                seen+="$last|"
+            fi
+        done
+    done
+}
+_secret_dir_representatives
+
+# dir_is_secret <dir> [near]: 0 if <dir> is a secret path, or a directory representative placed under it is: a cd there
+# would make a later reader's operand relative and bare. Given near, only single-name representatives count (a secret
+# directly in <dir>), for a caller testing the directories above a cd's target.
+dir_is_secret() {
+    local d="$1" r
+    while [[ "$d" == ?*/ ]]; do
+        d="${d%/}"
+    done
+    if path_is_secret "$d"; then
+        return 0
+    fi
+    for r in ${SECRET_DIR_REPRESENTATIVES[@]+"${SECRET_DIR_REPRESENTATIVES[@]}"}; do
+        if [[ -n "${2:-}" && "$r" == */* ]]; then
+            continue
+        fi
+        if path_is_secret "$d/$r"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # _glob_brackets_as_any <pattern>: set _GLOB_ANY to <pattern> with each bracket expression, and each [ that opens
@@ -381,10 +512,9 @@ _path_glob_match() {
     return 1
 }
 
-# path_is_scan_exempt <path>: 0 if the path is a firewall self-definition/test/
-# doc file whose contents legitimately embed example secret vectors (so the
-# output scrubber should NOT scan a result targeting it), else 1. Empty path
-# (many tools carry no path) is never exempt.
+# path_is_scan_exempt <path>: 0 if the path is a firewall self-definition or doc file whose contents legitimately
+# embed example secret vectors (so the output scrubber should NOT scan a result targeting it), else 1. Test files are
+# not exempt. Empty path (many tools carry no path) is never exempt.
 path_is_scan_exempt() {
     local p="$1" g
     [[ -z "$p" ]] && return 1
