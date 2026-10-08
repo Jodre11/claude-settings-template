@@ -572,16 +572,19 @@ expect DENY  "a git show of a bracket holding ( denied"            "git show 'HE
 
 # SSH keys by any common name and the credential files beside them are secret paths; the public halves and the ssh
 # client's own files are not.
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
 for p in '~/.ssh/id_ecdsa' '~/.ssh/id_dsa' '~/.ssh/work_ed25519' 'id_rsa_work' '~/.ssh/random_file' \
         '~/.docker/config.json' '~/.config/containers/auth.json' '~/.kube/config' '~/.config/gh/hosts.yml' \
         '~/.git-credentials' '.npmrc' '~/.pypirc'; do
     expect DENY "cat of $p denied"                                 "cat $p"
 done
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
 for p in '~/.ssh/id_ed25519.pub' '~/.ssh/known_hosts' '~/.ssh/config' '~/.ssh/authorized_keys' \
         'src/id_generator.py'; do
     expect ALLOW "cat of $p allowed"                               "cat $p"
 done
 # A glob operand that can expand to a name under one of those globs is denied as well.
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
 for p in '~/.ssh/work_*' '~/.ssh/id_rsa_*' '~/.ssh/id_ed25519_*' '~/.ssh/d*' '~/.ssh/[w]*' '~/.ssh/work_?' \
         '~/.docker/conf*' '~/.kube/conf*' '~/.ssh/known_hosts/../id_rsa'; do
     expect DENY "cat of the glob $p denied"                        "cat $p"

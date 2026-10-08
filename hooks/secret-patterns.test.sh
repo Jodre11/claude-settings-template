@@ -311,8 +311,7 @@ for q in README.md src/a.py .env.example x/.env.local '' / . .. a/proc/1/environ
     [[ "$got" == "$want" ]] || drift+=" '$q'"
 done
 [[ -z "$drift" ]] && ok "the awk glob forms agree with path_is_secret" || bad "the awk glob forms drift on:$drift"
-n=0
-for s in "${_NAME_FOLDS[@]}"; do n=$(( n + 1 )); done
+n=${#_NAME_FOLDS[@]}
 IFS=$'\x1f' read -r -a folds <<< "$SECRET_FOLDS_AWK"
 [[ "${#folds[@]}" == "$n" ]] && ok "SECRET_FOLDS_AWK carries every fold pair" \
     || bad "SECRET_FOLDS_AWK holds ${#folds[@]} of $n fold entries"
@@ -320,6 +319,7 @@ IFS=$'\x1f' read -r -a folds <<< "$SECRET_FOLDS_AWK"
 # dir_is_secret: a directory that is secret, or that holds a directory-named secret (credentials under .aws, anything
 # under secrets, .ssh or the vault), or above one by a literal path (gh/hosts.yml under .config). An anywhere-name
 # (.env, *.pem) does not make every directory secret.
+# shellcheck disable=SC2088  # the ~ is the operand as written, unexpanded
 for d in '~/.aws' a/.ssh secrets a/secrets/ /tmp/claude-abc-vault /tmp/claude-abc-vault/secrets '$CLAUDE_SECRET_DIR' \
         /proc/1 a/.kube a/.docker a/.config/gh a/.config/containers a/.config /run/user/501/containers; do
     dir_is_secret "$d" && ok "a secret directory: $d" || bad "a secret directory missed: $d"
