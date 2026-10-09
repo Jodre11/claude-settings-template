@@ -100,6 +100,11 @@ expect_words "an empty word stays w"           "x ''"                       '[px
 w257=$(printf 'a%.0s' $(seq 1 257))
 expect_words "a word over 256 characters stays w" "x $w257"                 "[px][w$w257]" "$NAMES" "$FRAG"
 expect_words "without names nothing is p"      'ls a'                       '[wls][wa]'
+expect_words "a versioned listed name stays w"  'cat2 a'                     '[wcat2][pa]' "$NAMES" "$FRAG"
+expect_words "a dotted version stays w"         'cat3.12 a'                  '[wcat3.12][pa]' "$NAMES" "$FRAG"
+expect_words "a versioned path in upper case stays w" '/bin/CAT3 a'          '[w/bin/CAT3][pa]' "$NAMES" "$FRAG"
+expect_words "an unlisted versioned name is p"  'ls2 a'                      '[pls2][pa]' "$NAMES" "$FRAG"
+expect_words "letters after a version are no version" 'cat2x a'              '[pcat2x][pa]' "$NAMES" "$FRAG"
 
 # Portability: every awk on PATH (BSD awk on macOS, mawk or gawk on Linux) gives the same elements, and so does the
 # substr loop an awk takes when it cannot split a string into characters.
@@ -202,6 +207,10 @@ walk() {  # walk <word>...: print the subcommand the walk finds, or ACTIVE if no
 git_sub_mutating commit && ok "commit is mutating" || bad "commit not mutating"
 git_sub_mutating worktree && ok "worktree is mutating in every form" || bad "worktree not mutating"
 for s in init clone bisect read-tree checkout-index maintenance bundle reflog stage; do
+    git_sub_mutating "$s" && ok "$s is mutating" || bad "$s not mutating"
+done
+for s in pack-refs commit-graph multi-pack-index rerere mktree mktag unpack-objects update-server-info merge-file \
+        prune-packed index-pack; do
     git_sub_mutating "$s" && ok "$s is mutating" || bad "$s not mutating"
 done
 if git_sub_mutating remote; then bad "remote counted as mutating"; else ok "remote is not mutating"; fi

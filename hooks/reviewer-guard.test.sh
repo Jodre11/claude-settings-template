@@ -101,6 +101,12 @@ for c in 'git remote' 'git remote -v' 'git remote --verbose' 'git remote show or
         'git remote -v | grep origin' 'git remote show origin | git log -1'; do
     expect none "a reviewer may run $c"                                 "$c"                     "$REVIEWER"
 done
+# Plumbing that writes refs, the object store or a working-tree file is denied in every form, read forms included.
+for c in 'git pack-refs --all' 'git commit-graph write' 'git commit-graph verify' 'git multi-pack-index write' \
+        'git rerere status' 'git mktree' 'git mktag' 'git unpack-objects' 'git update-server-info' \
+        'git merge-file a b c' 'git prune-packed' 'git index-pack x.pack'; do
+    expect deny "a reviewer is denied $c"                               "$c"                     "$REVIEWER"
+done
 
 # The old allow half auto-approved these by first word. This hook must never allow anything, for any caller.
 probes=('command rm -rf /tmp/claude-x /home/me' 'npx -y cowsay hi' "python3 -c 'print(1)'" 'find . -name x -delete'

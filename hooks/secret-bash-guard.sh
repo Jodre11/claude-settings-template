@@ -102,11 +102,13 @@ tf_skip+='|&?[0-9]*[<>][<>&|]*[[:blank:]]*[^[:space:]|;&<>]+))*'
 av_word='[[:blank:]]+(-|[^-[:space:]|;&][^[:space:]|;&]*|-[^-[:space:]|;&][^[:space:]|;&]*|--[^[:space:]|;&]+)'
 hk_sep='(:|[[:space:]]+)'
 # A case-insensitive file system runs TERRAFORM as terraform, so these tools' names match in any case; their
-# subcommands do not.
+# subcommands do not. OpenTofu's tofu takes terraform's forms, and honours TF_CLI_ARGS as terraform does.
 _ci ansible-vault
 ci_ansible="$CI_RE"
 _ci terraform
 ci_tf="$CI_RE"
+_ci tofu
+ci_tf="(${ci_tf}|${CI_RE})"
 _ci npm
 ci_npm="[Pp]?$CI_RE"
 _ci doppler
@@ -378,7 +380,7 @@ word_classes=(
     'nm W awk gawk'
     'nm G git'
     'nm H sh bash zsh dash ksh'
-    'nm K python python3 perl ruby node php'
+    'nm K python python3 perl ruby node php pypy bun deno lua luajit rscript osascript'
     'nm Ct cp mv ln install'
     'nm C rsync scp ditto'
     'nm D printenv declare typeset'
@@ -406,6 +408,7 @@ word_classes=(
     'cp h source'
     'cp M ssh slogin'
 )
+VER_NAME_RE='^([a-z]+)[0-9][0-9.]*$'
 plain_names='! . { -- --debug --v --log-http --verbosity debug docker-compose podman-compose aws-vault doppler heroku'
 # The name-producer check (_np_start) reads a pipeline's earlier stages; with no | there are none.
 np_on=0
@@ -1335,16 +1338,58 @@ _rr_stdin_ok() {
     return 1
 }
 
+# _rr_rev_ok <rev>: 0 if git grep's operand <rev>, read as a revision, confines the search to blobs: the command has --,
+# and each pathspec after it is literal (no pattern or $, which the shell expands), names no secret, and names a blob
+# in the commit <rev> peels to (git cat-file, run in git -C's directory or the payload's cwd, one call per pathspec
+# within the walks' git budget). A tree, : magic, a tree-ish operand (rev:path), a tree revision (whose path from the
+# root no pathspec shows) and an unknown revision all fail the cat-file test. A git -c core setting or a GIT_CONFIG
+# assignment fails it too, as the hook's own git call cannot carry them, and so does an earlier cd, after which git
+# runs somewhere the cat-file call does not.
+_rr_rev_ok() {
+    local rest="$rrops" o t dir n=0
+    if (( ! rrsep || gcore || rr_gitcfg || cdc )); then
+        return 1
+    fi
+    _pcwd
+    if ! norm_path "${rrcd:-.}" "$PCWD"; then
+        return 1
+    fi
+    dir="$NORM_PATH"
+    while [[ -n "$rest" ]]; do
+        o="${rest%%$'\x1e'*}"
+        rest="${rest#*$'\x1e'}"
+        t="${o:0:1}"
+        o="${o:1}"
+        if [[ "$t" != W ]]; then
+            continue
+        fi
+        n=$(( n + 1 ))
+        if [[ "$o" == *'$'* ]] || _rr_has_glob "$o" || (( rr_gitn >= RR_GIT_MAX )); then
+            return 1
+        fi
+        name_fold "$o"
+        if path_is_secret "$NAME_FOLD"; then
+            return 1
+        fi
+        rr_gitn=$(( rr_gitn + 1 ))
+        if [[ "$(git -C "$dir" cat-file -t "$1^{commit}:./$o" 2>/dev/null)" != blob ]]; then
+            return 1
+        fi
+    done
+    (( n > 0 ))
+}
+
 # _rr_settle_walk: a reader that prints contents has each operand probed (the first is its pattern unless -e or -f gave
 # one; diff and git diff --no-index have none, and probe every operand); a recursive one with no operand naming an
 # existing path probes its working directory (git -C's, for git), except an rg whose stdin it reads. A reader after
 # xargs takes more words from its input, so neither shortcut applies there. Inside find -exec, a {} operand is find's
 # and, under -execdir, a relative root holds an ask. A names-only reader queues its roots for a reader after xargs and
-# marks the stage (srl). A git grep operand that is no path may be a revision, and a pathspec with magic may reach past
-# the root: each holds an ask. After xargs or parallel, a recursive reader's operand holding the replacement string
+# marks the stage (srl). A git grep operand that is no path may be a revision, which holds an ask unless the pathspecs
+# after -- confine it to blobs (_rr_rev_ok); a pathspec with magic may reach past the root and holds one too. After
+# xargs or parallel, a recursive reader's operand holding the replacement string
 # has the directory before it probed, following links (xk), as grep -r follows a link it is given.
 _rr_settle_walk() {
-    local rest="$rrops" o t first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk
+    local rest="$rrops" o ro t first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk
     act="${act//r/}"
     case "$rrn" in
         grep)
@@ -1427,6 +1472,7 @@ _rr_settle_walk() {
         rest="${rest#*$'\x1e'}"
         t="${o:0:1}"
         o="${o:1}"
+        ro="$o"
         # find's {}, or a path under it with no .. segment, stays inside find's roots; another word built on {} may not.
         if (( rrex )) && [[ "$o" == *'{}'* ]]; then
             if [[ "$o" != '{}' ]] && [[ "$o" != '{}/'* || "/$o/" == */../* ]]; then
@@ -1480,7 +1526,9 @@ _rr_settle_walk() {
             fi
             if [[ "$t" == w ]] && (( ! rrnoi && ! rrunt )) && [[ "$o" != *'$'* ]] && ! _rr_has_glob "$o" \
                     && ! _rr_exists "$o"; then
-                _rr_hold "$form" "'$o' may name a revision, whose files the hook cannot list"
+                if ! _rr_rev_ok "$ro"; then
+                    _rr_hold "$form" "'$o' may name a revision, whose files the hook cannot list"
+                fi
                 any=1
                 continue
             fi
@@ -2154,6 +2202,26 @@ _dc_word() {
     fi
 }
 
+# _ds_word <word>: feed a word after docker stack (dsk 1) to the stack config check, which fails closed: a -c or
+# --compose-file value is skipped (dsv), a config word anywhere later makes it dsk 2 (denied in every form), and a
+# compose or exec word is what docker would have seen had a global option's value been read as stack.
+_ds_word() {
+    if (( dsk == 1 )); then
+        if (( dsv )); then
+            dsv=0
+            return 0
+        fi
+        case "$1" in
+            -c|--compose-file) dsv=1 ;;
+            -*) ;;
+            config) dsk=2 ;;
+            compose) dcm=1 ;;
+            exec) _run_wrap "$lgt" ;;
+        esac
+    fi
+    return 0
+}
+
 # _run_y <h|d|l>: start the y walk over a runner's later words: h heroku run's or local:run's (named in ryt), which a
 # shell parses as one string (ryh); d doppler run's options up to -- (ryd: --command, and the mount options, rym a
 # --mount value due, rmf a format or template, rmv a mount into the vault); l heroku local's (ryl: --start-cmd).
@@ -2192,13 +2260,19 @@ _run_wrap() {
 }
 
 # _k_inline <option>: 0 if <option> gives the interpreter being walked (ipn) inline code: a bundle holding any of
-# e E p n c r m (php's also B or R), node's --eval or --print, or php's --run or --process-begin, -code or -end.
+# e E p n c r m (php's also B or R), node's or bun's --eval or --print, deno repl's --eval or --eval-file, or php's
+# --run or --process-begin, -code or -end.
 _k_inline() {
     case "$1" in
         --*)
             case "$ipn:${1%%=*}" in
-                node:--eval|node:--print|php:--run|php:--process-begin|php:--process-code|php:--process-end)
+                node:--eval|node:--print|bun:--eval|bun:--print|php:--run|php:--process-begin|php:--process-code|\
+                php:--process-end)
                     return 0 ;;
+                deno:--eval|deno:--eval-file)
+                    if [[ "$ksub" == repl ]]; then
+                        return 0
+                    fi ;;
             esac ;;
         *[eEpncrm]*) return 0 ;;
         *[BR]*)
@@ -2210,22 +2284,55 @@ _k_inline() {
 }
 
 # _k_valopt <bundle>: set kpv when the option bundle <bundle> of the interpreter being walked (ipn) ends in a letter
-# that takes the next word as its value: python -W -X, perl -I -M -x, ruby -I -C, node -C, php -d -S -t -z. A letter
-# before the end takes the rest of the bundle. perl's -M and -x take only an attached value, so reading the next word
-# as theirs fails closed: that word is then never the program.
+# that takes the next word as its value: python -W -X, perl -I -M -x, ruby -I -C, node -C, php -d -S -t -z, lua -l,
+# luajit -l -j, osascript -l -s. A letter before the end takes the rest of the bundle. perl's -M and -x take only an
+# attached value, so reading the next word as theirs fails closed: that word is then never the program.
 _k_valopt() {
     local b="${1#-}" kvl=""
     case "$ipn" in
-        python|python3) kvl=WX ;;
+        python|python3|pypy) kvl=WX ;;
         perl) kvl=IMx ;;
         ruby) kvl=IC ;;
         node) kvl=C ;;
         php) kvl=dStz ;;
+        lua) kvl=l ;;
+        luajit) kvl=lj ;;
+        osascript) kvl='ls' ;;
     esac
     # Two glob tests, not a walk over the letters: a bundle may be 64 KiB long.
     if [[ -n "$kvl" && "$b" == *["$kvl"] && "${b%?}" != *["$kvl"]* ]]; then
         kpv=1
     fi
+    return 0
+}
+
+# _k_code <word>: <word> starts the walked interpreter's inline code: its program walk becomes the inline-code walk
+# (L), and after xargs, which adds its input to the code's arguments, the stage is a reader (Y).
+_k_code() {
+    if [[ -n "$kvf" ]]; then
+        _deny_reader "$ipw $kvf ... $1"
+    fi
+    act="${act//K/}L"
+    if [[ "$sf" == *X* && "$sf" != *Y* ]]; then
+        if [[ "$sf" != *R* ]]; then rdn="$ipw"; fi
+        sf+=Y
+    fi
+}
+
+# _k_sub <word> <value>: read <word>, the first of bun's or deno's words that is no option, as their subcommand (ksub):
+# bun exec runs a shell command string and deno eval inline code; deno task and repl are kept for their --eval. A word
+# that may be an option's value (<value> 1) is read the same way, but kept only when it names one of these.
+_k_sub() {
+    case "$ipn:$1" in
+        bun:exec) _deny_shell "bun exec" ;;
+        deno:eval) _k_code "$1" ;;
+        deno:task|deno:repl) ;;
+        *)
+            if (( $2 )); then
+                return 0
+            fi ;;
+    esac
+    ksub="$1"
     return 0
 }
 
@@ -2599,9 +2706,11 @@ sf=""
 act=""
 # The interpreter walk (K): kpv marks an option value due next, kvf holds a vault env file option held for the stage
 # end, kon marks another option (kvw: this one is the vault env file), kfst marks the interpreter as the stage's first
-# word, and kvp holds a vault env file whose script was seen, for the stage end's check that nothing feeds the stage.
+# word, and kvp holds a vault env file whose script was seen, for the stage end's check that nothing feeds the stage;
+# ksub holds bun's or deno's subcommand once _k_sub has read it.
 kpv=0
 kvf=""
+ksub=""
 kon=0
 kfst=0
 kvw=0
@@ -2751,7 +2860,7 @@ _stage_end() {
     local msg
     if [[ -n "$kvp" ]]; then
         if (( si > 0 )) || [[ "$sf" == *F* ]]; then
-            _deny_reader "$ipn $kvp fed by a pipe or redirection"
+            _deny_reader "$ipw $kvp fed by a pipe or redirection"
         fi
         kvp=""
     fi
@@ -2778,10 +2887,10 @@ _stage_end() {
             _deny_shell "parallel with no command, fed by a pipe or redirection"
         fi
         if [[ "$act" == *[KL]* && "$sf" == *I* ]]; then
-            _deny_reader "$ipn <$ins"
+            _deny_reader "$ipw <$ins"
         fi
         if [[ "$act" == *K* && -n "$kvf" ]]; then
-            _deny_reader "$ipn $kvf with no script file"
+            _deny_reader "$ipw $kvf with no script file"
         fi
         if [[ "$act" == *k* ]] && (( (kg && ks && ko) || (kx && ! kxt) )); then
             fetch_hit=1
@@ -2806,6 +2915,12 @@ _stage_end() {
                 msg="SECRET-ENV BLOCK: 'compose config' prints the project's configuration with the values of its"
                 msg+=" .env interpolated. Use a names-only flag (--services, --images, --volumes, -q) or both"
                 msg+=" --no-interpolate and --no-env-resolution."
+                hook_deny "$msg"
+            fi
+            if (( dsk == 2 )); then
+                msg="SECRET-ENV BLOCK: 'docker stack config' prints the stack's configuration with each env_file's"
+                msg+=" contents and the environment's values resolved into it, --skip-interpolation included. Read the"
+                msg+=" compose file itself instead."
                 hook_deny "$msg"
             fi
         fi
@@ -3183,7 +3298,10 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             _cd_word "$w"
         fi
         # A registry login's credential location, matched anywhere in the stage whatever the tool (no per-tool option
-        # table), and compose's words once compose (or *-compose) is seen.
+        # table), and compose's words once compose (or *-compose) is seen, or docker stack's (a stack word may be a
+        # global option's value, so compose and exec are still looked for after it). After run, create or exec (drc),
+        # a stack word is the container's, until a nested docker; one after a global option taking a value (dpw is the
+        # word before) may be that value, so it does not count.
         if [[ "$act" == *l* ]]; then
             if (( lgv )); then
                 lgv=0
@@ -3201,11 +3319,21 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                         _run_wrap compose
                     fi
                     _dc_word "$w"
+                elif (( dsk )); then
+                    _ds_word "$w"
                 elif (( dcm == 0 )) && [[ "$lgt" == docker || "$lgt" == podman || "$lgt" == nerdctl ]]; then
                     case "$w" in
                         compose) dcm=1 ;;
-                        exec) _run_wrap "$lgt" ;;
+                        stack) if [[ "$lgt" == docker ]] && (( ! drc )); then dsk=1; fi ;;
+                        run|create|exec)
+                            case "$dpw" in
+                                -c|--context|-H|--host|--config|-l|--log-level|--tlscacert|--tlscert|--tlskey) ;;
+                                *) drc=1 ;;
+                            esac
+                            if [[ "$w" == exec ]]; then _run_wrap "$lgt"; fi ;;
+                        docker|*/docker) drc=0 ;;
                     esac
+                    dpw="$w"
                 fi
             fi
         fi
@@ -3387,11 +3515,17 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 # is not taken as one, so an inline-code bundle there still starts inline code.
                 kpv=0
                 if (( wsec )); then
-                    _deny_reader "$ipn $w"
+                    _deny_reader "$ipw $w"
+                fi
+                if [[ -z "$ksub" ]] && [[ "$ipn" == bun || "$ipn" == deno ]]; then
+                    _k_sub "$w" 1
                 fi
             elif [[ "$w" != -* ]]; then
                 if (( wsec )); then
-                    _deny_reader "$ipn $w"
+                    _deny_reader "$ipw $w"
+                fi
+                if [[ -z "$ksub" ]] && [[ "$ipn" == bun || "$ipn" == deno ]]; then
+                    _k_sub "$w" 0
                 fi
                 # A vault env file's program must be a script a plain literal word names, with no other option, none
                 # from a NODE_OPTIONS the command may set either: node must be the stage's first word (an assignment
@@ -3402,11 +3536,13 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     if (( kon || cdsq || ! kfst )) || [[ -z "$w" || "$w" == *[\$\`\\\*\?\[\{]* ]] \
                             || _names_input "$w" fd \
                             || _cd_names NODE_OPTIONS || _k_env_sourced; then
-                        _deny_reader "$ipn $kvf ... $w"
+                        _deny_reader "$ipw $kvf ... $w"
                     fi
                     kvp="$kvf"
                 fi
-                if ! _names_input "$w" fd; then
+                # bun and deno take a subcommand (run, eval, test, …), often followed by a program file, so a word
+                # does not end their walk: every later word stays screened as theirs.
+                if [[ "$ipn" != bun && "$ipn" != deno ]] && ! _names_input "$w" fd; then
                     act="${act//K/}"
                 fi
             elif [[ "$w" == -?* && "$w" != -- ]]; then
@@ -3419,21 +3555,17 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                         kvf="$w"
                         kvw=1
                     else
-                        _deny_reader "$ipn $w"
+                        _deny_reader "$ipw $w"
                     fi
                 fi
                 if (( ! kvw )); then
                     kon=1
                 fi
+                if [[ "$ipn:$ksub" == deno:task ]] && [[ "$w" == --eval || "$w" == --eval=* ]]; then
+                    _deny_shell "deno task $w"
+                fi
                 if _k_inline "$w"; then
-                    if [[ -n "$kvf" ]]; then
-                        _deny_reader "$ipn $kvf ... $w"
-                    fi
-                    act="${act//K/}L"
-                    if [[ "$sf" == *X* && "$sf" != *Y* ]]; then
-                        if [[ "$sf" != *R* ]]; then rdn="$ipn"; fi
-                        sf+=Y
-                    fi
+                    _k_code "$w"
                 elif [[ "$w" == --* ]]; then
                     # Fail closed: any long option may take the next word as its value (node and ruby have dozens).
                     if [[ "$w" != *=* ]]; then
@@ -3447,7 +3579,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 kon=1
             fi
         elif [[ "$act" == *L* ]] && (( wsec )); then
-            _deny_reader "$ipn ... $w"
+            _deny_reader "$ipw ... $w"
         fi
         if [[ "$act" == *C* ]]; then
             cptw=0
@@ -3749,6 +3881,21 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     elif [[ "$nm" == docker-compose || "$nm" == podman-compose ]]; then
         kn=L
     fi
+    # A versioned name with no class of its own (python3.12, node22, gpg2) is classed by its leading letters, which
+    # then name it for its walk; nmw keeps the name as written for messages.
+    nmw="$nm"
+    if [[ -z "$kn$kc" && "$nm" == [a-z]*[0-9.] && "$nm" =~ $VER_NAME_RE ]]; then
+        vb="${BASH_REMATCH[1]}"
+        v="_nm_$vb"
+        kn="${!v:-}"
+        if (( atcmd )); then
+            v="_cp_$vb"
+            kc="${!v:-}"
+        fi
+        if [[ -n "$kn$kc" ]]; then
+            nm="$vb"
+        fi
+    fi
     if [[ "$kc" == h ]] && (( ! hok )); then
         kc=""
     fi
@@ -3867,7 +4014,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     if [[ -n "$kn" ]]; then
         case "$kn" in
             R|J|W)
-                if [[ "$sf" != *R* ]]; then rdn="$nm"; sf+=R; fi
+                if [[ "$sf" != *R* ]]; then rdn="$nmw"; sf+=R; fi
                 if [[ "$sf" == *X* && "$sf" != *Y* ]]; then sf+=Y; fi
                 if [[ "$act" == *g* ]]; then fxr=1; fi
                 nrd=$(( nrd + 1 ))
@@ -3884,18 +4031,23 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 git_walk_start ;;
             H)
                 if [[ "$act" != *H* ]]; then act+=H; fi
-                shn="$nm"
+                shn="$nmw"
                 shv=""
                 shq=$atcmd ;;
             K)
-                act="${act//L/}"
-                if [[ "$act" != *K* ]]; then act+=K; fi
-                kpv=0
-                kvf=""
-                kon=0
-                kfst=0
-                if (( nw == 1 )); then kfst=1; fi
-                ipn="$nm" ;;
+                # A later interpreter name is a word of bun's or deno's program, whose walk never ends: it goes on.
+                if [[ "$act" != *K* ]] || [[ "$ipn" != bun && "$ipn" != deno ]]; then
+                    act="${act//L/}"
+                    if [[ "$act" != *K* ]]; then act+=K; fi
+                    kpv=0
+                    kvf=""
+                    kon=0
+                    kfst=0
+                    if (( nw == 1 )); then kfst=1; fi
+                    ipn="$nm"
+                    ipw="$nmw"
+                    ksub=""
+                fi ;;
             C|Ct)
                 if [[ "$act" != *C* ]]; then act+=C; fi
                 if [[ "$sf" == *X* && "$sf" != *Q* ]]; then sf+=Q; fi
@@ -3938,7 +4090,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 act="${act//[Oo]/}Oo" ;;
             U)
                 if [[ "$act" != *U* ]]; then act+=U; fi
-                sun="$nm" ;;
+                sun="$nmw" ;;
             S)
                 if (( si == 0 )); then sgs=1; fi ;;
             L)
@@ -3955,6 +4107,10 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     dcb=0
                     dcsk=0
                     dcu=0
+                    dsk=0
+                    dsv=0
+                    drc=0
+                    dpw=""
                     if [[ "$nm" == *-compose ]]; then dcm=1; fi
                 fi ;;
         esac
