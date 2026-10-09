@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for git-signing-ask.sh: a command that overrides or removes git signing asks, in any key spelling; reads of
-# the signing setting, plain commits and unrelated commands get no decision, so the native rules decide them.
+# Tests for git-signing-ask.sh: a command that overrides or removes git signing, or passes --no-gpg-sign, is denied
+# with guidance, in any key spelling; reads of the signing setting, plain commits, -S and unrelated commands get no
+# decision, so the native rules decide them.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$DIR/git-signing-ask.sh"
@@ -14,7 +15,40 @@ run() {
         | "$HOOK" 2>&1
 }
 
-asks=(
+denies=(
+    'git commit --no-gpg-sign -m m'
+    'git -C x commit --no-gpg-sign -m m'
+    'git merge --no-gpg-sign topic'
+    'git rebase --no-gpg-sign main'
+    'git -C /r cherry-pick --no-gpg-sign abc123'
+    'git --no-gpg-sign commit -m m'
+    'cd /r && git commit -m m --no-gpg-sign'
+    'git commit --no-gpg-sign;echo hi'
+    'git commit --no-gpg-sign&&echo hi'
+    '(git commit --no-gpg-sign)'
+    'true|git commit --no-gpg-sign'
+    'echo m |git commit -F - --no-gpg-sign'
+    'true;git commit --no-gpg-sign'
+    'true&&git commit --no-gpg-sign'
+    'true&git commit --no-gpg-sign'
+    '`git commit --no-gpg-sign`'
+    'echo `git commit --no-gpg-sign`'
+    'git commit "--no-gpg-sign"'
+    "git commit '--no-gpg-sign'"
+    '"git" commit --no-gpg-sign'
+    "'git' commit --no-gpg-sign"
+    'git commit --no-gpg-sig -m m'
+    'git commit --no-gpg-si -m m'
+    'git commit --no-gpg-s -m m'
+    'git commit --no-gpg- -m m'
+    'git commit --no-gpg -m m'
+    'git commit --no-gp -m m'
+    'git commit --no-g -m m'
+    'git commit --no-"gpg"-sign -m m'
+    "git commit --no-'gpg-sign' -m m"
+    'git commit --no-gpg\-sign -m m'
+    'g"it" commit --no-gpg-sign -m m'
+    'gi\t commit --no-gpg-sign -m m'
     'git -c commit.gpgsign=false commit -m x'
     'git -C /r -c commit.gpgsign=false commit -q -m x'
     'git -c commit.GPGSIGN=false commit -m x'
@@ -36,12 +70,12 @@ asks=(
     '/usr/bin/git config commit.gpgsign no'
     'git config --list | grep gpgsign | git config commit.gpgsign false'
 )
-for c in "${asks[@]}"; do
+for c in "${denies[@]}"; do
     out=$(run "$c")
-    if [[ "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out" 2>/dev/null)" == ask ]]; then
-        ok "asks: $c"
+    if [[ "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out" 2>/dev/null)" == deny ]]; then
+        ok "denies: $c"
     else
-        bad "did not ask: $c -> $out"
+        bad "did not deny: $c -> $out"
     fi
 done
 
@@ -60,6 +94,13 @@ quiet=(
     'grep -rn gpgsign settings.json.tmpl'
     'git commit -m x'
     'git -C /r commit -S -m x'
+    'git commit -S -m m'
+    'git commit --gpg-sign -m m'
+    'git log --show-signature'
+    'git commit --NO-GPG-SIGN -m m'
+    'echo --no-gpg-sign'
+    'git commit --no-gpgx -m m'
+    'git commit --no-gpg-signature -m m'
     'git config --get commit.gpgSign | cat'
     'ls -la'
     ''
@@ -73,13 +114,22 @@ heredoc=$'git commit -m "$(cat <<\'EOF\'\ndocs: explain why -c commit.gpgsign=fa
 out=$(run "$heredoc")
 if [[ -z "$out" ]]; then ok "a commit-message heredoc that mentions gpgsign= is not judged"; else bad "heredoc: $out"; fi
 
-reason="This command overrides or removes git signing (gpgsign). Commits must stay signed: approve only for a"
-reason+=" throwaway repo, and fix the signing setup rather than bypass it."
+reason="SIGNING BLOCK: this command overrides or removes git commit signing (gpgsign). Signing works automatically"
+reason+=" here, throwaway repos included: drop the override and run the command again."
+for c in 'git -c commit.gpgsign=false commit -m x' 'git commit --no-gpg-sign -m m'; do
+    out=$(run "$c")
+    if [[ "$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out" 2>/dev/null)" == "$reason" ]]; then
+        ok "the deny reason says signing works automatically: $c"
+    else
+        bad "deny reason drifted for $c: $out"
+    fi
+done
 out=$(run 'git -c commit.gpgsign=false commit -m x')
-if [[ "$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out" 2>/dev/null)" == "$reason" ]]; then
-    ok "the ask reason names the signing bypass"
+got=$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out" 2>/dev/null)
+if [[ "$got" == *"Signing works automatically"* ]]; then
+    ok "the deny reason contains the guidance sentence"
 else
-    bad "ask reason drifted: $out"
+    bad "the deny reason lost the guidance sentence: $out"
 fi
 
 out=$(printf '{"tool_input":{}}' | "$HOOK" 2>&1)

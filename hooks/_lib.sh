@@ -228,17 +228,20 @@ git_walk_word() {
 # read commands the review pipeline relies on are deliberately NOT treated as mutating: diff/log/show/status/
 # rev-parse/symbolic-ref (read form)/hash-object/branch/tag/config — these are read-only in their pipeline usage and
 # excluding them avoids false-positive denials that would break a reviewer's base-branch resolution. worktree/notes/
-# submodule/sparse-checkout/lfs/replace count as mutating in every form, read forms included: no reviewer prompt uses
-# them, and the orchestrator, not a reviewer, creates review worktrees.
+# submodule/sparse-checkout/lfs/replace/reflog and the plumbing pack-refs/commit-graph/multi-pack-index/rerere/mktree/
+# mktag/unpack-objects/update-server-info/merge-file/prune-packed/index-pack count as mutating in every form, read
+# forms included: no reviewer prompt uses them, and the orchestrator, not a reviewer, creates review worktrees.
 git_sub_mutating() {
     # init, clone, bisect, read-tree, checkout-index, maintenance and bundle write the repository or its working tree;
     # reflog counts in every form, as worktree does; stage is add. remote is left out: reviewer-guard.sh sees the word
-    # after it and allows only its read forms.
+    # after it and allows only its read forms. pack-refs and the plumbing after it write refs, the object store or
+    # (merge-file) a working-tree file; they count in every form, since a reviewer needs none of their read forms.
     case "$1" in
         commit|add|rm|mv|push|reset|checkout|switch|restore|stash|rebase|merge|revert|cherry-pick|clean|am|apply|\
         update-ref|update-index|write-tree|commit-tree|fast-import|filter-branch|gc|prune|repack|fetch|pull|\
         worktree|notes|submodule|sparse-checkout|lfs|replace|init|clone|bisect|read-tree|checkout-index|\
-        maintenance|bundle|reflog|stage)
+        maintenance|bundle|reflog|stage|pack-refs|commit-graph|multi-pack-index|rerere|mktree|mktag|unpack-objects|\
+        update-server-info|merge-file|prune-packed|index-pack)
             return 0 ;;
     esac
     return 1
@@ -442,9 +445,12 @@ function add(ch) {
 }
 function plain(b,   nm) {
     if (b == "" || b ~ /[$=:*?[\200-\377]/ || b ~ /^-[^-]/ || tolower("/" b) ~ frag) return 0
-    nm = b
+    nm = tolower(b)
     sub(/.*\//, "", nm)
-    return !(tolower(nm) in CLS)
+    if (nm in CLS) return 0
+    if (nm !~ /^[a-z]+[0-9][0-9.]*$/) return 1
+    sub(/[0-9][0-9.]*$/, "", nm)
+    return !(nm in CLS)
 }
 function end_word() {
     if (!inw) return
@@ -552,7 +558,8 @@ END {
 # Parameters, ~, braces and globs stay as written. Given <names> (space-separated lower-case words) and <fragments> (a
 # lower-case awk regex), a word of at most 256 characters becomes p<word> instead when it is plain: not empty, no $ = :
 # * ? [ and no non-ASCII byte, not a single-dash option, "/<word>" lower-cased not matching <fragments>, and its
-# basename lower-cased not in <names> (a case-insensitive file system runs CAT as cat). Sets SW_OK=1, or
+# basename lower-cased not in <names> (a case-insensitive file system runs CAT as cat), nor its leading letters when
+# the rest is a version (python3.12, gpg2). Sets SW_OK=1, or
 # SW_OK=0 with SW_WORDS empty when <cmd> is over SHELL_SCAN_MAX_CHARS, holds \x1e or \x1f, or awk fails. Walk SW_WORDS
 # forward with ${SW_WORDS[@]+"${SW_WORDS[@]}"}: bash 3.2 treats an empty array as unbound under set -u, and indexes an
 # array in O(index). Always returns 0.

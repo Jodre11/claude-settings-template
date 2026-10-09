@@ -1405,6 +1405,10 @@ fetches2=(
     'terraform -chdir=infra output -json'
     'terraform show -json'
     'terraform state pull'
+    'tofu output -raw db_password'
+    'tofu output -json'
+    'tofu show -json'
+    'tofu state pull'
     'npm config get //registry.npmjs.org/:_authToken'
     'doppler secrets get API_KEY --plain'
     'doppler secrets download --no-file'
@@ -1483,6 +1487,10 @@ fetches3=(
     'terraform output 2>&1 db_password'
     'TERRAFORM output -json'
     'TF_CLI_ARGS_output=-json terraform output'
+    'tofu output db_password'
+    'TOFU output -json'
+    'TF_CLI_ARGS_output=-json tofu output'
+    'TF_CLI_ARGS=-json tofu output'
     'npm get //registry.npmjs.org/:_authToken'
     'npm config get --json //r/:_authToken'
     'pnpm config get _authToken'
@@ -1775,6 +1783,163 @@ expect DENY  "a vault env file behind env and a spliced assignment name denied" 
 expect DENY  "a vault env file behind command denied"                "command $vef app.js"
 expect DENY  "a vault env file behind a prefix assignment denied"    "FOO=1 $vef app.js"
 
+# OpenTofu's tofu keeps terraform's harmless forms too.
+expect ALLOW "tofu output with no format allowed"                        'tofu output'
+expect ALLOW "tofu plan allowed"                                         'tofu plan'
+# docker stack config resolves each env_file and the environment into its output whatever the flags, so it is denied.
+expect DENY  "docker stack config denied"                                'docker stack config'
+expect DENY  "docker stack config -c denied"                             'docker stack config -c x.yml'
+expect DENY  "DOCKER stack config denied"                                'DOCKER stack config'
+expect DENY  "sudo docker stack config denied"                           'sudo docker stack config'
+expect DENY  "docker stack config -q is no names-only form, denied"      'docker stack config -q -c x.yml'
+expect DENY  "docker stack config --skip-interpolation still resolves env_file, denied" \
+    'docker stack config --skip-interpolation -c x.yml'
+expect DENY  "docker stack config --skip-interpolation=true denied"      'docker stack config --skip-interpolation=true'
+expect DENY  "docker stack with an unknown value option before config denied" \
+    'docker stack --orchestrator swarm config'
+expect DENY  "a stack word as a global option value keeps compose seen (context)" \
+    'docker --context stack compose config'
+expect DENY  "a stack word as a global option value keeps compose seen (host)" \
+    'docker -H stack compose config'
+expect DENY  "a stack word as a global option value keeps exec seen" \
+    'docker --context stack exec c env'
+expect DENY  "a stack named config is denied, the cost of failing closed" \
+    'docker stack deploy -c x.yml config'
+expect ALLOW "docker stack deploy allowed"                               'docker stack deploy -c x.yml s'
+expect ALLOW "docker stack deploy with a compose file named config allowed" \
+    'docker stack deploy -c config s'
+expect ALLOW "docker stack ls allowed"                                   'docker stack ls'
+got=$(jq -nc '{tool_input:{command:"docker stack config"}}' | "$HOOK" \
+    | jq -r '.hookSpecificOutput.permissionDecisionReason')
+[[ "$got" == *env_file* ]] && ok "the stack config deny names env_file" \
+    || bad "stack config deny drifted: $got"
+
+# A versioned name with no class of its own is classed by its leading letters, as a path or in any case.
+for f in 'python3.12 < .env' 'python3.12 .env' 'pypy3 .env' 'perl5.38 .env' 'ruby3.3 .env' 'php8.3 .env' \
+        'node22 .env' 'PYTHON3.12 .env' '/usr/local/bin/python3.12 .env' 'python3.12 -W ignore < .env' \
+        'gpg2 -d x.gpg'; do
+    expect DENY  "a versioned name is screened as its base: $f"          "$f"
+done
+expect ALLOW "python3.12 with a script allowed"                          'python3.12 script.py'
+expect ALLOW "node22 with a script allowed"                              'node22 app.js'
+expect ALLOW "python3.12 -W ignore with a script allowed"                'python3.12 -W ignore script.py'
+expect DENY  "an exact name ending in digits keeps its own class"        'base64 .env'
+got=$(jq -nc '{tool_input:{command:"python3.12 .env"}}' | "$HOOK" \
+    | jq -r '.hookSpecificOutput.permissionDecisionReason')
+[[ "$got" == *"'python3.12 .env'"* ]] && ok "a versioned name's deny shows it as written" \
+    || bad "a versioned name's deny drifted: $got"
+
+# More interpreters. bun's and deno's subcommands take a program file, so every word after them stays screened.
+for f in 'bun .env' 'bun run .env' 'deno run .env' 'deno serve .env' 'bun test .env' 'deno eval code .env' \
+        'bun --eval code .env' 'bun run - < .env' 'lua .env' 'lua -l m .env' 'lua - .env' 'luajit .env' \
+        'lua5.4 .env' 'rscript .env' 'Rscript .env' 'osascript .env' 'osascript < .env' \
+        'osascript -l JavaScript < .env' 'deno run app.ts .env'; do
+    expect DENY  "an interpreter reading a secret denied: $f"            "$f"
+done
+for f in 'bun run build' 'deno run app.ts' 'deno test' 'lua script.lua' "osascript -e 'display dialog \"x\"'" \
+        'deno run --allow-read app.ts' 'bun run dev -p 3000'; do
+    expect ALLOW "an interpreter running a program allowed: $f"          "$f"
+done
+
+# A git grep revision whose pathspecs after -- are literal blobs in it reads only those blobs. The repository has two
+# commits: one adds notes.md, the next .env and docs/a.md.
+GR="$pt/grev"
+mkdir -p "$GR/docs"
+git -C "$GR" init -q
+printf 'x\n' >"$GR/notes.md"
+git -C "$GR" add notes.md
+git -C "$GR" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+: >"$GR/.env"
+printf 'x\n' >"$GR/docs/a.md"
+git -C "$GR" add .env docs/a.md
+git -C "$GR" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m two
+expect_in "$GR" ALLOW "a revision confined to a literal blob allowed"    'git grep -n x HEAD -- notes.md'
+expect_in "$GR" ALLOW "a revision confined to two literal blobs allowed" 'git grep -n x HEAD -- notes.md docs/a.md'
+expect_in "$GR" ALLOW "an earlier revision's literal blob allowed"       'git grep -n x HEAD~1 -- notes.md'
+expect      ALLOW "git -C a repository, a revision and a literal blob, from another cwd, allowed" \
+    "git -C $GR grep -n x HEAD -- notes.md"
+expect_in "$GR" DENY  "a secret pathspec after a revision denied"        'git grep -n x HEAD -- .env'
+expect_in "$GR" ASK   "a pathspec naming a tree in the revision asks"    'git grep -n x HEAD -- docs'
+expect_in "$GR" ASK   "a pathspec holding a pattern asks"                "git grep -n x HEAD -- 'docs/*.md'"
+expect_in "$GR" ASK   "a pathspec holding a variable asks"               'git grep -n x HEAD -- $F'
+expect_in "$GR" ASK   "a tree-ish operand asks"                          'git grep -n x HEAD:docs -- notes.md'
+expect_in "$GR" ASK   "an unknown revision asks"                         'git grep -n x nosuchrev -- notes.md'
+expect_in "$GR" ASK   "a pathspec absent from the revision asks"         'git grep -n x HEAD~1 -- docs/a.md'
+expect_in "$GR" ASK   "a revision with no -- asks"                       'git grep -n x HEAD'
+expect_in "$GR" ASK   "a git -c core setting keeps a revision's ask" \
+    'git -c core.quotePath=false grep -n x HEAD -- notes.md'
+expect_in "$GR" ASK   "a GIT_CONFIG assignment keeps a revision's ask" \
+    'GIT_CONFIG_GLOBAL=/dev/null git grep -n x HEAD -- notes.md'
+expect_in "$GR" ASK   "a revision past the walks' git budget asks" \
+    "$(printf 'git grep -n x HEAD -- notes.md ; %.0s' {1..33})true"
+# A revision's pathspecs are tested as blobs of a commit: a tree, by name or by id, hides the directory above them.
+expect_in "$GR" ASK   "a tree revision asks"                             'git grep -n x HEAD^{tree} -- notes.md'
+grt=$(git -C "$GR" rev-parse HEAD:docs)
+expect_in "$GR" ASK   "a subtree's object id as the revision asks"       "git grep -n x $grt -- a.md"
+# git runs where an earlier cd left it, but the blob test runs in the payload's cwd. The repository holds a root file
+# config and app/config/.env, so in app the pathspec config names the directory holding the secret.
+GC="$pt/grcd"
+mkdir -p "$GC/app/config"
+git -C "$GC" init -q
+printf 'x\n' >"$GC/config"
+: >"$GC/app/config/.env"
+git -C "$GC" add config app/config/.env
+git -C "$GC" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$GC" ALLOW "a revision confined to a root blob allowed"       'git grep -n x HEAD -- config'
+expect_in "$GC" ASK   "a revision after cd && asks"                      'cd app && git grep -n x HEAD -- config'
+expect_in "$GC" ASK   "a revision after cd ; asks"                       'cd app ; git grep -n x HEAD -- config'
+expect_in "$GC" ASK   "a revision after pushd asks"                      'pushd app && git grep -n x HEAD -- config'
+expect_in "$GC" ASK   "a revision after env -C asks"                     'env -C app git grep -n x HEAD -- config'
+expect_in "$GC" ALLOW "a cd after the revision's stage allowed"          'git grep -n x HEAD -- config ; cd app'
+
+# bun exec and deno task --eval run their argument as a shell command string; the subcommand is the first word.
+expect DENY  "bun exec of a quoted command string denied"                "bun exec 'cat x'"
+expect DENY  "bun exec of a double-quoted command denied"                'bun exec "ls"'
+expect DENY  "bun exec behind a long option denied"                      "bun --silent exec 'cat x'"
+expect DENY  "deno task --eval denied"                                   "deno task --eval 'echo hi'"
+expect ALLOW "bun run of a script named exec allowed"                    'bun run exec'
+expect ALLOW "deno task of a named task allowed"                         'deno task dev'
+expect ALLOW "bun x of a package allowed"                                'bun x prettier --write .'
+got=$(jq -nc --arg c "bun exec 'cat x'" '{tool_input:{command:$c}}' | "$HOOK" \
+    | jq -r '.hookSpecificOutput.permissionDecisionReason')
+[[ "$got" == "SHELL-STRING BLOCK: 'bun exec'"* ]] && ok "the bun exec deny is a shell-string block" \
+    || bad "bun exec deny drifted: $got"
+# deno's and bun's inline code takes words from xargs as node -e and python3 -c do.
+expect DENY  "xargs into node -e denied"                                 'echo .env | xargs node -e code'
+expect DENY  "xargs into python3 -c denied"                              'echo .env | xargs python3 -c code'
+expect DENY  "xargs into deno eval denied"                               'echo .env | xargs deno eval code'
+expect DENY  "xargs into bun -e denied"                                  'echo .env | xargs bun -e code'
+expect DENY  "xargs into deno repl --eval denied"                        'echo .env | xargs deno repl --eval code'
+expect DENY  "xargs into deno repl --eval-file denied"                   'echo .env | xargs deno repl --eval-file f.js'
+expect ALLOW "xargs into deno run of a program allowed"                  'echo a.ts | xargs deno run'
+# A later interpreter name is an argument of bun's or deno's program, so their walk goes on.
+expect DENY  "deno run with a later node word and a secret denied"       'deno run app.ts node x.js .env'
+expect DENY  "bun run with a later python3 word and a secret denied"     'bun run a.ts python3 x .env'
+# A stack word after a container runner's subcommand is the container's: only a nested docker can be docker stack.
+expect ALLOW "a stack word in a docker run command allowed" \
+    'docker run haskell stack config set resolver lts'
+expect ALLOW "a container named stack under docker exec allowed"         'docker exec stack ls config'
+expect ALLOW "a stack word in a docker create command allowed"           'docker create haskell stack config'
+expect DENY  "docker -H h stack config denied"                           'docker -H h stack config'
+expect DENY  "a run word as a global option value keeps stack seen"      'docker --context run stack config'
+expect DENY  "an exec word as a global option value keeps stack seen"    'docker -H exec stack config'
+expect DENY  "a nested docker stack config under docker exec denied"     'docker exec c docker stack config'
+expect DENY  "a nested docker stack config under docker run denied"      'docker run img docker stack config'
+expect DENY  "a path-form nested docker stack config under docker exec denied" \
+    'docker exec c /usr/bin/docker stack config'
+expect DENY  "a path-form nested docker stack config under docker run denied" \
+    'docker run img /usr/local/bin/docker stack config'
+# Option tables: each row fails if its letter or name is dropped from the table.
+expect DENY  "pypy3 -W value fed a secret denied"                        'pypy3 -W ignore < .env'
+expect DENY  "lua -l value fed a secret denied"                          'lua -l m < .env'
+expect DENY  "luajit -l value fed a secret denied"                       'luajit -l m < .env'
+expect DENY  "luajit -j value fed a secret denied"                       'luajit -j off < .env'
+expect DENY  "osascript -s value fed a secret denied"                    'osascript -s h < .env'
+expect ALLOW "deno test with a permission flag allowed"                  'deno test --allow-env'
+
 # bash32_rows: rows that must also hold with the hook under /bin/bash (bash 3.2, a stock Mac's bash).
 bash32_rows() {
     expect_in "$P" DENY  "under bash 3.2, a recursive grep of a root holding .env denied" 'grep -rn KEY .'
@@ -1882,6 +2047,33 @@ bash32_rows() {
     expect      DENY  "under bash 3.2, a copier after xargs denied"      'echo .env | xargs -I{} cp {} /tmp/claude-x/n'
     expect      DENY  "under bash 3.2, python3 -W ignore fed a secret denied" 'python3 -W ignore < .env'
     expect      DENY  "under bash 3.2, node --eval fed a secret denied"  'node --eval code < .env'
+    expect      DENY  "under bash 3.2, tofu output -json denied"         'tofu output -json'
+    expect      DENY  "under bash 3.2, docker stack config denied"       'docker stack config'
+    expect      DENY  "under bash 3.2, docker stack config --skip-interpolation denied" \
+        'docker stack config --skip-interpolation'
+    expect      DENY  "under bash 3.2, docker --context stack compose config denied" \
+        'docker --context stack compose config'
+    expect      DENY  "under bash 3.2, python3.12 fed a secret denied"   'python3.12 < .env'
+    expect      ALLOW "under bash 3.2, node22 with a script allowed"     'node22 app.js'
+    expect      DENY  "under bash 3.2, bun run fed a secret denied"      'bun run - < .env'
+    expect      ALLOW "under bash 3.2, deno run of a program allowed"    'deno run app.ts'
+    expect_in "$GR" ALLOW "under bash 3.2, a revision confined to a literal blob allowed" \
+        'git grep -n x HEAD -- notes.md'
+    expect_in "$GR" ASK   "under bash 3.2, a pathspec naming a tree asks" 'git grep -n x HEAD -- docs'
+    expect_in "$GR" ASK   "under bash 3.2, a tree revision asks"        'git grep -n x HEAD^{tree} -- notes.md'
+    expect_in "$GC" ASK   "under bash 3.2, a revision after cd asks"    'cd app && git grep -n x HEAD -- config'
+    expect_in "$GC" ALLOW "under bash 3.2, a revision confined to a root blob allowed" 'git grep -n x HEAD -- config'
+    expect      DENY  "under bash 3.2, bun exec denied"                 "bun exec 'cat x'"
+    expect      DENY  "under bash 3.2, deno task --eval denied"         "deno task --eval 'echo hi'"
+    expect      ALLOW "under bash 3.2, bun run exec allowed"            'bun run exec'
+    expect      DENY  "under bash 3.2, xargs into deno repl --eval denied" 'echo .env | xargs deno repl --eval code'
+    expect      DENY  "under bash 3.2, deno run with a later node word denied" 'deno run app.ts node x.js .env'
+    expect      ALLOW "under bash 3.2, a stack word in docker run allowed" \
+        'docker run haskell stack config set resolver lts'
+    expect      DENY  "under bash 3.2, docker -H h stack config denied" 'docker -H h stack config'
+    expect      DENY  "under bash 3.2, luajit -j value fed a secret denied" 'luajit -j off < .env'
+    expect      DENY  "under bash 3.2, a path-form nested docker stack config denied" \
+        'docker exec c /usr/bin/docker stack config'
 }
 if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 ]]; then
     HOOK_BASH=/bin/bash

@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Tests for tests/run.sh itself: a run that discovers nothing to test must fail, not pass vacuously.
+# Tests for tests/run.sh itself: a run that discovers nothing to test must fail, not pass vacuously, and so must a run
+# whose shellcheck gate fails.
 
-# _rh_tree <dir>: copy run.sh, harness.sh and the secret patterns into <dir> beside one passing test file and one
-# passing hook suite.
+# _rh_tree <dir>: copy run.sh, harness.sh and the secret patterns into <dir> beside one passing test file, one passing
+# hook suite and a passing stub of the shellcheck gate.
 _rh_tree() {
-    mkdir -p "$1/tests/lib" "$1/hooks"
+    mkdir -p "$1/tests/lib" "$1/hooks" "$1/scripts"
     cp "$REPO_ROOT/tests/run.sh" "$1/tests/run.sh"
     cp "$REPO_ROOT/tests/lib/harness.sh" "$1/tests/lib/harness.sh"
     cp "$REPO_ROOT/hooks/secret-patterns.sh" "$1/hooks/secret-patterns.sh"
     printf '%s\n' 'test_ok() { pass "ok"; }' >"$1/tests/lib/test_ok.sh"
     printf '%s\n' 'echo "PASS: ok"' >"$1/hooks/ok.test.sh"
+    printf '%s\n' 'exit 0' >"$1/scripts/shellcheck.sh"
 }
 
 # _rh_run <dir>: run <dir>/tests/run.sh; sets RH_OUT and RH_RC.
@@ -77,5 +79,20 @@ test_run_harness_fails_closed_when_the_secret_scan_cannot_run() {
     else fail "the failure names the suite when the scan cannot run" "leaky.test.sh not named (output withheld)"; fi
     if [[ "$RH_OUT" != *"$key"* ]]; then pass "an unscanned suite's output is withheld"
     else fail "an unscanned suite's output is withheld" "the value reached the output (withheld)"; fi
+    rm -rf "$tmp"
+}
+
+# The shellcheck gate fails the run on a finding, showing it, and when shellcheck is not installed.
+test_run_harness_fails_on_the_shellcheck_gate() {
+    local tmp
+    tmp=$(mktemp -d)
+    _rh_tree "$tmp"
+    printf '%s\n' 'echo "./hooks/x.sh:1:1: warning: x [SC0000]"; exit 1' >"$tmp/scripts/shellcheck.sh"
+    _rh_run "$tmp"
+    assert_equals 1 "$RH_RC" "a run whose shellcheck gate finds a problem fails"
+    assert_matches 'hooks/x\.sh:1:1: warning' "$RH_OUT" "the failure shows the gate's finding"
+    printf '%s\n' 'echo "shellcheck is not installed" >&2; exit 127' >"$tmp/scripts/shellcheck.sh"
+    _rh_run "$tmp"
+    assert_equals 1 "$RH_RC" "a run with no shellcheck installed fails"
     rm -rf "$tmp"
 }
