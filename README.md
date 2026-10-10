@@ -110,6 +110,12 @@ are preserved across template updates. A key or list entry the template lists un
 `__remove__` is deleted instead (the header of `hydrate.sh` gives the format). `settings.json`
 itself is generated and gitignored, so it never reaches git.
 
+`hydrate.sh` also generates `settings.work.json` from `settings.work.json.tmpl`. It carries
+`env.AWS_PROFILE` and the `modelOverrides` ARNs (the `MODEL_OVERRIDE_OPUS_*` keys in `config.env`;
+an empty value is omitted), and is written wholesale rather than merged. A launcher such as the
+dotfiles `claude()` wrapper passes it with `--settings`, so these provider-specific values reach
+work sessions only; the shared `settings.json` stays provider-neutral.
+
 The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL` at it
 (self-hosted Docker or a cloud deployment).
 
@@ -240,7 +246,8 @@ are `.gitignore`d in the template repo.
 
 | Template | Generated | Placeholders |
 |---|---|---|
-| `settings.json.tmpl` | `settings.json` | `__AWS_SSO_REFRESH_PATH__`, `__AWS_PROFILE__`, `__SEARXNG_URL__` |
+| `settings.json.tmpl` | `settings.json` | `__AWS_SSO_REFRESH_PATH__`, `__SEARXNG_URL__` |
+| `settings.work.json.tmpl` | `settings.work.json` | `__AWS_PROFILE__`, `__MODEL_OVERRIDE_OPUS_4_6__`, `__MODEL_OVERRIDE_OPUS_4_7__`, `__MODEL_OVERRIDE_OPUS_5_5__` |
 | `CLAUDE.md.tmpl` | `CLAUDE.md` | `__DOTFILES_REPO_URL__`, `__CLAUDE_SETTINGS_REPO_URL__` |
 | `scripts/_aws-sso-common.sh.tmpl` | `scripts/_aws-sso-common.sh` | `__AWS_PROFILE__`, `__SSO_START_URL__` |
 | `skills/datadog-log-link/SKILL.md.tmpl` | `skills/datadog-log-link/SKILL.md` | `__DATADOG_SITE__`, `__DATADOG_EXAMPLE_SERVICE__` |

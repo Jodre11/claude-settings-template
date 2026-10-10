@@ -12,6 +12,9 @@
 #       "keys":    jq paths to delete, e.g. ["sandbox"] or ["env", "X"]
 #       "entries": dotted array path -> values to drop, e.g. "permissions.allow": ["Bash(x *)"]
 #     Any other shape stops the run before anything is written.
+# settings.work.json.tmpl is not merged: settings.work.json is wholly generated (hydrate is its only writer). Each
+# empty value is dropped, then each emptied object; an all-empty result is written as {}. The dotfiles claude()
+# wrapper passes it with --settings, so it reaches work sessions only.
 # The output is key-sorted (jq -S), and the comparison with the existing file ignores key order.
 #
 # CLAUDE.md.tmpl, scripts/_aws-sso-common.sh.tmpl and skills/datadog-log-link/SKILL.md.tmpl are rendered: their
@@ -69,6 +72,9 @@ substitute_placeholders() {
     content="${content//__AWS_SSO_REFRESH_PATH__/${AWS_SSO_REFRESH_PATH:-}}"
     content="${content//__AWS_PROFILE__/${AWS_PROFILE:-}}"
     content="${content//__SEARXNG_URL__/${SEARXNG_URL:-}}"
+    content="${content//__MODEL_OVERRIDE_OPUS_4_6__/${MODEL_OVERRIDE_OPUS_4_6:-}}"
+    content="${content//__MODEL_OVERRIDE_OPUS_4_7__/${MODEL_OVERRIDE_OPUS_4_7:-}}"
+    content="${content//__MODEL_OVERRIDE_OPUS_5_5__/${MODEL_OVERRIDE_OPUS_5_5:-}}"
 
     # _aws-sso-common.sh
     content="${content//__SSO_START_URL__/${SSO_START_URL:-}}"
@@ -244,10 +250,37 @@ hydrate_settings_json() {
     fi
 }
 
+# Work-layer filter: drop null and empty-string values inside each top-level object, then every emptied object.
+# shellcheck disable=SC2016  # no shell expansion is intended inside the jq program
+WORK_FILTER='
+map_values(if type == "object" then with_entries(select(.value != null and .value != "")) else . end)
+| with_entries(select(.value != null and .value != "" and .value != {}))
+'
+
+# Hydrate settings.work.json: substitute the template's placeholders, filter, then preview and write the key-sorted
+# result. Never merged with the existing file.
+hydrate_work_settings() {
+    local tmpl="$SCRIPT_DIR/settings.work.json.tmpl"
+    local output="$SCRIPT_DIR/settings.work.json"
+
+    if [[ ! -f "$tmpl" ]]; then
+        echo "  SKIP $tmpl (not found)"
+        return
+    fi
+
+    local content
+    content=$(cat "$tmpl")
+    content=$(substitute_placeholders "$content")
+    local generated
+    generated=$(jq -S "$WORK_FILTER" <<<"$content")
+    preview_and_write "$output" "$generated" || true
+}
+
 echo "Hydrating templates from config.env..."
 echo ""
 
 hydrate_settings_json
+hydrate_work_settings
 hydrate_text_template "$SCRIPT_DIR/CLAUDE.md.tmpl"
 hydrate_text_template "$SCRIPT_DIR/scripts/_aws-sso-common.sh.tmpl"
 hydrate_text_template "$SCRIPT_DIR/skills/datadog-log-link/SKILL.md.tmpl"

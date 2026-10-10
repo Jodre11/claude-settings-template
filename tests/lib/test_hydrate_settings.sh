@@ -487,10 +487,14 @@ test_hydrate_settings_real_tmpl() {
     assert_equals 0 "$HY_RC" "the real tmpl hydrates on a fresh clone"
     assert_equals 'false' "$(_hy_q "$tmp" 'has("sandbox") or has("__remove__")')" \
         "a fresh clone gets no sandbox block and no __remove__"
-    assert_equals 'false' "$(_hy_q "$tmp" '.env | has("AWS_PROFILE")')" "an empty AWS_PROFILE leaves no env value"
+    assert_equals 'false' "$(_hy_q "$tmp" '.env | has("AWS_PROFILE")')" "settings.json carries no AWS_PROFILE"
     assert_equals '"https://searx.test"' "$(_hy_q "$tmp" '.env.SEARXNG_URL')" "SEARXNG_URL is substituted"
+    assert_equals '{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB":"1","ENABLE_PROMPT_CACHING_1H":"1","ENABLE_TOOL_SEARCH":"true"}' \
+        "$(_hy_q "$tmp" '.env | {CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, ENABLE_PROMPT_CACHING_1H, ENABLE_TOOL_SEARCH}')" \
+        "the provider-neutral flags are set in settings env"
 
-    printf '%s\n' '{"env":{"API_TIMEOUT_MS":"1200000"},
+    printf '%s\n' '{"env":{"API_TIMEOUT_MS":"1200000","AWS_PROFILE":"live-profile"},
+        "modelOverrides":{"m":"v"},
         "permissions":{"allow":["Bash(git *)","Bash(local-only *)"]},
         "sandbox":{"enabled":true,"allowedDomains":["pypi.org"]},"enabledPlugins":{"x@live-mkt":true},"model":"sonnet",
         "hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"injected"}]}]}}' \
@@ -499,6 +503,9 @@ test_hydrate_settings_real_tmpl() {
     assert_equals 0 "$HY_RC" "the real tmpl hydrates over a live-shaped settings.json"
     assert_equals '{"enabled":true}' "$(_hy_q "$tmp" '.sandbox')" \
         "the dead sandbox.allowedDomains key is removed, and a fork's own sandbox setting is kept"
+    assert_equals 'false' "$(_hy_q "$tmp" 'has("modelOverrides")')" "the live modelOverrides leave"
+    assert_equals 'false' "$(_hy_q "$tmp" '.env | has("AWS_PROFILE")')" "the live env.AWS_PROFILE leaves"
+    assert_equals '"/fx/refresh.sh"' "$(_hy_q "$tmp" '.awsAuthRefresh')" "awsAuthRefresh stays shared"
     assert_equals 'true' "$(_hy_q "$tmp" '.permissions.allow | index("Bash(local-only *)") != null')" \
         "a local-only allow rule is kept"
     assert_equals '"sonnet"' "$(_hy_q "$tmp" '.model')" "a local model choice is kept"
@@ -506,4 +513,86 @@ test_hydrate_settings_real_tmpl() {
     assert_equals '0' "$(_hy_q "$tmp" '[.hooks | .. | strings | select(. == "injected")] | length')" \
         "an injected local hook is dropped"
     rm -rf "$tmp"
+}
+
+# Work-only values live in settings.work.json; the shared template carries no provider-specific env key.
+test_settings_tmpl_env_is_provider_neutral() {
+    assert_equals '[]' "$(jq -c '[.env | keys[] | select(test("^(AWS_|ANTHROPIC_|BEDROCK_)|_NUGET_PAT$"))]' \
+        "$REPO_ROOT/settings.json.tmpl")" "settings.json.tmpl env holds no AWS, Anthropic, Bedrock or PAT key"
+}
+
+# _hy_work <dir> <config-line...>: a hydrate fixture holding the real settings.work.json.tmpl, a minimal
+# settings.json.tmpl and a config.env made of the given lines.
+_hy_work() {
+    local d=$1
+    shift
+    _hy_fixture "$d"
+    printf '%s\n' "$@" >"$d/config.env"
+    printf '%s\n' '{"permissions":{"allow":[]}}' >"$d/settings.json.tmpl"
+    cp "$REPO_ROOT/settings.work.json.tmpl" "$d/settings.work.json.tmpl"
+}
+
+# _hy_wq <dir> <filter>: print jq -S -c <filter> over <dir>/settings.work.json, or <missing> when there is none.
+_hy_wq() {
+    if [[ -f "$1/settings.work.json" ]]; then
+        jq -S -c "$2" "$1/settings.work.json"
+    else
+        printf '<missing>'
+    fi
+}
+
+test_hydrate_settings_work_layer() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_work "$tmp" 'AWS_PROFILE=work-profile' 'MODEL_OVERRIDE_OPUS_4_6=o46' 'MODEL_OVERRIDE_OPUS_4_7=' \
+        'MODEL_OVERRIDE_OPUS_5_5=o55'
+    _hy_run "$tmp" --force
+    assert_equals 0 "$HY_RC" "hydrate --force writes the work layer"
+    assert_equals '{"AWS_PROFILE":"work-profile"}' "$(_hy_wq "$tmp" '.env')" "the work layer carries AWS_PROFILE"
+    assert_equals '{"claude-opus-4-6":"o46","claude-opus-5-5":"o55"}' "$(_hy_wq "$tmp" '.modelOverrides')" \
+        "an empty override value drops that entry"
+    assert_equals '[]' "$(_hy_wq "$tmp" '[.. | strings | select(test("__[A-Z0-9_]+__"))]')" \
+        "every work-layer placeholder is substituted"
+    assert_equals 600 "$(_hy_mode "$tmp/settings.work.json")" "the work layer is mode 0600"
+    _hy_run "$tmp" --force
+    assert_matches "UNCHANGED $tmp/settings.work.json" "$HY_OUT" "a second run leaves the work layer unchanged"
+    printf '%s\n' '{"env":{"AWS_PROFILE":"hand-edit"},"extra":true}' >"$tmp/settings.work.json"
+    _hy_run "$tmp" --force
+    assert_equals '["env","modelOverrides"]' "$(_hy_wq "$tmp" 'keys')" "hydrate is the work layer's only writer"
+    assert_equals '"work-profile"' "$(_hy_wq "$tmp" '.env.AWS_PROFILE')" "a hand edit is overwritten"
+    rm -rf "$tmp"
+}
+
+test_hydrate_settings_work_layer_all_empty() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_work "$tmp" 'AWS_PROFILE=' 'MODEL_OVERRIDE_OPUS_4_6=' 'MODEL_OVERRIDE_OPUS_4_7=' 'MODEL_OVERRIDE_OPUS_5_5='
+    _hy_run "$tmp" --force
+    assert_equals 0 "$HY_RC" "hydrate --force succeeds with every work value empty"
+    assert_equals '{}' "$(_hy_wq "$tmp" '.')" "an all-empty config writes {}"
+    rm -rf "$tmp"
+}
+
+test_hydrate_settings_work_layer_preview() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_work "$tmp" 'AWS_PROFILE=work-profile'
+    _hy_run "$tmp" --diff
+    assert_equals 0 "$HY_RC" "--diff succeeds with no work layer yet"
+    assert_matches "NEW $tmp/settings.work.json" "$HY_OUT" "--diff reports the work layer NEW"
+    assert_equals '<missing>' "$(_hy_wq "$tmp" '.')" "--diff writes no work layer"
+    rm -rf "$tmp"
+}
+
+test_hydrate_settings_work_layer_ignore_rules() {
+    if git -C "$REPO_ROOT" check-ignore -q -- settings.work.json; then
+        pass "settings.work.json is gitignored"
+    else
+        fail "settings.work.json is gitignored" "no .gitignore rule matches it"
+    fi
+    if git -C "$REPO_ROOT" check-ignore -q -- settings.work.json.tmpl; then
+        fail "settings.work.json.tmpl is tracked" "a .gitignore rule matches it"
+    else
+        pass "settings.work.json.tmpl is tracked"
+    fi
 }
