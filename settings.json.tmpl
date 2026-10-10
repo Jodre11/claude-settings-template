@@ -2,9 +2,11 @@
   "awsAuthRefresh": "__AWS_SSO_REFRESH_PATH__",
   "env": {
     "API_TIMEOUT_MS": "1200000",
-    "AWS_PROFILE": "__AWS_PROFILE__",
     "CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF": "1",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "ENABLE_TOOL_SEARCH": "true",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
     "OTEL_LOGS_EXPORTER": "otlp",
@@ -374,7 +376,9 @@
   "__remove__": {
     "keys": [
       ["sandbox", "allowedDomains"],
-      ["env", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"]
+      ["env", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"],
+      ["env", "AWS_PROFILE"],
+      ["modelOverrides"]
     ],
     "entries": {
       "permissions.allow": [
