@@ -544,13 +544,12 @@ _hy_wq() {
 test_hydrate_settings_work_layer() {
     local tmp
     tmp=$(mktemp -d)
-    _hy_work "$tmp" 'AWS_PROFILE=work-profile' 'MODEL_OVERRIDE_OPUS_4_6=o46' 'MODEL_OVERRIDE_OPUS_4_7=' \
-        'MODEL_OVERRIDE_OPUS_5_5=o55'
+    _hy_work "$tmp" 'AWS_PROFILE=work-profile' 'MODEL_OVERRIDE_OPUS_5_5=o55'
     _hy_run "$tmp" --force
     assert_equals 0 "$HY_RC" "hydrate --force writes the work layer"
     assert_equals '{"AWS_PROFILE":"work-profile"}' "$(_hy_wq "$tmp" '.env')" "the work layer carries AWS_PROFILE"
-    assert_equals '{"claude-opus-4-6":"o46","claude-opus-5-5":"o55"}' "$(_hy_wq "$tmp" '.modelOverrides')" \
-        "an empty override value drops that entry"
+    assert_equals '{"claude-opus-5-5":"o55"}' "$(_hy_wq "$tmp" '.modelOverrides')" \
+        "the work layer maps Opus 5.5, and only Opus 5.5, to its override"
     assert_equals '[]' "$(_hy_wq "$tmp" '[.. | strings | select(test("__[A-Z0-9_]+__"))]')" \
         "every work-layer placeholder is substituted"
     assert_equals 600 "$(_hy_mode "$tmp/settings.work.json")" "the work layer is mode 0600"
@@ -566,11 +565,26 @@ test_hydrate_settings_work_layer() {
 test_hydrate_settings_work_layer_all_empty() {
     local tmp
     tmp=$(mktemp -d)
-    _hy_work "$tmp" 'AWS_PROFILE=' 'MODEL_OVERRIDE_OPUS_4_6=' 'MODEL_OVERRIDE_OPUS_4_7=' 'MODEL_OVERRIDE_OPUS_5_5='
+    _hy_work "$tmp" 'AWS_PROFILE=' 'MODEL_OVERRIDE_OPUS_5_5='
     _hy_run "$tmp" --force
     assert_equals 0 "$HY_RC" "hydrate --force succeeds with every work value empty"
     assert_equals '{}' "$(_hy_wq "$tmp" '.')" "an all-empty config writes {}"
     rm -rf "$tmp"
+}
+
+test_hydrate_settings_work_layer_empty_override() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_work "$tmp" 'AWS_PROFILE=work-profile' 'MODEL_OVERRIDE_OPUS_5_5='
+    _hy_run "$tmp" --force
+    assert_equals '["env"]' "$(_hy_wq "$tmp" 'keys')" "an empty override value drops the entry and its emptied object"
+    rm -rf "$tmp"
+}
+
+# Retired Opus models stay out of the work layer.
+test_settings_work_tmpl_overrides_only_current_opus() {
+    assert_equals '["claude-opus-5-5"]' "$(jq -c '.modelOverrides | keys' "$REPO_ROOT/settings.work.json.tmpl")" \
+        "settings.work.json.tmpl overrides only Opus 5.5"
 }
 
 test_hydrate_settings_work_layer_preview() {

@@ -72,8 +72,6 @@ substitute_placeholders() {
     content="${content//__AWS_SSO_REFRESH_PATH__/${AWS_SSO_REFRESH_PATH:-}}"
     content="${content//__AWS_PROFILE__/${AWS_PROFILE:-}}"
     content="${content//__SEARXNG_URL__/${SEARXNG_URL:-}}"
-    content="${content//__MODEL_OVERRIDE_OPUS_4_6__/${MODEL_OVERRIDE_OPUS_4_6:-}}"
-    content="${content//__MODEL_OVERRIDE_OPUS_4_7__/${MODEL_OVERRIDE_OPUS_4_7:-}}"
     content="${content//__MODEL_OVERRIDE_OPUS_5_5__/${MODEL_OVERRIDE_OPUS_5_5:-}}"
 
     # _aws-sso-common.sh
