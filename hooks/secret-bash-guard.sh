@@ -133,8 +133,6 @@ fetch_forms=(
     "kms${aws_gap}decrypt"
     "configure${aws_opts}get[[:space:]]+[^[:space:]]*(secret|token|key)[^[:space:]]*"
     "configure${aws_opts}export-credentials"
-    'gh[[:space:]]+auth[[:space:]]+token'
-    'gh[[:space:]]+auth[[:space:]]+status[[:space:]](.*[[:space:]])?(-t|--show-token)'
     'security[[:space:]]+find-(generic|internet)-password[[:space:]](.*[[:space:]])?-[[:alpha:]]*[wg][[:alpha:]]*'
     'security[[:space:]]+dump-keychain[[:space:]](.*[[:space:]])?-[[:alpha:]]*d[[:alpha:]]*'
     "${kube_get}${kube_res}${kube_mid}${kube_out}"
@@ -163,6 +161,11 @@ for f in "${fetch_forms[@]}"; do
     fetch_re+="${fetch_re:+|}$f"
 done
 fetch_re="(^|[^[:alnum:]_.-])(${fetch_re})([^[:alnum:]_.-]|$)"
+# gh's fetches are found by its word walk (a), which also sees them behind runners no list could name. This text form
+# only marks the phrase inside a quoted word (gh_soft): data to grep or a search, a fetch once something in the command
+# runs a string (strun).
+gh_re='(^|[^[:alnum:]_.-])gh[[:space:]]+auth[[:space:]]+(token|git-credential'
+gh_re+='|status[[:space:]](.*[[:space:]])?(-t|--show-token))([^[:alnum:]_.-]|$)'
 # The other tools' forms are matched only on a text that names one of them (tools_re): bash's regex engine takes time
 # in proportion to the pattern's size for every character, so one pattern of them all would slow every command.
 tools_re="(${ci_ansible}|${ci_tf}|${ci_npm}|${ci_doppler}|${ci_heroku}|${ci_launchctl}|${ci_av})"
@@ -323,6 +326,15 @@ if [[ "$fetch_joined" != "$fetch_checked" ]]; then
     fetch_jdequoted="$FC_D"
     fetch_jmasked="$FC_M"
 fi
+gh_soft=0
+strun=0
+for fetch_text in "$fetch_checked" "$fetch_dequoted" "$fetch_masked" "$fetch_joined" "$fetch_jdequoted" \
+        "$fetch_jmasked"; do
+    if [[ "$fetch_text" == *auth* && "$fetch_text" =~ $gh_re ]]; then
+        gh_soft=1
+        break
+    fi
+done
 if (( fetch_hit )); then
     # An allowed fetch is one line: a marker in a comment, or a line the tokeniser joins and bash does not, must not
     # exempt one.
@@ -365,7 +377,7 @@ scan_words=0
 # expansion: under bash 3.2 a case over these names costs about seven times as much per word. Any position: R reader,
 # J jq, W awk, G git, H shell, K interpreter, C copier (Ct: one taking -t DIR), D environment dump, P printer, T tee,
 # X xargs, Q parallel, N watch, O ps, U su/script/flock, S security, L a registry login or compose command (and
-# docker-compose and podman-compose). Command position: A wrapper (every later word is at command position too, and
+# docker-compose and podman-compose), a gh, B another command that may run a string it is given. Command position: A wrapper (every later word is at command position too, and
 # aws-vault is one), E env, e export, s set, v eval, Z a single-word fetch tool, f find (-exec starts a wrapper),
 # c cd, pushd, popd and zsh's chdir, k kubectl and oc, d gpg and age, h source and the .
 # builtin (a shell reading a script), b { or repeat (a zsh group or loop: denied), M ssh (a wrapper whose later words a
@@ -393,6 +405,9 @@ word_classes=(
     'nm U su script flock'
     'nm S security'
     'nm L docker podman helm oras skopeo buildah nerdctl'
+    'nm a gh'
+    'nm B sudo doas trap make gmake npx npm pnpm yarn bunx expect tclsh pwsh powershell busybox tmux screen fish'
+    'nm B tcsh csh gsed'
     'cp A sudo doas nice nohup time timeout command builtin exec noglob nocorrect xargs stdbuf ionice caffeinate'
     'cp A chronic flock unbuffer setsid direnv parallel'
     'cp b repeat'
@@ -2722,6 +2737,8 @@ si=0
 nsep=0
 pipe_sec=""
 swf_stage=-1
+ghs=0
+ghp=0
 GW_ACTIVE=0
 pwrap=0
 # Fetch facts: fd1 counts the stage's stdout redirections and fd1v marks the last one as a vault file; dbg marks a
@@ -3843,6 +3860,39 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 esac
             fi
         fi
+        # gh's walk (ghs: 0 its subcommand due, 1 auth's, 2 auth status's options, 3 alias, 4 config). A fetch is auth
+        # token or git-credential, auth status -t or --show-token (or a bundle holding t), an alias whose words name auth,
+        # or a config key naming a token. gh takes options anywhere, and one without = may take the next word (ghp).
+        if [[ "$act" == *a* ]]; then
+            case "$ghs" in
+                0|1)
+                    if [[ "$w" == -* ]]; then
+                        ghp=1
+                        if [[ "$w" == *=* ]]; then ghp=0; fi
+                    else
+                        case "$ghs:$w" in
+                            0:auth) ghs=1 ;;
+                            0:alias) ghs=3 ;;
+                            0:config) ghs=4 ;;
+                            1:token|1:git-credential) ghs=9; fetch_hit=1 ;;
+                            1:status) ghs=2 ;;
+                            *) if (( ! ghp )); then ghs=9; fi ;;
+                        esac
+                        ghp=0
+                    fi ;;
+                2)
+                    case "$w" in
+                        --show-token*) ghs=9; fetch_hit=1 ;;
+                        --*) ;;
+                        -*t*) ghs=9; fetch_hit=1 ;;
+                    esac ;;
+                3)
+                    if [[ "$w" == *auth* ]]; then ghs=9; fetch_hit=1; fi ;;
+                4)
+                    if [[ "$w" == *[Tt][Oo][Kk][Ee][Nn]* ]]; then ghs=9; fetch_hit=1; fi ;;
+            esac
+            if (( ghs == 9 )); then act="${act//a/}"; fi
+        fi
     fi
 
     # Command position: the first word after leading assignments, the command an env walk unwrapped, or any word of
@@ -3898,6 +3948,9 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     fi
     if [[ "$kc" == h ]] && (( ! hok )); then
         kc=""
+    fi
+    if (( gh_soft && ! strun )) && [[ "$kn" == [BGHKNQUWX] || "$kc" == [Mhv] || "$nm" == sed ]]; then
+        strun=1
     fi
     np=0
     if (( atcmd )); then
@@ -4093,6 +4146,10 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 sun="$nmw" ;;
             S)
                 if (( si == 0 )); then sgs=1; fi ;;
+            a)
+                if [[ "$act" != *a* ]]; then act+=a; fi
+                ghs=0
+                ghp=0 ;;
             L)
                 if (( atcmd )) && [[ "$act" != *l* ]]; then
                     act+=l
@@ -4162,6 +4219,10 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     fi
 done
 _stage_end
+
+if (( gh_soft && strun )); then
+    fetch_hit=1
+fi
 
 # A fetch is allowed in two shapes only: the whole command is the fetch with exactly one stdout redirection, into the
 # vault (zsh MULTIOS copies stdout to every target and to a following pipe, so exactly one); or a two-stage pipeline
