@@ -1,6 +1,6 @@
 # Claude Settings Template
 
-A GitHub template for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) harness configuration —
+A GitHub template for [Claude Code](https://code.claude.com/docs/en/overview) harness configuration —
 hooks, scripts, tools, and settings with a `config.env` placeholder strategy for keeping
 sensitive values out of version control.
 
@@ -17,9 +17,15 @@ sensitive values out of version control.
 | `settings-edit-ask.sh` | Asks before a direct Edit/Write of `settings.json`, which is generated from `settings.json.tmpl` |
 | `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context: screens every word of every pipeline stage, lists the directory of a recursive reader that prints contents, denies `cd` into a secret directory and shell command strings (`bash -c`, `eval`), and allows a secret fetch only into the vault (`$CLAUDE_SECRET_DIR`) |
 | `git-signing-ask.sh` | Asks before a Bash command overrides or removes git signing, in any key spelling; reads of the setting pass |
+| `secret-path-guard.sh` | Denies a Read or Grep of a secret-bearing path, and a content-mode Grep over a directory that holds a secret file |
+| `secret-prompt-guard.sh` | UserPromptSubmit: blocks a prompt carrying a live secret value (a prompt cannot be redacted), so rotate it and resubmit |
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
+| `secret-breach-alarm.sh` | Called by the scrubber on a detected leak: records the secret's class and source, never its value |
+| `secret-patterns.sh` | Sourced, not registered: the secret value shapes and path names every `secret-*` hook matches |
 | `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
 | `session-init.sh` | Creates the session-scoped temp dir and, beside it, the secret vault; renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID`/`CLAUDE_SECRET_DIR` to Bash |
+| `session-topic-provisional.sh` | UserPromptSubmit: sets a quick heuristic tmux `@topic` (the window title) on the first prompt |
+| `session-topic.sh` | Stop: once per session, replaces the provisional `@topic` with a better guess from the first prompt and the cwd |
 | `handover-detect.sh` | SessionStart: sweeps consumed and stale handovers; injects nothing (you run `/rehydrate`) |
 | `temp-path-guard.sh` | Enforces session-scoped temp directory convention |
 | `tmpl-output-guard.sh` | Denies an Edit/Write of any file with a `<file>.tmpl` beside it (a hydrated output; edit the `.tmpl`, then run `hydrate.sh`). It is user-level, so it applies in every repo; `settings.json` is exempt |
@@ -35,13 +41,17 @@ workflow runs it on every push to `main`, every pull request into `main`, and on
 | Script | Purpose |
 |---|---|
 | `_aws-sso-common.sh` | Shared constants for AWS SSO (generated from `.tmpl`) |
+| `apply-settings.sh` | Re-apply template changes: `hydrate.sh --force`, then `setup-platform.sh` |
 | `aws-sso-preflight.sh` | Check SSO token validity before launching Claude Code |
 | `aws-sso-refresh.sh` | Smart AWS SSO login for `awsAuthRefresh` |
+| `derive-claude-slug.sh` | The tmux session and Claude session-title slug, shared by the dotfiles wrappers and `session-init.sh` |
+| `handover-path.sh` | Resolves the handover-artifact path for the cwd (main-worktree root or cwd key); shared by `/handover` and `/rehydrate` |
+| `set-session-topic.sh` | Sets the tmux `@topic` from a given subject, overriding the topic hooks |
 | `setup-platform.sh` | Configure platform-specific settings (macOS/Linux/WSL/Windows) |
+| `shellcheck.sh` | Lint the repository's shell files exactly as CI does, ignoring any personal shellcheck config |
 | `sso-cache-check.py` | AWS SSO cache walker for token validity checks |
 | `statusline.sh` | Two-row status line renderer; segments self-hide when their payload data is absent |
 | `tests/statusline-test.sh` | Fixture-driven tests for `statusline.sh` (run directly, no framework) |
-| `handover-path.sh` | Resolves the handover-artifact path for the cwd (main-worktree root or cwd key); shared by `/handover` and `/rehydrate` |
 
 ### Skills
 
@@ -58,11 +68,18 @@ workflow runs it on every push to `main`, every pull request into `main`, and on
 
 See [Handover workflow](#handover-workflow) for how these fit together.
 
+### Agents
+
+| Agent | Purpose |
+|---|---|
+| `explore-haiku` | Cheap read-only search on Haiku for mechanical location tasks (declarations, references, files matching a pattern); not for judgement calls |
+
 ### Tools
 
 | Tool | Purpose |
 |---|---|
-| `md2clip` | Convert Markdown to Teams-compatible HTML and copy to macOS clipboard |
+| `md2clip` | Convert Markdown to rich-text HTML for Teams (default) or Outlook (`--outlook`) and copy it to the macOS clipboard; a copy of the `md-to-clipboard` plugin's tool |
+| `aws-secret-field` | Update one field of a JSON secret in AWS Secrets Manager; a `-` value is read from stdin, so it never reaches argv, shell history or a transcript |
 
 ## Getting Started
 
@@ -116,6 +133,19 @@ an empty value is omitted), and is written wholesale rather than merged. A launc
 dotfiles `claude()` wrapper passes it with `--settings`, so these provider-specific values reach
 work sessions only; the shared `settings.json` stays provider-neutral.
 
+#### Two providers side by side
+
+The harness is built to serve two accounts from one `~/.claude`: work sessions on a cloud provider
+(AWS Bedrock) and personal sessions on a first-party Claude subscription. The split lives in the
+launchers, not here. The companion dotfiles template ships two
+zsh wrappers: `claude` loads the Bedrock environment and adds `settings.work.json`, and
+`claude-personal` strips that environment and runs on the subscription. Its README documents what
+each one sets and strips. Two consequences for this repo:
+
+- Keep `settings.json` provider-neutral. A provider-specific value goes in `settings.work.json`.
+- The wrappers call `scripts/aws-sso-preflight.sh` and `scripts/derive-claude-slug.sh`, and read
+  `settings.work.json`. Renaming or moving any of them breaks the other repo.
+
 The web-search plugin requires a reachable SearXNG instance; point `SEARXNG_URL` at it
 (self-hosted Docker or a cloud deployment).
 
@@ -151,9 +181,9 @@ Claude Code 2.1.283 or later, so no hook re-implements them for subagents.
 ### 6. Install tools
 
 ```bash
-# md2clip (macOS only)
 mkdir -p ~/.local/bin
-ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip
+ln -sf ~/.claude/tools/md2clip ~/.local/bin/md2clip   # macOS only
+ln -sf ~/.claude/tools/aws-secret-field ~/.local/bin/aws-secret-field
 ```
 
 ## Handover workflow
@@ -206,9 +236,10 @@ stays small and greppable.
 core `otelcol`; it is a single static binary, not a Homebrew formula):
 
 ```bash
-# Pick the latest version and your platform's asset from:
-#   https://github.com/open-telemetry/opentelemetry-collector-releases/releases
-VER=0.155.0   # check for a newer release
+# The latest release; swap darwin_arm64 for your platform's asset
+# (https://github.com/open-telemetry/opentelemetry-collector-releases/releases).
+gh release view -R open-telemetry/opentelemetry-collector-releases --json tagName -q .tagName
+VER=0.0.0     # the tag above, without its leading v
 mkdir -p ~/.claude/bin
 curl -fsSL "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${VER}/otelcol-contrib_${VER}_darwin_arm64.tar.gz" \
   | tar -xz -C ~/.claude/bin otelcol-contrib
@@ -251,6 +282,9 @@ are `.gitignore`d in the template repo.
 | `CLAUDE.md.tmpl` | `CLAUDE.md` | `__DOTFILES_REPO_URL__`, `__CLAUDE_SETTINGS_REPO_URL__` |
 | `scripts/_aws-sso-common.sh.tmpl` | `scripts/_aws-sso-common.sh` | `__AWS_PROFILE__`, `__SSO_START_URL__` |
 | `skills/datadog-log-link/SKILL.md.tmpl` | `skills/datadog-log-link/SKILL.md` | `__DATADOG_SITE__`, `__DATADOG_EXAMPLE_SERVICE__` |
+
+`__AWS_SSO_REFRESH_PATH__` only seeds `awsAuthRefresh`: `setup-platform.sh` then overwrites it with the platform's
+`scripts/aws-sso-refresh.sh` command (wrapped in Git Bash on Windows), so leave `AWS_SSO_REFRESH_PATH` blank.
 
 ### C# language server
 
