@@ -1043,6 +1043,20 @@ expect_in "$T" DENY  "git grep -O shows whole files in a pager, denied"         
 expect_in "$R" ASK   "git grep of a revision asks"                               'git grep KEY HEAD'
 expect_in "$R" ALLOW "git grep of a clean path after -- allowed"                 'git grep KEY -- src'
 expect_in "$R" ASK   "git grep of a pathspec holding magic asks"                 'git grep KEY -- :/'
+# An exclude pathspec only drops files, so the hook ignores it and probes what the rest of the command reads.
+expect_in "$R" ALLOW "git grep of an exclude-only pathspec allowed"              "git grep -n KEY -- ':(exclude)docs'"
+expect_in "$R" ALLOW "git grep of a short exclude pathspec allowed"              "git grep -n KEY -- ':!docs'"
+expect_in "$R" ALLOW "git grep of a caret exclude pathspec allowed"              "git grep -n KEY -- ':^docs'"
+expect_in "$R" ALLOW "git grep of a top exclude pathspec allowed"                "git grep -n KEY -- ':/!docs'"
+expect_in "$R" ALLOW "git grep of exclude pathspecs holding globs allowed" \
+    "git grep -n -E 'a |b' -- ':(exclude)docs/superpowers/**' ':(exclude)src/**'"
+expect_in "$R" ALLOW "git grep of a clean path beside an exclude allowed"        "git grep -n KEY -- src ':!src/x'"
+expect_in "$R" ASK   "git grep of top magic beside an exclude asks"              "git grep -n KEY -- :/ ':!x'"
+expect_in "$R" ASK   "git grep of a magic word that is not exclude asks"         "git grep -n KEY -- ':(excludex)docs'"
+# The shell may split a variable into more pathspecs, or a brace into other magic, so only a literal exclude is skipped.
+expect_in "$R" ASK   "an exclude pathspec holding a variable asks"               'git grep -n KEY -- :!$X'
+expect_in "$R" ASK   "an exclude pathspec holding a brace asks"                  'git grep -n KEY -- :!{a,b}'
+expect_in "$T" DENY  "an exclude pathspec does not hide a tracked secret, denied" "git grep -n KEY -- ':!nothing'"
 expect      DENY  "git -C twice resolves the second against the first, denied"   "git -C $pt -C plain grep KEY"
 expect      DENY  "a git grep path resolves against git -C, denied"              "git -C $P grep KEY ."
 expect      ASK   "git grep in another work tree asks"                           "git --work-tree=$P grep KEY"
@@ -1901,7 +1915,15 @@ expect_in "$GR" ALLOW "an earlier revision's literal blob allowed"       'git gr
 expect      ALLOW "git -C a repository, a revision and a literal blob, from another cwd, allowed" \
     "git -C $GR grep -n x HEAD -- notes.md"
 expect_in "$GR" DENY  "a secret pathspec after a revision denied"        'git grep -n x HEAD -- .env'
-expect_in "$GR" ASK   "a pathspec naming a tree in the revision asks"    'git grep -n x HEAD -- docs'
+# A pathspec naming a tree in the revision has the revision's files under it listed and screened.
+expect_in "$GR" ALLOW "a pathspec naming a clean tree in the revision allowed" 'git grep -n x HEAD -- docs'
+expect_in "$GR" ALLOW "a clean tree pathspec with a trailing slash allowed" 'git grep -n x HEAD -- docs/'
+expect      ALLOW "git -C a repository, a revision and a clean tree, from another cwd, allowed" \
+    "git -C $GR grep -n x HEAD -- docs"
+expect_in "$GR" DENY  "a revision tree holding a secret denied"          'git grep -n x HEAD -- .'
+expect_in "$GR" ALLOW "an earlier revision's tree, before the secret, allowed" 'git grep -n x HEAD~1 -- .'
+expect_in "$GR" ALLOW "a revision's clean tree beside an exclude allowed" "git grep -n x HEAD -- docs ':!docs/a.md'"
+expect_in "$GR" ASK   "a revision with only an exclude pathspec asks"    "git grep -n x HEAD -- ':!docs'"
 expect_in "$GR" ASK   "a pathspec holding a pattern asks"                "git grep -n x HEAD -- 'docs/*.md'"
 expect_in "$GR" ASK   "a pathspec holding a variable asks"               'git grep -n x HEAD -- $F'
 expect_in "$GR" ASK   "a tree-ish operand asks"                          'git grep -n x HEAD:docs -- notes.md'
@@ -1918,6 +1940,26 @@ expect_in "$GR" ASK   "a revision past the walks' git budget asks" \
 expect_in "$GR" ASK   "a tree revision asks"                             'git grep -n x HEAD^{tree} -- notes.md'
 grt=$(git -C "$GR" rev-parse HEAD:docs)
 expect_in "$GR" ASK   "a subtree's object id as the revision asks"       "git grep -n x $grt -- a.md"
+# A tree is listed from the revision, not the work tree: old/ and its .env are gone from the work tree.
+GD="$pt/grdel"
+mkdir -p "$GD/old"
+git -C "$GD" init -q
+: >"$GD/old/.env"
+printf 'x\n' >"$GD/notes.md"
+git -C "$GD" add old/.env notes.md
+git -C "$GD" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+git -C "$GD" rm -rq old
+git -C "$GD" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m two
+expect_in "$GD" DENY  "a tree only in an earlier revision, holding a secret, denied" 'git grep -n x HEAD~1 -- old'
+expect_in "$GD" ALLOW "the root tree of a revision without the secret allowed" 'git grep -n x HEAD -- .'
+# Before --, git reads every operand as a revision, even one that is also a work-tree path: branch notes.md is HEAD~1.
+git -C "$GD" branch notes.md HEAD~1
+expect_in "$GD" DENY  "a revision named like a work-tree file is searched as a revision, denied" \
+    'git grep -n x notes.md -- old'
+expect_in "$GD" DENY  "a second revision named like a work-tree file is screened too, denied" \
+    'git grep -n x HEAD notes.md -- .'
 # git runs where an earlier cd left it, but the blob test runs in the payload's cwd. The repository holds a root file
 # config and app/config/.env, so in app the pathspec config names the directory holding the secret.
 GC="$pt/grcd"
@@ -1934,6 +1976,7 @@ expect_in "$GC" ASK   "a revision after cd ; asks"                       'cd app
 expect_in "$GC" ASK   "a revision after pushd asks"                      'pushd app && git grep -n x HEAD -- config'
 expect_in "$GC" ASK   "a revision after env -C asks"                     'env -C app git grep -n x HEAD -- config'
 expect_in "$GC" ALLOW "a cd after the revision's stage allowed"          'git grep -n x HEAD -- config ; cd app'
+expect_in "$GC" DENY  "a revision tree holding a nested secret denied"   'git grep -n x HEAD -- app'
 
 # bun exec and deno task --eval run their argument as a shell command string; the subcommand is the first word.
 expect DENY  "bun exec of a quoted command string denied"                "bun exec 'cat x'"
@@ -2099,7 +2142,9 @@ bash32_rows() {
     expect      ALLOW "under bash 3.2, deno run of a program allowed"    'deno run app.ts'
     expect_in "$GR" ALLOW "under bash 3.2, a revision confined to a literal blob allowed" \
         'git grep -n x HEAD -- notes.md'
-    expect_in "$GR" ASK   "under bash 3.2, a pathspec naming a tree asks" 'git grep -n x HEAD -- docs'
+    expect_in "$GR" ALLOW "under bash 3.2, a pathspec naming a clean tree allowed" 'git grep -n x HEAD -- docs'
+    expect_in "$GR" DENY  "under bash 3.2, a revision tree holding a secret denied" 'git grep -n x HEAD -- .'
+    expect_in "$R" ALLOW "under bash 3.2, git grep of an exclude-only pathspec allowed" "git grep -n KEY -- ':!docs'"
     expect_in "$GR" ASK   "under bash 3.2, a tree revision asks"        'git grep -n x HEAD^{tree} -- notes.md'
     expect_in "$GC" ASK   "under bash 3.2, a revision after cd asks"    'cd app && git grep -n x HEAD -- config'
     expect_in "$GC" ALLOW "under bash 3.2, a revision confined to a root blob allowed" 'git grep -n x HEAD -- config'
