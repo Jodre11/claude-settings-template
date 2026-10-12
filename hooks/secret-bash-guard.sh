@@ -1353,16 +1353,42 @@ _rr_stdin_ok() {
     return 1
 }
 
-# _rr_rev_ok <rev>: 0 if git grep's operand <rev>, read as a revision, confines the search to blobs: the command has --,
-# and each pathspec after it is literal (no pattern or $, which the shell expands), names no secret, and names a blob
-# in the commit <rev> peels to (git cat-file, run in git -C's directory or the payload's cwd, one call per pathspec
-# within the walks' git budget). A tree, : magic, a tree-ish operand (rev:path), a tree revision (whose path from the
-# root no pathspec shows) and an unknown revision all fail the cat-file test. A git -c core setting or a GIT_CONFIG
-# assignment fails it too, as the hook's own git call cannot carry them, and so does an earlier cd, after which git
-# runs somewhere the cat-file call does not.
+# _rr_ps_exclude <pathspec>: 0 if <pathspec> carries git's exclude magic (! or ^ in the short form :!x, :/^x; the word
+# exclude in the long form :(exclude)x), which only drops files from what the command's other pathspecs read. A word
+# holding $, a backquote or a brace fails: the shell may split it into more pathspecs or expand it into other magic. A
+# glob keeps the literal magic before it in every match, so it may stay.
+_rr_ps_exclude() {
+    local m
+    if [[ "$1" == *[\$\`\{]* ]]; then
+        return 1
+    fi
+    if [[ "$1" == ':('* ]]; then
+        m="${1#':('}"
+        if [[ "$m" != *')'* ]]; then
+            return 1
+        fi
+        m="${m%%')'*}"
+        [[ ",$m," == *',exclude,'* ]]
+        return
+    fi
+    m="${1#:}"
+    m="${m%%[!/!^]*}"
+    [[ "$m" == *'!'* || "$m" == *'^'* ]]
+}
+
+# _rr_rev_ok <rev>: 0 if git grep's operand <rev>, read as a revision, confines the search to what the hook can screen:
+# the command has --, and each pathspec after it is literal (no pattern or $, which the shell expands), names no
+# secret, and names a blob or a tree in the commit <rev> peels to (git cat-file, run in git -C's directory or the
+# payload's cwd, one call per pathspec within the walks' git budget). A tree is probed from the revision (the rev
+# probe kind lists it with git ls-tree), not from the work tree; an exclude pathspec is skipped, as it only drops
+# files, but at least one other pathspec is needed. : magic, a tree-ish operand (rev:path), a tree revision (whose
+# path from the root no pathspec shows) and an unknown revision all fail the cat-file test. A git -c core setting or a
+# GIT_CONFIG assignment fails it too, as the hook's own git call cannot carry them, and so does an earlier cd or an
+# env -C, after which git runs somewhere the cat-file call does not. --recurse-submodules fails a tree, whose
+# submodules git searches at their recorded commits.
 _rr_rev_ok() {
-    local rest="$rrops" o t dir n=0
-    if (( ! rrsep || gcore || rr_gitcfg || cdc )); then
+    local rest="$rrops" o t ty dir n=0
+    if (( ! rrsep || gcore || rr_gitcfg || cdc || ecd )); then
         return 1
     fi
     _pcwd
@@ -1378,6 +1404,9 @@ _rr_rev_ok() {
         if [[ "$t" != W ]]; then
             continue
         fi
+        if [[ "$o" == :* ]] && _rr_ps_exclude "$o"; then
+            continue
+        fi
         n=$(( n + 1 ))
         if [[ "$o" == *'$'* ]] || _rr_has_glob "$o" || (( rr_gitn >= RR_GIT_MAX )); then
             return 1
@@ -1387,7 +1416,10 @@ _rr_rev_ok() {
             return 1
         fi
         rr_gitn=$(( rr_gitn + 1 ))
-        if [[ "$(git -C "$dir" cat-file -t "$1^{commit}:./$o" 2>/dev/null)" != blob ]]; then
+        ty=$(git -C "$dir" cat-file -t "$1^{commit}:./$o" 2>/dev/null)
+        if [[ "$ty" == tree ]] && (( ! rrsub )) && norm_path "$o" "$dir"; then
+            _rr_dir "$form" "rev"$'\x1d'"$dir"$'\x1d'"$1"$'\x1d'"$o" "$NORM_PATH"
+        elif [[ "$ty" != blob ]]; then
             return 1
         fi
     done
@@ -1404,7 +1436,7 @@ _rr_rev_ok() {
 # xargs or parallel, a recursive reader's operand holding the replacement string
 # has the directory before it probed, following links (xk), as grep -r follows a link it is given.
 _rr_settle_walk() {
-    local rest="$rrops" o ro t first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk
+    local rest="$rrops" o ro t first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk rrrv=0
     act="${act//r/}"
     case "$rrn" in
         grep)
@@ -1534,14 +1566,26 @@ _rr_settle_walk() {
             continue
         fi
         if [[ "$rrn" == 'git grep' ]]; then
+            # An exclude pathspec only drops files: what the other operands (or the working directory) name is probed.
             if [[ "$o" == :* ]]; then
-                _rr_hold "$form" "the pathspec '$o' holds magic the hook does not resolve"
+                if ! _rr_ps_exclude "$o"; then
+                    _rr_hold "$form" "the pathspec '$o' holds magic the hook does not resolve"
+                    any=1
+                fi
+                continue
+            fi
+            # Once a revision is searched, the pathspecs name its files, which _rr_rev_ok probed, not the work tree's.
+            if [[ "$t" == W ]] && (( rrrv )); then
                 any=1
                 continue
             fi
-            if [[ "$t" == w ]] && (( ! rrnoi && ! rrunt )) && [[ "$o" != *'$'* ]] && ! _rr_has_glob "$o" \
-                    && ! _rr_exists "$o"; then
-                if ! _rr_rev_ok "$ro"; then
+            # Before --, git reads every operand as a revision, a work-tree path's name included; without it, a word
+            # naming no path may be one.
+            if [[ "$t" == w ]] && (( ! rrnoi && ! rrunt )) && { (( rrsep )) || { [[ "$o" != *'$'* ]] \
+                    && ! _rr_has_glob "$o" && ! _rr_exists "$o"; }; }; then
+                if _rr_rev_ok "$ro"; then
+                    rrrv=1
+                else
                     _rr_hold "$form" "'$o' may name a revision, whose files the hook cannot list"
                 fi
                 any=1

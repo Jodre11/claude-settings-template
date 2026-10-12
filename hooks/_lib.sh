@@ -697,10 +697,10 @@ probe_reset
 
 # probe_add <kind> <root> <form> [<include> <exclude> <exclude-dir>]: add the absolute directory <root>, listed by
 # <kind>: git (git ls-files -co --exclude-standard in a work tree, with nested repositories and submodules listed in
-# full, else find), tracked (git ls-files in a work tree,
-# else find), find, or findL (find -L). <form> names the reader in a decision. The glob lists (\x1f-separated bash
-# patterns) narrow the hits; a glob holding { is ignored. A repeated entry is ignored; returns 1 once PROBE_MAX_ROOTS
-# are held.
+# full, else find), tracked (git ls-files in a work tree, else find), find, findL (find -L), or a rev kind (a
+# revision's tree, listed by git ls-tree; see _dhs_rev). <form> names the reader in a decision. The glob lists
+# (\x1f-separated bash patterns) narrow the hits; a glob holding { is ignored. A repeated entry is ignored; returns 1
+# once PROBE_MAX_ROOTS are held.
 # shellcheck disable=SC2034  # PROBE_FORM is read by the calling hook
 probe_add() {
     local key="$1"$'\x1f'"$2"$'\x1f'"${4:-}"$'\x1f'"${5:-}"$'\x1f'"${6:-}"
@@ -735,6 +735,26 @@ _dhs_git() {
     local -a ps=()
     shift
     if git -C "$r" ls-files -z "$@" | LC_ALL=C tr '\0' '\n'; then
+        ps=("${PIPESTATUS[@]}")
+    else
+        ps=("${PIPESTATUS[@]}")
+    fi
+    if [[ "${ps[0]}" != 0 ]]; then
+        return "${ps[0]}"
+    fi
+    return "${ps[1]}"
+}
+
+# _dhs_rev <kind>: list, relative to it, every file of a revision's tree; <kind> is rev, the directory git runs in, the
+# revision and the path of the tree from that directory, \x1d-separated. Returns git's status, or tr's when git's is 0.
+_dhs_rev() {
+    local s="${1#rev$'\x1d'}" d rv p
+    local -a ps=()
+    d="${s%%$'\x1d'*}"
+    s="${s#*$'\x1d'}"
+    rv="${s%%$'\x1d'*}"
+    p="${s#*$'\x1d'}"
+    if git -C "$d" ls-tree -r -z --name-only "$rv^{commit}:./$p" | LC_ALL=C tr '\0' '\n'; then
         ps=("${PIPESTATUS[@]}")
     else
         ps=("${PIPESTATUS[@]}")
@@ -792,6 +812,7 @@ _dhs_list() {
                     _dhs_git "$r" --cached || rc=$?
                 fi ;;
             findL) _dhs_find "$r" -L || rc=$? ;;
+            rev$'\x1d'*) _dhs_rev "$k" || rc=$? ;;
             *) _dhs_find "$r" || rc=$? ;;
         esac
         printf '\003%s\n' "$rc"
