@@ -2125,11 +2125,13 @@ fi
 # time passes unscreened. bash-guard denies anything over 64 KiB, so each case is at most 65536 characters, and each
 # must be decided within TIME_LIMIT_MS, half the timeout, in one of TIME_RUNS runs: a CI runner is two to three times
 # slower per core than a current Mac, so a row that passes there leaves the hook at least twice its worst case inside
-# the timeout. The budget is a speed target that load on a busy machine can push one run past, so a slow run is
-# retried; TIME_HARD_MS, kept below the timeout, bounds every run, and a run that reaches it fails the row at once.
+# the timeout. The budget is a speed target on the hook's CPU time, as load on a busy machine stretches wall time
+# (three times over, measured on a 10-core Mac) while CPU time barely moves; a slow run is still retried. TIME_HARD_MS,
+# kept below the timeout, bounds every run's wall time, and a run that reaches it fails the row at once.
 TIME_LIMIT_MS=2500
 TIME_HARD_MS=4000
 TIME_RUNS=3
+cpu_dir=$(mktemp -d)
 
 # _ms: print the time in milliseconds. bash 5 has EPOCHREALTIME; an older bash falls back to whole seconds, which
 # can fail a row early but never passes one the precise clock would fail.
@@ -2142,37 +2144,75 @@ _ms() {
     fi
 }
 
+# _cpu_ms: set CPU_MS to the user plus system time, in milliseconds, of the children this shell has reaped (a hook run
+# in $(…) counts once the substitution returns). times runs in this shell, not a substitution, which starts at zero.
+_cpu_ms() {
+    local u s t sec frac ms=0
+    times > "$cpu_dir/t"
+    { read -r _ _; read -r u s; } < "$cpu_dir/t"
+    # Each is MmS.FFFs; the decimal mark follows the locale.
+    for t in "$u" "$s"; do
+        t="${t%s}"
+        sec="${t#*m}"
+        sec="${sec/,/.}"
+        frac=""
+        if [[ "$sec" == *.* ]]; then frac="${sec#*.}"; fi
+        frac="${frac}000"
+        ms=$(( ms + 10#${t%%m*} * 60000 + 10#${sec%%.*} * 1000 + 10#${frac:0:3} ))
+    done
+    CPU_MS=$ms
+}
+
 # expect_fast <verdict> <description> <cmd>: pass when the hook decides <cmd> as expected (DENY, ASK, ALLOW, or a
-# |-separated choice of them) within TIME_LIMIT_MS in one of TIME_RUNS runs; a wrong verdict or a run of TIME_HARD_MS
-# or more fails at once.
+# |-separated choice of them) within TIME_LIMIT_MS of CPU time in one of TIME_RUNS runs; a wrong verdict or a run of
+# TIME_HARD_MS or more wall time fails at once.
 expect_fast() {
-    local got start elapsed i times="" under="${HOOK_BASH:+, $HOOK_BASH}${LC_ALL:+, LC_ALL=$LC_ALL}"
+    local got start elapsed cpu0 cpu i times="" under="${HOOK_BASH:+, $HOOK_BASH}${LC_ALL:+, LC_ALL=$LC_ALL}"
     for (( i = 1; i <= TIME_RUNS; i++ )); do
+        _cpu_ms
+        cpu0=$CPU_MS
         start=$(_ms)
         got=$(run "$3")
         elapsed=$(( $(_ms) - start ))
-        times+="${times:+, }${elapsed}"
+        _cpu_ms
+        cpu=$(( CPU_MS - cpu0 ))
+        times+="${times:+, }${cpu}/${elapsed}"
         if [[ "|$1|" != *"|$got|"* ]] || (( elapsed >= TIME_HARD_MS || ${#3} > 65536 )); then
             break
         fi
-        if (( elapsed < TIME_LIMIT_MS )); then
-            ok "$2 (${#3} characters, ${times} ms$under)"
+        if (( cpu < TIME_LIMIT_MS )); then
+            ok "$2 (${#3} characters, ${times} ms cpu/wall$under)"
             return
         fi
     done
-    bad "$2 (${#3} characters$under): want $1 within ${TIME_LIMIT_MS} ms in one of ${TIME_RUNS} runs, each under\
- ${TIME_HARD_MS} ms, got $got in ${times} ms"
+    bad "$2 (${#3} characters$under): want $1 within ${TIME_LIMIT_MS} ms of CPU in one of ${TIME_RUNS} runs, each\
+ under ${TIME_HARD_MS} ms of wall time, got $got in ${times} ms cpu/wall"
 }
 
-# expect_fast against a stub hook that sleeps for the listed seconds, one per run, with the limits scaled down: a run
-# over the budget is retried, up to three runs; a wrong verdict, or a run at the hard limit, fails at once.
+# expect_fast against a stub hook that burns CPU for the listed seconds (or, prefixed s, sleeps), one per run, with
+# the limits scaled down (the budget furthest, so a burn over it stays far from the hard limit under load): a run
+# over the budget is retried, up to three runs; a wrong verdict, or a run at the hard limit, fails at once; a run slow
+# only in wall time, as under load, passes.
 sdir=$(mktemp -d)
-cat > "$sdir/hook" <<'EOF'
-#!/usr/bin/env bash
+printf '#!%s\n' "$BASH" > "$sdir/hook"
+cat >> "$sdir/hook" <<'EOF'
 cat >/dev/null
 n=$(( $(cat "$STUB_DIR/n") + 1 ))
 echo "$n" > "$STUB_DIR/n"
-sleep "$(sed -n "${n}p" "$STUB_DIR/delays")"
+d=$(sed -n "${n}p" "$STUB_DIR/delays")
+if [[ "$d" == s* ]]; then
+    sleep "${d#s}"
+else
+    # Burn d seconds of this shell's own CPU time (times' first line), which load cannot shorten as it can a deadline.
+    want=$(awk -v d="$d" 'BEGIN { printf "%d", d * 1000 }')
+    while :; do
+        for (( j = 0; j < 5000; j++ )); do :; done
+        times > "$STUB_DIR/t"
+        got=$(awk 'NR == 1 { for (i = 1; i <= 2; i++) { split($i, p, "m"); sub(/s$/, "", p[2]); sub(/,/, ".", p[2])
+            t += p[1] * 60 + p[2] } printf "%d", t * 1000 }' "$STUB_DIR/t")
+        if (( got >= want )); then break; fi
+    done
+fi
 printf '%s' '{"hookSpecificOutput":{"permissionDecision":"deny"}}'
 EOF
 chmod +x "$sdir/hook"
@@ -2182,7 +2222,7 @@ _stub_case() {
     local res runs
     printf '%s\n' $2 > "$sdir/delays"
     echo 0 > "$sdir/n"
-    res=$(HOOK="$sdir/hook" TIME_LIMIT_MS=1000 TIME_HARD_MS=2000 expect_fast "$1" stub x)
+    res=$(HOOK="$sdir/hook" TIME_LIMIT_MS=300 TIME_HARD_MS=2000 expect_fast "$1" stub x)
     runs=$(cat "$sdir/n")
     if [[ "$res" == "$3: "* && "$runs" == "$4" ]]; then
         ok "expect_fast: $5"
@@ -2191,9 +2231,11 @@ _stub_case() {
     fi
 }
 _stub_case DENY  '0'           PASS 1 "a fast run passes at once"
-_stub_case DENY  '1.2 0'       PASS 2 "a run over the budget is retried, and a fast retry passes"
-_stub_case DENY  '1.2 1.2 1.2' FAIL 3 "three runs over the budget fail"
+_stub_case DENY  '0.4 0'       PASS 2 "a run over the budget is retried, and a fast retry passes"
+_stub_case DENY  '0.4 0.4 0.4' FAIL 3 "three runs over the budget fail"
 _stub_case DENY  '2.2 0'       FAIL 1 "a run at the hard limit fails without a retry"
+_stub_case DENY  's1.2 0'      PASS 1 "a run over the budget in wall time only (load) passes at once"
+_stub_case DENY  's2.2 0'      FAIL 1 "a run at the hard limit in wall time only fails without a retry"
 _stub_case ALLOW '0 0'         FAIL 1 "a wrong verdict fails without a retry"
 rm -rf "$sdir"
 unset STUB_DIR
@@ -2457,5 +2499,5 @@ if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 
     unset HOOK_BASH
 fi
 
-rm -rf "$pt" "$tdir" "$bigt" "$RUN_CWD"
+rm -rf "$pt" "$tdir" "$bigt" "$RUN_CWD" "$cpu_dir"
 echo "-----"; echo "passed: $pass  failed: $fail"; [ "$fail" -eq 0 ]
