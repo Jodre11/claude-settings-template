@@ -489,6 +489,46 @@ expect DENY  "a fetch with a backslash inside a word denied"       'gh auth \tok
 expect ALLOW "a quoted non-fetch aws command allowed"              'aws "secretsmanager" list-secrets'
 expect ALLOW "a quoted fetch into the vault allowed" \
     'aws "secretsmanager" get-secret-value --secret-id x > "$CLAUDE_SECRET_DIR/x.json"'
+# gh's fetches are read as words: a gh word, at any position, before its token-printing subcommand. The phrase inside
+# one quoted word is data, unless the command also holds something that runs a string.
+gh_fetches=(
+    'GH_HOST=github.com gh auth token'
+    'env gh auth token'
+    'sudo gh auth token'
+    '/opt/homebrew/bin/gh auth token'
+    'GH auth token'
+    '"gh" "auth" "token"'
+    'docker exec c gh auth token'
+    'echo gh auth token'
+    'gh auth token --hostname github.com'
+    'gh auth --hostname github.com token'
+    'gh --hostname github.com auth token'
+    'gh auth status -at'
+    'gh auth status --show-token=true'
+    'gh auth git-credential get'
+    "gh alias set tk 'auth token'"
+    "gh alias set tk --shell 'gh auth token'"
+    'gh config get oauth_token'
+    "python3 -c \"import os; os.system('gh auth token')\""
+    "echo 'gh auth token' | xargs env"
+    "echo 'gh auth token' | bash"
+    "awk 'BEGIN { system(\"gh auth token\") }'"
+    "sudo -s 'gh auth token'"
+    "git -c 'alias.x=!gh auth token' x"
+    "watch 'gh auth token'"
+)
+for f in "${gh_fetches[@]}"; do
+    expect DENY "gh fetch denied: $f"                              "$f"
+done
+expect ALLOW "a grep pattern naming a gh fetch allowed"            "grep -n 'gh auth token' hooks/secret-bash-guard.sh"
+expect ALLOW "a quoted search query naming a gh fetch allowed"     'web-search -n 5 "gh auth token scopes"'
+expect ALLOW "an rg pattern naming gh --show-token allowed"        "rg 'gh auth status --show-token' docs/"
+expect ALLOW "gh auth status allowed"                              'gh auth status'
+expect ALLOW "gh auth status with a hostname allowed"              'gh auth status --hostname github.com'
+expect ALLOW "gh issue create with auth and token values allowed"  'gh issue create --title auth --body token'
+expect ALLOW "a gh fetch into the vault allowed"                   'gh auth token > $CLAUDE_SECRET_DIR/gh'
+expect ALLOW "a gh fetch piped into a registry login allowed" \
+    'gh auth token | docker login ghcr.io --username x --password-stdin'
 expect ALLOW "a commit message naming a fetch form allowed" \
     $'git commit -m "$(cat <<\'EOF\'\nDocument aws secretsmanager get-secret-value\nEOF\n)"'
 expect ALLOW "a commit message naming a reader and a secret path allowed" \
