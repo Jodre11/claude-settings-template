@@ -502,6 +502,44 @@ _secret_variant() {
     [[ "$w" == *[\*\?\[]* ]] && path_glob_is_secret "$w"
 }
 
+# _git_ps_word <word>: screen a word after git's subcommand that starts with :, which git resolves itself (a pathspec,
+# or an index path) and never hands to a remote shell. GPW is 0 when it names no secret, 1 when it does, or empty to
+# leave it to the generic tests. A literal exclude pathspec only drops files (0); long-form magic (:(top)x) is tested on
+# the path after it, without the host:path reading of its ( group as a glob. A word whose magic is not plain, or whose
+# path holds whitespace, shell syntax or a backslash, is left: some git options run a word as a shell command (rebase
+# -x ':!;cat .env'), and git reads a backslash in a pathspec as an escape (.en\v matches .env).
+_git_ps_word() {
+    local m p
+    GPW=""
+    if [[ "$1" == ':('* ]]; then
+        m="${1#':('}"
+        if [[ "$m" != *')'* ]]; then
+            return 0
+        fi
+        p="${m#*)}"
+        m="${m%%)*}"
+        if [[ "$m" == *[!A-Za-z0-9,:=_.-]* ]]; then
+            return 0
+        fi
+    else
+        p="${1#:}"
+        p="${p#"${p%%[!/!^]*}"}"
+    fi
+    if [[ "$p" == *[[:space:]\;\&\|\<\>\(\)\`\$\{\}\\\'\"]* ]]; then
+        return 0
+    fi
+    if _rr_ps_exclude "$1"; then
+        GPW=0
+    elif [[ "$1" == ':('* && -n "$p" ]]; then
+        GPW=0
+        # shellcheck disable=SC2053  # the alternations are intentional patterns
+        if [[ "/$p" == $_SECRET_PATH_ANY && "/$p" != $_SECRET_ALLOW_ANY ]] \
+                || { [[ "$p" == *[=:\*\?\[]* || "$p" == -[!-]?* ]] && _secret_variant "$p"; }; then
+            GPW=1
+        fi
+    fi
+}
+
 # _braces_are_replacements <word>: 0 if every {…} in <word> holds only digits and # % . / +, with no .. beside a digit,
 # as parallel's replacement strings do ({}, {.}, {/.}, {#}, {1}, {+..}), else 1: a perl replacement string ({=…=}) or
 # a brace expansion ({a,b}, {1..3}) is not. A brace left open, or a word over 256 characters, is not either (fail
@@ -2784,6 +2822,9 @@ swf_stage=-1
 ghs=0
 ghp=0
 GW_ACTIVE=0
+# sgp marks a stage whose git subcommand has been read: its later words starting with : are git's (_git_ps_word).
+sgp=0
+GPW=""
 pwrap=0
 # Fetch facts: fd1 counts the stage's stdout redirections and fd1v marks the last one as a vault file; dbg marks a
 # debug or verbose flag, sgs a security command and sgf a -g bundle after it (all in the first stage); lgst walks the
@@ -3107,6 +3148,7 @@ _stage_end() {
     sxk=""
     wdd=0
     GW_ACTIVE=0
+    sgp=0
 }
 
 for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
@@ -3151,6 +3193,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 rgr=0
                 rgk=0
                 rgt=""
+                sgp=0
                 continue
             fi
             scan_words=$(( scan_words + 1 ))
@@ -3270,10 +3313,16 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         hook_deny "$WORDS_MSG"
     fi
     wsec=0
+    GPW=""
+    if (( sgp )) && [[ "$w" == :* ]] && (( ${#w} <= 4096 )); then
+        _git_ps_word "$w"
+    fi
     # A word over 4096 characters (PATH_MAX on Linux) cannot be a path, so it gets only the whole-word test: the
     # variants' prefix removals are quadratic in the word's length.
     # shellcheck disable=SC2053  # the alternations are intentional patterns
-    if [[ "/$w" == $_SECRET_PATH_ANY && "/$w" != $_SECRET_ALLOW_ANY && "$w" != --exclude=* \
+    if [[ -n "$GPW" ]]; then
+        wsec=$GPW
+    elif [[ "/$w" == $_SECRET_PATH_ANY && "/$w" != $_SECRET_ALLOW_ANY && "$w" != --exclude=* \
             && "$w" != --exclude-dir=* ]]; then
         wsec=1
     elif (( ${#w} <= 4096 )) && [[ "$w" == *[=:\*\?\[]* || "$w" == -[!-]?* ]] && _secret_variant "$w"; then
@@ -3338,6 +3387,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
             fxp="$w"
             if (( fxe )); then
+                sgp=0
                 if [[ "$act" == *r* ]]; then
                     _rr_settle
                 fi
@@ -3510,6 +3560,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             git_walk_word "$w"
             if (( ! GW_ACTIVE )); then
                 act="${act//G/}"
+                sgp=1
                 if [[ "$npk" == git && -z "$npg" ]]; then
                     npg="$GW_SUB"
                 fi

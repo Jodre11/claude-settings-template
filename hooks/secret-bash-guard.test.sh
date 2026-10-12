@@ -662,6 +662,32 @@ for m in '(top)' '(literal)' '(attr:x)' '(glob)**/' '/' '/:'; do
 done
 expect ALLOW "a git pathspec with magic naming a benign dir allowed" "git log --oneline -- ':(top)src'"
 expect ALLOW "a git exclude pathspec of a benign glob allowed"      "git diff -- ':(exclude)*.lock'"
+# In a git stage, a literal exclude pathspec only drops files, so a secret name in it reads nothing.
+for p in ':!.env' ':^.env' ':/!.env' ':(exclude).env' ':(top,exclude).env' ':(exclude,glob)**/.env'; do
+    expect ALLOW "a git exclude pathspec $p of a secret allowed"    "git log -p -- '$p'"
+done
+expect ALLOW "a git grep exclude pathspec of a secret allowed"      "git grep -n x -- ':!.env'"
+expect DENY  "a git exclude beside a secret operand denied"         "git log -p -- ':!x' .env"
+expect DENY  "a git magic word that is not exclude denied"          "git log -p -- ':(excludex).env'"
+expect DENY  "an exclude-shaped word after a git stage denied"      "git log -- x ; cat ':!.env'"
+expect DENY  "an exclude-shaped word piped after a git stage denied" "git log -- x | cat ':!.env'"
+expect DENY  "an exclude-shaped word outside git denied"            "cat ':!.env'"
+# Git resolves a leading-colon word itself, never in a remote shell, so its (magic) group is no glob there.
+expect ALLOW "a git literal pathspec of a benign name allowed"      "git log -- ':(literal)x'"
+expect ALLOW "a git exclude among other magic allowed"              "git log -- ':(top,exclude)x'"
+expect DENY  "a git literal pathspec of a nested secret denied"     "git log -p -- ':(literal)app/.env'"
+expect DENY  "a leading-colon group outside git denied"             "rsync ':(literal)x' dst"
+# Some git options run a word as a shell command, so one holding shell syntax is no pathspec to clear; git reads a
+# backslash in a pathspec as an escape (.en\v matches .env).
+expect DENY  "an exclude-shaped word holding a ; is not cleared, denied"     "git log -p -- ':!;cat .env'"
+expect DENY  "a caret exclude-shaped word holding a ; is not cleared, denied" "git log -p -- ':^;cat .env'"
+expect DENY  "an exclude-shaped word holding a space is not cleared, denied"  "git log -p -- ':!x .env'"
+expect DENY  "a magic word holding a ; in its path is not cleared, denied"   "git log -p -- ':(top)x;cat .env'"
+expect DENY  "a magic word holding shell syntax in its magic denied"        "git log -p -- ':(top;cat .env)x'"
+expect DENY  "a git magic pathspec escaping a secret name denied"   "git log -p -- ':(top).en\\v'"
+expect DENY  "a git magic pathspec escaping a key name denied"      "git log -p -- ':(top)id_r\\sa'"
+expect DENY  "a leading-colon group after find's git -exec denied" \
+    "find . -exec git log {} ';' -exec rsync ':(literal)x' dst ';'"
 # APFS folds case fully, so a non-ASCII letter whose fold is ASCII (long s, Kelvin sign, sharp s, the ff/fi/st
 # ligatures) opens the ASCII-named file and runs the ASCII-named program. Byte escapes keep the rows locale-free.
 ls_=$'\xc5\xbf'; kv_=$'\xe2\x84\xaa'; ff_=$'\xef\xac\x80'; fi_=$'\xef\xac\x81'; st_=$'\xef\xac\x86'
