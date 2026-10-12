@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# apply-settings.sh — Apply settings.json.tmpl changes to the generated settings.json.
+# apply-settings.sh — Apply settings.json.tmpl and settings.work.json.tmpl changes to the generated
+# settings.json and settings.work.json.
 #
 # Runs hydrate --force, then setup-platform.sh to activate the git hooks and inject the
-# platform-specific values. Preview first with: ~/.claude/hydrate.sh --diff
+# platform-specific values into settings.json. Preview first with: ~/.claude/hydrate.sh --diff
 #
 # Usage:
 #   bash ~/.claude/scripts/apply-settings.sh
