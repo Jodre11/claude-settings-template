@@ -29,6 +29,8 @@ If genuinely ambiguous, ask.
   via `__remove__` in the `.tmpl`.
 - **Commits.** After editing a tracked file in `~/.claude`, commit it by explicit path (not memory files) and push.
 - **Local overlays.** Personal additions go in `~/.gitconfig.local` or `~/.ssh/config.local`, never in a `.tmpl`.
+- **Wrappers.** `claude` (work, Bedrock) and `claude-personal` (personal subscription) are defined in
+  `~/dotfiles/zsh/.zshrc.tmpl`; their contract is in `~/dotfiles/CLAUDE.md`. Keep `settings.json` provider-neutral.
 - **Memory writes.** Never put secret-shaped values (account IDs, registry hosts, ARNs, key material, tokens) in
   memory files: write a placeholder such as `<aws-account-id>` or omit the detail.
 - **dotfiles.** [dotfiles](__DOTFILES_REPO_URL__) (`~/dotfiles`) is managed with GNU Stow: stowed files are symlinks
