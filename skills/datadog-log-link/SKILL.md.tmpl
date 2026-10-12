@@ -1,8 +1,7 @@
 ---
 name: datadog-log-link
 description: Generate Datadog Log Explorer URLs from natural language queries
-user-invocable: true
-arguments: Free-form natural language describing the service, environment, time range, and optional filters
+argument-hint: "[service] [env] [time range] [filters]"
 ---
 
 # Datadog Log Link Generator
@@ -49,27 +48,29 @@ Use a time window that covers the requested period. Match the user's fuzzy term 
 
 ### 4. Compute time range in epoch milliseconds
 
-Use bash to convert times to epoch **milliseconds** (not seconds).
+Use bash to convert times to epoch **milliseconds** (not seconds). The `+%s000` format appends three zeros to the
+epoch seconds, so each value is one plain `date` call; bash-guard denies `$(…)` and `$((…))`.
 
 **Relative examples (macOS):**
 ```bash
 # "last 15 minutes" → from_ts
-echo $(( $(date -v-15M +%s) * 1000 ))
+date -v-15M +%s000
 # "now" → to_ts
-echo $(( $(date +%s) * 1000 ))
+date +%s000
 ```
 
-**Absolute examples (macOS):**
+**Absolute examples (macOS):** `-u` reads the time as UTC; omit it for local time.
 ```bash
-echo $(( $(date -j -f "%Y-%m-%d %H:%M:%S" "2026-02-18 07:55:00" +%s) * 1000 ))
+date -u -j -f "%Y-%m-%d %H:%M:%S" "2026-02-18 07:55:00" +%s000
 ```
 
 **"today":** midnight UTC today for `from_ts`, now for `to_ts`:
 ```bash
-echo $(( $(date -u -j -f "%Y-%m-%d %H:%M:%S" "$(date -u +%Y-%m-%d) 00:00:00" +%s) * 1000 ))
+date -u -v0H -v0M -v0S +%s000
 ```
 
-CRITICAL: `from_ts` and `to_ts` are **milliseconds** in the URL. The MCP tools use **seconds**. Always multiply by 1000.
+`from_ts` and `to_ts` take milliseconds, but the MCP tools take and return seconds. A seconds value in the URL points
+at January 1970, so the page shows no logs.
 
 ### 5. Determine sort order
 
@@ -97,15 +98,15 @@ https://app.__DATADOG_SITE__/logs?query={URL_ENCODED_QUERY}&cols=host%2Cservice&
 | `viz`            | `stream`                           | Log list view                                   |
 | `from_ts`        | Epoch milliseconds                 | Start of window                                 |
 | `to_ts`          | Epoch milliseconds                 | End of window                                   |
-| `live`           | `false`                            | **CRITICAL** — see rules below                  |
+| `live`           | `false`                            | Keeps the absolute window (rule 1)              |
 
 ### 7. Return the URL
 
 Output the constructed URL to the user. Do **NOT** attempt to open or verify via Playwright (authentication is unreliable in the MCP browser).
 
-## Critical Rules
+## Rules
 
-1. **ALWAYS set `live=false`** — Without it, Datadog silently replaces the absolute `from_ts`/`to_ts` with a relative "Past 30 Seconds" window, returning 0 results.
+1. **Set `live=false`** — Without it, Datadog silently replaces the absolute `from_ts`/`to_ts` with a relative "Past 30 Seconds" window, returning 0 results.
 
 2. **Timestamps are milliseconds in URLs** — The MCP tools return epoch seconds. URL params need epoch milliseconds. Always `× 1000`.
 
