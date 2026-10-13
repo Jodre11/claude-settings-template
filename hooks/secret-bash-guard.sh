@@ -764,6 +764,13 @@ _git_cmd_word() {
             fi
             return 0 ;;
     esac
+    # Getopt::Long, send-email's parser, also reads a long option behind + or a single dash.
+    if [[ "$gis" == send-email ]]; then
+        case "$w" in
+            +?*) w="--${w#+}" ;;
+            -[!-]?*) w="-$w" ;;
+        esac
+    fi
     if (( gie )) || [[ "$w" != -?* ]]; then
         return 0
     fi
