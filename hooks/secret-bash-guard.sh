@@ -425,6 +425,9 @@ word_classes=(
 )
 VER_NAME_RE='^([a-z]+)[0-9][0-9.]*$'
 plain_names='! . { -- --debug --v --log-http --verbosity debug docker-compose podman-compose aws-vault doppler heroku'
+# A dashed git-<subcommand> whose options run a shell command starts the I walk (_git_cmd_start).
+plain_names+=' git-rebase git-difftool git-filter-branch git-bisect git-submodule git-fetch git-pull git-ls-remote'
+plain_names+=' git-fetch-pack git-clone git-push git-send-pack git-archive git-grep git-send-email'
 # The name-producer check (_np_start) reads a pipeline's earlier stages; with no | there are none.
 np_on=0
 if [[ "$cmd" == *'|'* ]]; then
@@ -614,6 +617,221 @@ _deny_shell() {
     local msg="SHELL-STRING BLOCK: '$1' runs a command string this hook cannot screen. Write the commands to a"
     msg+=" script in \$CLAUDE_TEMP_DIR with the Write tool and run it with 'bash <file>' instead."
     hook_deny "$msg"
+}
+
+# _plain_word <s>: 0 if <s> is one plain word (a program or path) with no whitespace or shell syntax.
+_plain_word() {
+    [[ -n "$1" && "$1" != *[!A-Za-z0-9_./~+@%,:=-]* ]]
+}
+
+# _git_cmd_value <form> <value>: deny a value run as a shell command (by git, ssh or a pager reader) unless it is empty
+# (which turns the command off) or one plain word, which names a program or script as the shell-string remedy does;
+# deny that word too when it names an environment dump (env, printenv, export, set, declare), which needs no argument,
+# or a shell or interpreter (a versioned name too: python3.12), which runs the script its stdin holds.
+_git_cmd_value() {
+    local b c
+    if [[ -z "$2" ]]; then
+        return 0
+    fi
+    if ! _plain_word "$2"; then
+        _deny_shell "$1"
+    fi
+    b="${2##*/}"
+    if (( ${#b} <= 16 )) && [[ "$b" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+        ascii_lower "$b"
+        b="$ASCII_LOWER"
+    fi
+    if [[ "$b" == [a-z]*[0-9.] && "$b" =~ $VER_NAME_RE ]]; then
+        b="${BASH_REMATCH[1]}"
+    fi
+    case "$b" in
+        fish|tcsh|csh|tclsh|expect|pwsh|powershell|busybox) _deny_shell "$1 $2" ;;
+    esac
+    if [[ "$b" != *[!a-z0-9]* ]]; then
+        c="_nm_$b"
+        c="${!c:-}"
+        if [[ "$c" == [HK] ]]; then
+            _deny_shell "$1 $2"
+        fi
+        if [[ "$c" != D ]]; then
+            c="_cp_$b"
+            c="${!c:-}"
+        fi
+        if [[ "$c" == [DEes] ]]; then
+            _deny_env "$1 $2"
+        fi
+    fi
+}
+
+# _cmd_var_word <word>: a variable git, ssh or a pager reader runs as a shell command passes only as one plain word.
+# A GIT_ one is screened wherever it is set, as only git reads it; PAGER, EDITOR, VISUAL and SSH_ASKPASS, common as
+# data, only where they are assigned: before the command word, after env (anywhere in the stage, as an unknown wrapper
+# may run it: gev), export or declare, or in a wrapper's words (sudo takes assignments). A GIT_CONFIG_KEY_n alias or
+# help.autocorrect is denied, as the hook cannot pair the key with its value. git's ext remote helper runs its address
+# as a command: it is denied in any word of a git stage (an address, a setting holding one, a url.<base>.insteadOf key
+# naming one) and in a GIT_CONFIG_ setting.
+_cmd_var_word() {
+    local w="$1" v
+    if [[ "$w" == */[Ee][Nn][Vv] ]]; then
+        gev=1
+    fi
+    if [[ "$w" == [A-Z]*=* ]]; then
+        v="${w%%=*}"
+        v="${v%+}"
+        if [[ "$v" == GIT_* ]] || (( ! cs || gev )) || [[ "$act" == *[ED]* || "$sf" == *A* ]]; then
+            case "$v" in
+                GIT_PAGER|PAGER|GIT_EDITOR|EDITOR|VISUAL|GIT_SEQUENCE_EDITOR|GIT_SSH_COMMAND|GIT_SSH|GIT_ASKPASS|\
+                SSH_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GIT_CONFIG_VALUE_[0-9]*)
+                    _git_cmd_value "$v" "${w#*=}" ;;
+                GIT_CONFIG_KEY_[0-9]*)
+                    if [[ "${w#*=}" == [Aa][Ll][Ii][Aa][Ss].* ]]; then
+                        _deny_shell "$v alias"
+                    fi
+                    _git_cfg_key "$v" "${w#*=}" "${w#*=}" ;;
+                GIT_CONFIG_PARAMETERS)
+                    _deny_shell GIT_CONFIG_PARAMETERS ;;
+            esac
+        fi
+    fi
+    if { (( sgp )) || [[ "$act" == *[GI]* || "$w" == GIT_CONFIG_* ]]; } && [[ "$w" == *[Ee][Xx][Tt]::* ]]; then
+        _deny_shell "git ext:: address"
+    fi
+}
+
+# _git_cfg_key <form> <key> <setting>: deny a help.autocorrect setting (key, or key=value) that runs a mistyped
+# subcommand as the one git guesses, whose options no walk reads; with no value, -c sets the key true.
+_git_cfg_key() {
+    local k="$2" v=true
+    if [[ "$3" == *=* ]]; then
+        v="${3#*=}"
+    fi
+    if [[ "$k" != [Hh][Ee][Ll][Pp].[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt] ]]; then
+        return 0
+    fi
+    case "$v" in
+        ''|0|[Nn][Ee][Vv][Ee][Rr]|[Ss][Hh][Oo][Ww]|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+        *) _deny_shell "$1 $k" ;;
+    esac
+}
+
+# _git_cmd_start <subcommand>: start the I walk (_git_cmd_word) when the git subcommand, folded to lower case as a
+# case-insensitive file system runs it, has options that run a shell command.
+_git_cmd_start() {
+    gis="$1"
+    if (( ${#gis} <= 64 )) && [[ "$gis" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+        ascii_lower "$gis"
+        gis="$ASCII_LOWER"
+    fi
+    case "$gis" in
+        rebase|difftool|filter-branch|bisect|submodule|fetch|pull|ls-remote|fetch-pack|clone|push|send-pack|\
+        archive|grep|send-email)
+            if [[ "$act" != *I* ]]; then act+=I; fi
+            giv=""
+            gie=0
+            gib=0 ;;
+    esac
+}
+
+# _git_cmd_word <word>: the I walk, over the words after a git subcommand with options that run a shell command (gis).
+# giv holds the form whose value is the next word (- for a value that runs nothing), gie marks a --, and gib marks
+# bisect's run or submodule's foreach read: the next operand starts the command they run (sf A), which foreach first
+# hands the shell as a string. Long options match by any prefix, as git and Getopt::Long take an abbreviation; a short
+# bundle stops at the first letter that takes a value.
+_git_cmd_word() {
+    local w="$1" lo c rest cl="" clo="" cx="" sc="" so="" sv="" sg=""
+    if [[ -n "$giv" ]]; then
+        if [[ "$giv" != - ]]; then
+            _git_cmd_value "$giv" "$w"
+        fi
+        giv=""
+        return 0
+    fi
+    case "$gis" in
+        bisect|submodule)
+            if (( gib )); then
+                if [[ "$gis" == submodule ]]; then
+                    if [[ "$w" == -* ]]; then
+                        return 0
+                    fi
+                    _git_cmd_value "git submodule foreach" "$w"
+                fi
+                if [[ "$sf" != *A* ]]; then sf+=A; fi
+                act="${act//I/}"
+            elif [[ "$gis$w" == bisectrun || "$gis$w" == submoduleforeach ]]; then
+                gib=1
+            elif [[ "$gis" == bisect || "$w" != -* ]]; then
+                act="${act//I/}"
+            fi
+            return 0 ;;
+    esac
+    if (( gie )) || [[ "$w" != -?* ]]; then
+        return 0
+    fi
+    if [[ "$w" == -- ]]; then
+        gie=1
+        return 0
+    fi
+    case "$gis" in
+        rebase) cl="exec"; sc=x; sv=sX; sg=SrC ;;
+        difftool) cl=extcmd; sc=x ;;
+        filter-branch)
+            cl="setup env-filter tree-filter index-filter parent-filter msg-filter commit-filter tag-name-filter" ;;
+        fetch|pull) cl=upload-pack ;;
+        ls-remote|fetch-pack) cl="upload-pack exec" ;;
+        clone) cl="upload-pack config"; sc=uc ;;
+        push|send-pack) cl="receive-pack exec" ;;
+        archive) cl="exec" ;;
+        grep) clo=open-files-in-pager; so=O; sv=efABCm ;;
+        send-email) cl="sendmail-cmd to-cmd cc-cmd header-cmd"; cx=" to cc " ;;
+    esac
+    if [[ "$w" == --* ]]; then
+        lo="${w#--}"
+        lo="${lo%%=*}"
+        if (( ${#lo} <= 64 )) && [[ "$lo" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+            ascii_lower "$lo"
+            lo="$ASCII_LOWER"
+        fi
+        if [[ "$cx" == *" $lo "* ]]; then
+            return 0
+        fi
+        for c in $cl $clo; do
+            if [[ "$c" == "$lo"* ]]; then
+                if [[ "$w" == *=* ]]; then
+                    _git_cmd_value "git $gis --$c" "${w#*=}"
+                elif [[ "$c" != "$clo" ]]; then
+                    giv="git $gis --$c"
+                fi
+                return 0
+            fi
+        done
+        return 0
+    fi
+    rest="${w#-}"
+    while [[ -n "$rest" ]]; do
+        c="${rest:0:1}"
+        rest="${rest:1}"
+        if [[ "$sc" == *"$c"* ]]; then
+            if [[ -n "$rest" ]]; then
+                _git_cmd_value "git $gis -$c" "$rest"
+            else
+                giv="git $gis -$c"
+            fi
+            return 0
+        elif [[ "$so" == *"$c"* ]]; then
+            if [[ -n "$rest" ]]; then
+                _git_cmd_value "git $gis -$c" "$rest"
+            fi
+            return 0
+        elif [[ "$sv" == *"$c"* ]]; then
+            if [[ -z "$rest" ]]; then
+                giv=-
+            fi
+            return 0
+        elif [[ "$sg" == *"$c"* ]]; then
+            return 0
+        fi
+    done
+    return 0
 }
 
 # _deny_env <form>: deny a command that prints the environment.
@@ -2789,8 +3007,9 @@ _np_end() {
 # redirection, T tee or xargs, X xargs or parallel, Y a reader after xargs, P a printer, V a secret-named variable,
 # F fed by an input redirection, A every word at command position, s a set at command position, L a registry credential
 # location outside the vault (lga), Q a copier after xargs or parallel); act holds one letter per word walk still
-# running (E env options, G git subcommand, H shell program, K interpreter program, L interpreter inline code, C copier
-# operands, D dump operands, O ps bundle, o ps options, J jq, W awk, U su/script/flock, N watch/parallel, Z a
+# running (E env options, G git subcommand, I its options that run a command (_git_cmd_word), H shell program, K
+# interpreter program, L interpreter inline code, C copier operands, D dump operands, O ps bundle, o ps options, J
+# jq, W awk, U su/script/flock, N watch/parallel, Z a
 # single-word fetch tool's subcommand, x an xargs -a value, f find up to its -exec, r a recursive reader's probe walk, c
 # cd's operands, l a registry login or compose (lgt the command; lgl a login word, lgv a location value due; dcm 1 after
 # compose, 2 after its config and 3 after another subcommand, with the facts of _dc_option and _dc_word), u a runner up
@@ -2822,8 +3041,10 @@ swf_stage=-1
 ghs=0
 ghp=0
 GW_ACTIVE=0
-# sgp marks a stage whose git subcommand has been read: its later words starting with : are git's (_git_ps_word).
+# sgp marks a stage whose git subcommand has been read: its later words starting with : are git's (_git_ps_word); gev
+# marks a stage with an env word, whose later assignment-shaped words may set a variable.
 sgp=0
+gev=0
 GPW=""
 pwrap=0
 # Fetch facts: fd1 counts the stage's stdout redirections and fd1v marks the last one as a vault file; dbg marks a
@@ -2845,9 +3066,10 @@ pw=""
 # collecting its roots in rrgl, and RR_DEEP a recursive reader's operands (a wildcard-only one stands for its
 # directory); pipe_find holds the roots a pipeline's earlier stages list (a find, a names-only reader, a ** or brace
 # glob); ffs marks a find in this stage and fxr a reader in its -exec; gcd is git -C's directory and gwp the word
-# before, gwt marks a --git-dir or --work-tree and gcore a -c core or submodule setting; the _wild_ strings hold the
-# patterns expanded so far and those that matched a secret; wpend holds this stage's ** and brace globs (wgn of them,
-# wgo past 64); ecd marks a stage that changes directory first (env -C).
+# before, gwt marks a --git-dir or --work-tree and gcore a -c core or submodule setting, gal holds the -c aliases
+# (name=value, space-separated) and gis, giv, gie and gib the I walk's facts (_git_cmd_word); the _wild_ strings hold
+# the patterns expanded so far and those that matched a secret; wpend holds this stage's ** and brace globs (wgn of
+# them, wgo past 64); ecd marks a stage that changes directory first (env -C).
 PCWD=""
 RR_LIST=0
 RR_RGCOL=0
@@ -2860,6 +3082,11 @@ gcd=""
 gwp=""
 gwt=0
 gcore=0
+gal=""
+gis=""
+giv=""
+gie=0
+gib=0
 _wild_seen=$'\x1e'
 _wild_hits=$'\x1e'
 _wild_n=0
@@ -3149,6 +3376,7 @@ _stage_end() {
     wdd=0
     GW_ACTIVE=0
     sgp=0
+    gev=0
 }
 
 for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
@@ -3194,6 +3422,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 rgk=0
                 rgt=""
                 sgp=0
+                gev=0
                 continue
             fi
             scan_words=$(( scan_words + 1 ))
@@ -3312,6 +3541,13 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
         hook_deny "$WORDS_MSG"
     fi
+    # One case keeps the common word to a single test: a word holding = or : may set a command variable or name an
+    # ext:: address (_cmd_var_word), and must be tested first (GIT_PAGER=/usr/bin/env is no env word); an env word
+    # marks the stage (gev; _cmd_var_word marks one whose path holds = or :).
+    case "$w" in
+        *[=:]*) _cmd_var_word "$w" ;;
+        [Ee][Nn][Vv]|*/[Ee][Nn][Vv]) gev=1 ;;
+    esac
     wsec=0
     GPW=""
     if (( sgp )) && [[ "$w" == :* ]] && (( ${#w} <= 4096 )); then
@@ -3391,7 +3627,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if [[ "$act" == *r* ]]; then
                     _rr_settle
                 fi
-                act="${act//g/}f"
+                act="${act//[gI]/}f"
                 if [[ "$act" == *E* ]]; then
                     hook_deny "$ENV_NONE_MSG"
                 fi
@@ -3541,20 +3777,31 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 esac
             fi
         fi
+        if [[ "$act" == *I* ]]; then
+            _git_cmd_word "$w"
+        fi
         if [[ "$act" == *G* ]]; then
             # git -C DIR -C SUB runs in DIR/SUB; a --git-dir, --work-tree or -c core or submodule setting changes what
-            # git grep reads.
+            # git grep reads. A -c value passes only as one plain word, as many keys hold a command (an ! alias, a
+            # pager, an ssh command, a filter driver); --config-env takes its value from a variable the hook cannot see.
             case "$gwp" in
                 -C)
                     if [[ -n "$gcd" && "$w" != /* && "$w" != '~'* ]]; then gcd="$gcd/$w"; else gcd="$w"; fi ;;
                 -c)
                     if [[ "$w" == [Cc][Oo][Rr][Ee].* || "$w" == [Ss][Uu][Bb][Mm][Oo][Dd][Uu][Ll][Ee].* ]]; then
                         gcore=1
+                    fi
+                    _git_cmd_value "git -c ${w%%=*}" "${w#*=}"
+                    _git_cfg_key "git -c" "${w%%=*}" "$w"
+                    if [[ "$w" == [Aa][Ll][Ii][Aa][Ss].?*=?* ]]; then
+                        v="${w#*.}"
+                        gal+="${v%%=*}=${w#*=} "
                     fi ;;
                 --git-dir|--work-tree) gwt=1 ;;
             esac
             case "$w" in
                 --git-dir=*|--work-tree=*) gwt=1 ;;
+                --config-env|--config-env=*) _deny_shell "git --config-env" ;;
             esac
             gwp="$w"
             git_walk_word "$w"
@@ -3575,6 +3822,31 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     grep) _rr_start 'git grep' ;;
                     diff) _rr_start 'git diff' ;;
                 esac
+                # A -c alias (gal, case-insensitive as git's config keys are) stands for the subcommand it names,
+                # through a chain of at most 8 aliases; a longer one is denied.
+                gis="$GW_SUB"
+                if [[ -n "$gal" ]]; then
+                    v=" $gal"
+                    if (( ${#v} <= 4096 )) && [[ "$v" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+                        ascii_lower "$v"
+                        v="$ASCII_LOWER"
+                    fi
+                    if (( ${#gis} <= 64 )) && [[ "$gis" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
+                        ascii_lower "$gis"
+                        gis="$ASCII_LOWER"
+                    fi
+                    for (( gah = 0; gah < 8; gah++ )); do
+                        if [[ "$v" != *" $gis="* ]]; then
+                            break
+                        fi
+                        gav="${v##*" $gis="}"
+                        gis="${gav%% *}"
+                    done
+                    if [[ "$v" == *" $gis="* ]]; then
+                        _deny_shell "git -c alias chain"
+                    fi
+                fi
+                _git_cmd_start "$gis"
             fi
         fi
         if [[ "$act" == *H* ]]; then
@@ -4068,6 +4340,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 run_t="$nm" ;;
         esac
     fi
+    if (( atcmd )); then
+        case "$nm" in
+            [Gg][Ii][Tt]-?*) _git_cmd_start "${nm:4}" ;;
+        esac
+    fi
     if [[ -n "$kc" ]]; then
         case "$kc" in
             A)
@@ -4176,6 +4453,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 gwp=""
                 gwt=0
                 gcore=0
+                gal=""
                 git_walk_start ;;
             H)
                 if [[ "$act" != *H* ]]; then act+=H; fi
