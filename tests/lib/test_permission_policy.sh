@@ -249,7 +249,7 @@ test_permission_policy_narrowed_behaviour() {
     # shellcheck disable=SC2088  # a literal ~ command string, matched the way the CLI sees it
     for cmd in 'aws s3 ls' 'aws s3 ls s3://b/' 'aws sts get-caller-identity' 'python3 -m pytest' \
             'dotnet build x.sln' 'cargo build' 'chmod +x ~/.claude/hooks/x.sh' 'mktemp -d /tmp/claude-x/y.XXXXXX' \
-            'jb inspectcode x.sln' 'ruff check .' 'bash ~/.claude/scripts/handover-path.sh' \
+            'jb inspectcode x.sln' 'ruff check .' '~/.claude/scripts/handover-path.sh' \
             '~/.claude/scripts/set-session-topic.sh x'; do
         _pp_hit allow "$cmd" || missing+=" [$cmd]"
     done
@@ -265,13 +265,14 @@ test_permission_policy_redundant_rules() {
     for rule in 'Read(~/.claude/commands/**)' 'Read(~/.claude/skills/**)' 'Read(~/.claude/agents/**)' \
             'Read(~/.claude/plugins/**)' 'Bash(jb:*)' 'Bash(ruff:*)' 'Bash(nbqa:*)' 'Bash(trivy:*)' \
             'Bash(eslint:*)' 'Bash(biome:*)' 'Bash(housekeeper-freshness:*)' \
-            'Bash(~/.claude/scripts/set-session-topic.sh:*)' 'Bash(~/.claude/scripts/handover-path.sh:*)'; do
+            'Bash(~/.claude/scripts/set-session-topic.sh:*)' 'Bash(~/.claude/scripts/handover-path.sh:*)' \
+            'Bash(bash ~/.claude/scripts/handover-path.sh)'; do
         assert_equals true "$(_pp_in '.__remove__.entries["permissions.allow"]' "$rule")" \
             "__remove__ drops the live $rule"
     done
     for rule in 'Bash(jb *)' 'Bash(ruff *)' 'Bash(nbqa *)' 'Bash(trivy *)' 'Bash(eslint *)' 'Bash(biome *)' \
             'Bash(housekeeper-freshness *)' 'Bash(~/.claude/scripts/set-session-topic.sh *)' \
-            'Bash(~/.claude/scripts/handover-path.sh *)' 'Bash(bash ~/.claude/scripts/handover-path.sh)'; do
+            'Bash(~/.claude/scripts/handover-path.sh *)'; do
         assert_equals true "$(_pp_in .permissions.allow "$rule")" "the tmpl allows $rule"
     done
 }

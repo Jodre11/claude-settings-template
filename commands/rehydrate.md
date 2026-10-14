@@ -9,7 +9,7 @@ is a snapshot frozen when it was written; the repo is ground truth now.
 ## 1. Locate and read
 
 ```bash
-bash ~/.claude/scripts/handover-path.sh
+~/.claude/scripts/handover-path.sh
 ```
 
 Read the file at that path. If it does not exist, tell the user there is no

@@ -13,7 +13,7 @@ is lossy and a thin or wrong one is the only real failure mode of this workflow.
 Resolve the path — do not guess it:
 
 ```bash
-bash ~/.claude/scripts/handover-path.sh
+~/.claude/scripts/handover-path.sh
 ```
 
 That prints the absolute path (under `~/.claude/handovers/`, keyed by git repo

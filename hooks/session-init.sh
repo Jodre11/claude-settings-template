@@ -2,7 +2,7 @@
 # session-init.sh — SessionStart hook
 # Reads session_id from stdin JSON, creates the session-scoped temp directory and secret vault,
 # resolves the slug (c-<abbrev>-<4hex>), and emits hookSpecificOutput with
-# sessionTitle + additionalContext.
+# additionalContext, plus sessionTitle unless the session already has a custom title.
 # It also exports CLAUDE_SESSION_ID, CLAUDE_TEMP_DIR and CLAUDE_SECRET_DIR to Bash commands via $CLAUDE_ENV_FILE.
 #
 # Slug source of truth:
@@ -68,7 +68,14 @@ if [[ -z "$slug" ]]; then
     slug=$("$script_dir/scripts/derive-claude-slug.sh" "${suffix_hex:0:4}")
 fi
 
+# sessionTitle acts like /rename, so a custom title (anything but a slug) must survive resume and fork.
+current_title=$(jq -r '.session_title // empty' <<< "$input")
+if [[ -n "$current_title" && ! "$current_title" =~ ^[a-z]-[a-z0-9]+-[0-9a-f]{4}$ ]]; then
+    slug=""
+fi
+
 jq -n \
     --arg ctx "$exports" \
     --arg title "$slug" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx, sessionTitle: $title}}'
+    '{hookSpecificOutput: ({hookEventName: "SessionStart", additionalContext: $ctx}
+        + if $title == "" then {} else {sessionTitle: $title} end)}'

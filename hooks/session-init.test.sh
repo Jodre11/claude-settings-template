@@ -219,7 +219,31 @@ case_repeat_run() {
     assert_sourced "$env_file" "$label"
 }
 
+# A custom title (a /rename) survives resume and fork: the hook emits sessionTitle only when the input's
+# session_title is absent, empty or slug-shaped.
+case_session_title() {
+    local title label has
+    for title in "auth refactor" "c-claude-1a2b" "" "-"; do
+        clean_ids
+        if [[ "$title" == "-" ]]; then
+            label="session_title absent"
+            out=$(jq -n --arg id "$VALID_ID" '{session_id: $id}' | env -u TMUX -u CLAUDE_ENV_FILE "$HOOK" 2>&1)
+        else
+            label="session_title '$title'"
+            out=$(jq -n --arg id "$VALID_ID" --arg t "$title" '{session_id: $id, session_title: $t}' \
+                | env -u TMUX -u CLAUDE_ENV_FILE "$HOOK" 2>&1)
+        fi
+        has=$(jq -r '.hookSpecificOutput | has("sessionTitle")' <<< "$out" 2>/dev/null)
+        if [[ "$title" == "auth refactor" ]]; then
+            if [[ "$has" == false ]]; then ok "$label: sessionTitle omitted"; else bad "$label: out='$out'"; fi
+        else
+            assert_context "$VALID_ID" "$label"
+        fi
+    done
+}
+
 case_valid_id
+case_session_title
 case_no_env_file
 case_malformed_ids
 case_unwritable_env_file
