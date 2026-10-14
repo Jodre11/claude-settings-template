@@ -688,6 +688,180 @@ expect DENY  "a git magic pathspec escaping a secret name denied"   "git log -p 
 expect DENY  "a git magic pathspec escaping a key name denied"      "git log -p -- ':(top)id_r\\sa'"
 expect DENY  "a leading-colon group after find's git -exec denied" \
     "find . -exec git log {} ';' -exec rsync ':(literal)x' dst ';'"
+
+# A git option value, config value or environment variable that git runs as a shell command passes only as one plain
+# word (a program or script path); SS reads a secret no word of it names. HEAD~1, not HEAD: a case-insensitive file
+# system runs HEAD as head, a reader.
+SS='f=.en; cat ${f}v'
+expect DENY  "git rebase -x of a command string denied"                "git rebase -x '$SS' HEAD~1"
+expect DENY  "git rebase --exec of a command string denied"            "git rebase --exec '$SS' HEAD~1"
+expect DENY  "git rebase --exec= of a command string denied"           "git rebase --exec='$SS' HEAD~1"
+expect DENY  "git rebase --exe (an abbreviation) denied"               "git rebase --exe '$SS' HEAD~1"
+expect DENY  "git rebase -x glued to its command string denied"        "git rebase -x'$SS' HEAD~1"
+expect DENY  "git rebase -ix bundling the exec denied"                 "git rebase -ix '$SS' HEAD~1"
+expect DENY  "git rebase -ix glued to its command string denied"       "git rebase -ix'$SS' HEAD~1"
+expect DENY  "git rebase -x after another option denied"               "git rebase -i -x '$SS' HEAD~1"
+expect DENY  "git difftool -x of a command string denied"              "git difftool -x '$SS' HEAD~1"
+expect DENY  "git difftool --extcmd= of a command string denied"       "git difftool --extcmd='$SS' HEAD~1"
+expect DENY  "git difftool -yx bundling the extcmd denied"             "git difftool -yx '$SS' HEAD~1"
+for f in setup env-filter tree-filter index-filter parent-filter msg-filter commit-filter tag-name-filter; do
+    expect DENY "git filter-branch --$f of a command string denied"    "git filter-branch --$f '$SS' HEAD~1..HEAD~0"
+done
+expect DENY  "git filter-branch --tree-filter= denied"                 "git filter-branch --tree-filter='$SS' HEAD~1"
+expect DENY  "an upper-case git filter-branch denied"                  "git FILTER-BRANCH --tree-filter '$SS' HEAD~1"
+expect DENY  "git submodule foreach of a command string denied"        "git submodule foreach '$SS'"
+expect DENY  "git submodule foreach behind its options denied"         "git submodule --quiet foreach --recursive '$SS'"
+expect DENY  "git submodule foreach wrapping a bare env denied"        'git submodule foreach env'
+expect DENY  "git bisect run wrapping a bare env denied"               'git bisect run env'
+expect DENY  "git bisect run wrapping a shell string denied"           "git bisect run sh -c '$SS'"
+expect DENY  "git fetch --upload-pack of a command string denied"      "git fetch --upload-pack='$SS' origin"
+expect DENY  "git pull --upload-pack of a command string denied"       "git pull --upload-pack '$SS' origin"
+expect DENY  "git ls-remote --upload-pack of a command string denied"  "git ls-remote --upload-pack='$SS' origin"
+expect DENY  "git clone -u of a command string denied"                 "git clone -u '$SS' x d"
+expect DENY  "git clone --upload-pack of a command string denied"      "git clone --upload-pack='$SS' x d"
+expect DENY  "git clone -c of a command-string config denied"          "git clone -c core.sshCommand='$SS' x d"
+expect DENY  "git clone --config= of a command-string config denied"   "git clone --config=core.sshCommand='$SS' x d"
+expect DENY  "git push --receive-pack of a command string denied"      "git push --receive-pack='$SS' origin"
+expect DENY  "git push --exec of a command string denied"              "git push --exec '$SS' origin"
+expect DENY  "git archive --exec of a command string denied"          "git archive --remote=x --exec='$SS' HEAD~1"
+expect DENY  "git grep -O of a command string denied"                  "git grep -O'$SS' x"
+expect DENY  "git grep -nO bundling the pager denied"                  "git grep -nO'$SS' x"
+expect DENY  "git grep --open-files-in-pager= of a command denied"     "git grep --open-files-in-pager='$SS' x"
+expect DENY  "git send-email --sendmail-cmd of a command denied"       "git send-email --sendmail-cmd='$SS' p.patch"
+expect DENY  "git send-email --to-cmd of a command denied"             "git send-email --to-cmd '$SS' p.patch"
+expect DENY  "git send-email -sendmail-cmd (one dash) denied"          "git send-email -sendmail-cmd='$SS' p.patch"
+expect DENY  "git send-email +sendmail-cmd (a + prefix) denied"        "git send-email +sendmail-cmd='$SS' p.patch"
+expect DENY  "git send-email +to-cmd (a + prefix) denied"              "git send-email +to-cmd '$SS' p.patch"
+expect DENY  "git -c core.pager of a command string denied"            "git -c core.pager='$SS' log -1"
+expect DENY  "git -c diff.external of a command string denied"         "git -c diff.external='$SS' diff"
+expect DENY  "git -c core.sshCommand of a command string denied"       "git -c core.sshCommand='$SS' fetch"
+expect DENY  "git -c of a shell alias denied"                          "git -c alias.x='!$SS' x"
+expect DENY  "git -c of a one-word shell alias denied"                 "git -c alias.x='!cat' x"
+expect DENY  "git -c of a many-word git alias denied"                  "git -c alias.x='log -p' x"
+expect DENY  "git --config-env denied"                                 'git --config-env core.pager=FOO log -1'
+expect DENY  "git --config-env= denied"                                'git --config-env=core.pager=FOO log -1'
+for n in GIT_PAGER PAGER GIT_EDITOR EDITOR VISUAL GIT_SEQUENCE_EDITOR GIT_SSH_COMMAND GIT_SSH GIT_ASKPASS SSH_ASKPASS \
+        GIT_EXTERNAL_DIFF GIT_PROXY_COMMAND GIT_CONFIG_VALUE_0; do
+    expect DENY "a $n command string denied"                           "$n='$SS' git log -1"
+done
+expect DENY  "a GIT_PAGER+= command string denied"                     "GIT_PAGER+='$SS' git log -1"
+expect DENY  "a git -c alias of rebase carrying -x denied"             "git -c alias.r=rebase r -x '$SS' HEAD~1"
+expect DENY  "an upper-case git -c alias of rebase carrying -x denied" "git -c alias.R=REBASE r -x '$SS' HEAD~1"
+expect ALLOW "a git -c alias of rebase with no exec allowed"           'git -c alias.r=rebase r -i HEAD~1'
+expect DENY  "an exported GIT_PAGER command string denied"             "export GIT_PAGER='$SS'"
+expect DENY  "env setting a GIT_EDITOR command string denied"          "env GIT_EDITOR='$SS' git commit"
+expect DENY  "GIT_CONFIG_PARAMETERS denied"                            "GIT_CONFIG_PARAMETERS=\"'a.b'='x'\" git log -1"
+expect DENY  "git ls-remote --exec of a command string denied"         "git ls-remote --exec='$SS' x"
+expect DENY  "git fetch-pack --upload-pack of a command denied"        "git fetch-pack --upload-pack='$SS' x"
+expect DENY  "git fetch-pack --exec of a command denied"               "git fetch-pack --exec '$SS' x"
+expect DENY  "git send-pack --receive-pack of a command denied"        "git send-pack --receive-pack='$SS' x"
+# The ext remote helper runs its address as a shell command.
+expect DENY  "a git ext:: address denied" \
+    "git -c protocol.ext.allow=always ls-remote 'ext::$SS'"
+expect DENY  "a git clone of an ext:: address denied"                  'git clone ext::x d'
+expect DENY  "a git archive --remote of an ext:: address denied"       'git archive --remote=ext::x HEAD~1'
+expect DENY  "an ext:: address in a -c url key denied" \
+    "git -c protocol.ext.allow=always -c 'url.ext::$SS.insteadOf=zz' ls-remote zz"
+expect DENY  "an ext:: address in a GIT_CONFIG_KEY_n denied" \
+    "GIT_CONFIG_KEY_1='url.ext::$SS.insteadOf' GIT_CONFIG_VALUE_1=zz git ls-remote zz"
+expect ALLOW "an ext:: word outside git allowed"                       "grep 'ext::' f.rb"
+# One plain word is still a command: one that prints the environment is denied wherever git runs it.
+for v in env printenv export set declare /usr/bin/env ENV; do
+    expect DENY "git rebase -x $v denied"                              "git rebase -x $v HEAD~1"
+done
+expect DENY  "git filter-branch --msg-filter env denied"               'git filter-branch --msg-filter env HEAD~1'
+expect DENY  "git difftool -x printenv denied"                         'git difftool -x printenv HEAD~1'
+expect DENY  "a GIT_PAGER of env denied"                               'GIT_PAGER=env git log -1'
+expect DENY  "a GIT_PAGER of env by path denied"                       'GIT_PAGER=/usr/bin/env git log -1'
+expect DENY  "an ext:: address ending in /env denied"                  'git clone ext::x/env d'
+expect DENY  "git -c core.pager=printenv denied"                       'git -c core.pager=printenv log -1'
+expect ALLOW "a GIT_PAGER of cat allowed"                              'GIT_PAGER=cat git log -1'
+# A shell or interpreter with no argument runs the script its stdin holds.
+for v in sh bash python3 node python3.12 bash5 fish tcsh pwsh busybox expect; do
+    expect DENY "git rebase -x $v denied"                              "git rebase -x $v HEAD~1"
+done
+expect DENY  "a GIT_PAGER of bash denied"                              'GIT_PAGER=bash git log -1'
+# A GIT_ variable is screened wherever it is set; another only where it is assigned, env's words included.
+expect DENY  "an env behind an unknown wrapper setting a git variable denied" \
+    "arch -arm64 env GIT_EXTERNAL_DIFF='$SS' git diff HEAD~1"
+expect DENY  "an env behind an unknown wrapper setting EDITOR denied"  "arch -arm64 env EDITOR='$SS' git commit"
+expect DENY  "an env by a path holding : setting PAGER denied"         "arch ./a:b/env PAGER='$SS' man ls"
+expect DENY  "a git variable after an unknown wrapper denied"          "xcrun GIT_SSH_COMMAND='$SS' git fetch"
+expect DENY  "an exported EDITOR command string denied"                "export EDITOR='$SS'"
+expect DENY  "a sudo assignment of an EDITOR command denied"           "sudo EDITOR='$SS' git commit"
+expect DENY  "an ext:: address after git remote add denied"            'git remote add o ext::x'
+expect ALLOW "a two-alias chain to log allowed"                        'git -c alias.a=b -c alias.b=log a -1'
+# An alias resolves through a chain of -c aliases, and GIT_CONFIG_KEY_n sets keys the hook cannot pair with a value.
+expect DENY  "a git -c alias chain to rebase denied" \
+    "git -c alias.a=b -c alias.b=rebase a -x '$SS' HEAD~1"
+ac=""
+for i in 1 2 3 4 5 6 7 8; do ac+="-c alias.a$i=a$(( i + 1 )) "; done
+expect DENY  "a git -c alias chain longer than 8 denied"               "git ${ac}-c alias.a9=log a1"
+expect DENY  "a GIT_CONFIG_KEY_n alias denied" \
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.r GIT_CONFIG_VALUE_0=rebase git r'
+expect DENY  "a GIT_CONFIG_KEY_n help.autocorrect denied"              'GIT_CONFIG_KEY_0=Help.AutoCorrect git x'
+# help.autocorrect runs a mistyped subcommand as the one it guesses, whose options no walk reads.
+expect DENY  "git -c help.autocorrect=immediate denied" \
+    "git -c help.autocorrect=immediate rebse -x '$SS' HEAD~1"
+expect DENY  "git -c help.autocorrect=1 denied"                        'git -c help.autocorrect=1 x'
+expect DENY  "git -c help.autocorrect with no value denied"            'git -c HELP.autocorrect x'
+expect ALLOW "git -c help.autocorrect=never allowed"                   'git -c help.autocorrect=never log -1'
+# A dashed git-<subcommand> runs the subcommand itself.
+expect DENY  "a dashed git-rebase by path denied"                      "/usr/lib/git-core/git-rebase -x '$SS' HEAD~1"
+expect DENY  "a dashed git-rebase denied"                              "git-rebase -x '$SS' HEAD~1"
+expect DENY  "a dashed git-rebase behind doppler run denied"           "doppler run -- git-rebase -x '$SS' HEAD~1"
+expect DENY  "a dashed git-filter-branch denied"                       "git-filter-branch --tree-filter '$SS' HEAD~1"
+expect DENY  "an upper-case dashed git-filter-branch denied"           "GIT-FILTER-BRANCH --tree-filter '$SS' HEAD~1"
+expect ALLOW "a dashed git-rebase -i allowed"                          'git-rebase -i HEAD~1'
+# An empty value turns the command off.
+expect ALLOW "git -c credential.helper= allowed"                       'git -c credential.helper= fetch'
+expect ALLOW "an empty GIT_PAGER allowed"                              'GIT_PAGER= git log -1'
+expect ALLOW "an empty EDITOR allowed"                                 'EDITOR= git commit'
+expect ALLOW "an empty GIT_ASKPASS allowed"                            'GIT_ASKPASS= git fetch'
+# Only an assignment sets a variable: the same text as an argument is data.
+expect ALLOW "a grep for a PAGER= pattern allowed"                     "grep 'PAGER=less -R' f"
+expect ALLOW "an echo of a PAGER= text allowed"                        "echo 'PAGER=less -R'"
+expect ALLOW "a commit message holding EDITOR= allowed"                "git commit -m 'EDITOR=foo bar'"
+expect ALLOW "a make variable named PAGER allowed"                     "make PAGER='less -R'"
+expect DENY  "a sudo assignment of a GIT_PAGER command denied"         "sudo GIT_PAGER='$SS' git log -1"
+expect DENY  "a declare -x of a GIT_PAGER command denied"              "declare -x GIT_PAGER='$SS'"
+got=$(jq -nc --arg c "git rebase -x '$SS' HEAD~1" '{tool_input:{command:$c}}' | "$HOOK" \
+    | jq -r '.hookSpecificOutput.permissionDecisionReason')
+[[ "$got" == "SHELL-STRING BLOCK: 'git rebase -x'"* ]] && ok "the git rebase -x deny is a shell-string block" \
+    || bad "git rebase -x deny drifted: $got"
+expect ALLOW "git rebase -x of one plain word allowed"                 'git rebase -x make HEAD~1'
+expect ALLOW "git rebase --exec= of a script path allowed"             'git rebase --exec=./t.sh HEAD~1'
+expect ALLOW "git rebase -i allowed"                                   'git rebase -i HEAD~1'
+expect ALLOW "a git rebase -X value is no command, allowed"            "git rebase -X '-x y' HEAD~1"
+expect ALLOW "a git rebase -X bundle value is no command, allowed"     "git rebase '-Xx y' HEAD~1"
+expect ALLOW "a git rebase -S key id is no command, allowed"           "git rebase '-Sx y' HEAD~1"
+expect DENY  "an upper-case git rebase --EXEC denied"                  "git rebase --EXEC '$SS' HEAD~1"
+expect ALLOW "git send-email --to (no --to-cmd) allowed"               "git send-email --to 'A B <a@b.c>' p.patch"
+expect ALLOW "git grep --open-files-in-pager takes no next word"       "git grep --open-files-in-pager 'a b' -- src"
+expect ALLOW "git difftool -t of a tool allowed"                       'git difftool -t vimdiff HEAD~1'
+expect ALLOW "git difftool -x of one plain word allowed"               'git difftool -x meld HEAD~1'
+expect ALLOW "git grep -O with no pager allowed"                       'git grep -O -n x'
+expect ALLOW "a git grep -e value is no pager, allowed"                "git grep -e '-Oa b' -- src"
+expect ALLOW "a git grep -e bundle value is no pager, allowed"         "git grep '-eOa b' -- src"
+expect ALLOW "a git grep pathspec after -- is no pager, allowed"       "git grep -n x -- '-Oa b'"
+expect ALLOW "git fetch --upload-pack of a plain path allowed"         'git fetch --upload-pack=git-upload-pack origin'
+expect ALLOW "git clone -c of a plain config value allowed"            'git clone -c core.autocrlf=false x d'
+expect ALLOW "git push --exec of a plain path allowed"                 'git push --exec=git-receive-pack origin'
+expect ALLOW "git send-email --sendmail-cmd of a plain path allowed"   'git send-email --sendmail-cmd=msmtp p.patch'
+expect ALLOW "git bisect run of a script allowed"                      'git bisect run ./t.sh'
+expect ALLOW "git bisect run of a command with arguments allowed"      'git bisect run make test'
+expect ALLOW "git bisect start allowed"                                'git bisect start HEAD~1 HEAD~2'
+expect ALLOW "git submodule foreach of a git command allowed"          'git submodule foreach git status'
+expect ALLOW "git submodule status allowed"                            'git submodule status'
+expect ALLOW "a path named foreach after set-url is no foreach, allowed" "git submodule set-url foreach 'a b'"
+expect ALLOW "git -c of a plain value allowed"                         'git -c color.ui=always log -1'
+expect ALLOW "git -c core.pager of one plain word allowed"             'git -c core.pager=less log -1'
+expect ALLOW "git -c of a one-word git alias allowed"                  'git -c alias.lg=log lg'
+expect ALLOW "a GIT_PAGER of one plain word allowed"                   'GIT_PAGER=less git log -1'
+expect ALLOW "an EDITOR of one plain word allowed"                     'EDITOR=vim git commit'
+expect ALLOW "a -x after a pipe is not git's, allowed"                 "git rebase -i HEAD~1 | grep -x 'a b'"
+expect ALLOW "a -x after a separator is not git's, allowed"            "git rebase HEAD~1 ; grep -x 'a b' f"
+expect ALLOW "a -x after find's ; is not git's, allowed"               "find . -exec git difftool {} ';' -x 'a b'"
 # APFS folds case fully, so a non-ASCII letter whose fold is ASCII (long s, Kelvin sign, sharp s, the ff/fi/st
 # ligatures) opens the ASCII-named file and runs the ASCII-named program. Byte escapes keep the rows locale-free.
 ls_=$'\xc5\xbf'; kv_=$'\xe2\x84\xaa'; ff_=$'\xef\xac\x80'; fi_=$'\xef\xac\x81'; st_=$'\xef\xac\x86'
