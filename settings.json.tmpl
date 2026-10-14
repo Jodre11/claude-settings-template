@@ -11,12 +11,14 @@
     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_METRICS_EXPORTER": "none",
+    "PUP_READ_ONLY": "1",
     "SEARXNG_URL": "__SEARXNG_URL__"
   },
   "permissions": {
     "allow": [
       "Bash(git *)",
       "Bash(gh *)",
+      "Bash(pup *)",
       "Bash(playwright-cli *)",
       "Bash(jb *)",
       "Bash(ruff *)",
@@ -170,9 +172,20 @@
       "Bash(command claude *--settings*)",
       "Bash(command claude *--allowedTools*)",
       "Bash(command claude *--allowed-tools*)",
-      "Bash(command claude *--permission-prompt-tool*)"
+      "Bash(command claude *--permission-prompt-tool*)",
+      "Bash(pup *api *-X*)",
+      "Bash(pup *api *--method*)",
+      "Bash(pup *api *-H*)",
+      "Bash(pup *api *--header*)",
+      "Bash(pup *runbooks run*)",
+      "Bash(pup *extension*)",
+      "Bash(pup *skills install*)",
+      "Bash(pup *acp *)",
+      "Bash(pup *auth logout*)"
     ],
     "deny": [
+      "Bash(pup auth token*)",
+      "Bash(pup * auth token*)",
       "Read(**/secrets/**)",
       "Read(**/.strongbox-keyid)",
       "Read(~/.strongbox_keyring)",
