@@ -3,7 +3,9 @@
 #
 # Sweeps the handovers directory: deletes any handover whose front-matter status
 # is `consumed`, and any file older than HANDOVER_MAX_AGE_DAYS regardless of
-# status (backstop reaper for handovers abandoned without an explicit retire).
+# status (backstop reaper for handovers abandoned without an explicit retire),
+# and any subdirectory with nothing in it newer than that age. A top-level
+# `.keep` file in a subdirectory exempts it from reaping.
 # This keeps the central store self-limiting.
 #
 # It injects nothing: resuming is the user's explicit /rehydrate. An injected
@@ -46,5 +48,17 @@ if [[ -d "$HANDOVER_DIR" ]]; then
             rm -f "$f" 2>/dev/null || true
         fi
     done
+
+    # Directory sweep: reap a direct subdirectory once nothing in it (itself included) is newer than the threshold,
+    # unless it holds a top-level `.keep`. `-type d` never matches a symlink, so a linked target is never reached.
+    # It fails closed: a mis-set HANDOVER_DIR or age, or a find error, deletes nothing.
+    if [[ "$(basename "$HANDOVER_DIR")" == handovers && "$HANDOVER_MAX_AGE_DAYS" =~ ^[0-9]+$ ]]; then
+        while IFS= read -r -d '' d; do
+            [[ -e "$d/.keep" ]] && continue
+            recent=$(find "$d" ! -mtime "+${HANDOVER_MAX_AGE_DAYS}" -print -quit 2>/dev/null) || continue
+            [[ -z "$recent" ]] || continue
+            rm -rf "$d" 2>/dev/null || true
+        done < <(find "$HANDOVER_DIR" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    fi
 fi
 exit 0
