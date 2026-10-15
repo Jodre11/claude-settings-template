@@ -199,6 +199,39 @@ test_permission_policy_neighbours_do_not_prompt() {
     assert_equals "" "$hits" "read-only and routine neighbours hit no ask rule"
 }
 
+# pup's read-only mode blocks its typed write commands but not raw `pup api` writes (checked at 1.27.0), so the
+# ask rules carry that, plus the local side effects read-only mode never covers: runbook shell steps, extensions,
+# skill installs into ~/.claude, the ACP server and logout. Without -X or --method, pup api sends a GET even with
+# -F fields (sent as a query string) or an --input body (checked against a local listener), so those need no ask.
+test_permission_policy_pup() {
+    assert_equals '"1"' "$(jq '.env.PUP_READ_ONLY' "$REPO_ROOT/settings.json.tmpl")" \
+        "every pup run under Claude is read-only"
+    _pp_expect_ask "raw pup api writes prompt, in every method spelling" \
+        'pup api -X POST v2/monitors' 'pup api v2/monitors/1 -X DELETE' 'pup api -XPATCH v2/monitors/1' \
+        'pup api --method PUT v2/x' 'pup api --method=DELETE v2/x' 'pup --org prod api -X POST v2/x'
+    _pp_expect_ask "a raw pup api custom header prompts, as it could override the method" \
+        'pup api v2/x -H X-HTTP-Method-Override:POST' 'pup api --header X-HTTP-Method-Override:DELETE v2/x'
+    _pp_expect_ask "pup's local side effects prompt" \
+        'pup runbooks run deploy --arg A=1' 'pup --org prod runbooks run triage' 'pup extension install x' \
+        'pup extension list' 'pup skills install claude' 'pup skills install' 'pup acp serve' \
+        'pup acp serve --port 9099' 'pup auth logout' 'pup auth logout --org prod'
+    local cmd hits="" missing="" denied=""
+    for cmd in 'pup auth token' 'pup --org prod auth token' 'pup auth token --org prod'; do
+        _pp_hit deny "$cmd" || denied+=" [$cmd]"
+    done
+    assert_equals "" "$denied" "printing a pup bearer token is denied"
+    for cmd in 'pup monitors list' 'pup logs search --query=status:error --from=1h' 'pup api v2/monitors' \
+            'pup api v2/monitors -F tags=env:prod' 'pup api v2/x --input /tmp/claude-x/q.json' \
+            'pup metrics query --query=avg:system.cpu.user{*} --from=1h' \
+            'pup auth status' 'pup runbooks list' 'pup skills list' 'pup monitors get 1'; do
+        _pp_hit ask "$cmd" && hits+=" [$cmd]"
+        _pp_hit deny "$cmd" && hits+=" [deny: $cmd]"
+        _pp_hit allow "$cmd" || missing+=" [$cmd]"
+    done
+    assert_equals "" "$hits" "pup reads and raw GETs hit no ask or deny rule"
+    assert_equals "" "$missing" "pup reads and raw GETs are pre-approved"
+}
+
 # _pp_in <jq-path> <rule>: print true if <rule> is an element of the array at <jq-path> in settings.json.tmpl.
 _pp_in() {
     jq --arg r "$2" "($1 // []) | index(\$r) != null" "$REPO_ROOT/settings.json.tmpl"
