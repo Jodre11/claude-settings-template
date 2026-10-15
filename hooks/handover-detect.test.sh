@@ -72,6 +72,41 @@ else
     bad "a symlinked directory or its target was touched"
 fi
 
+# Fail-closed: a sweep that cannot prove a directory stale must not delete it.
+store2="$tmp/s2/handovers"
+mkdir -p "$store2/recent"
+touch "$store2/recent/new.md"
+(cd "$work" && HANDOVER_DIR="$store2" HANDOVER_MAX_AGE_DAYS=abc "$HOOK" </dev/null >/dev/null 2>&1)
+if [[ -f "$store2/recent/new.md" ]]; then
+    ok "a non-numeric HANDOVER_MAX_AGE_DAYS reaps nothing"
+else
+    bad "a non-numeric HANDOVER_MAX_AGE_DAYS reaped a recent subdirectory"
+fi
+
+store3="$tmp/s3/handovers"
+mkdir -p "$store3/locked/sealed"
+touch "$store3/locked/sealed/new.md"
+touch -t "$old" "$store3/locked/old.md" "$store3/locked/sealed" "$store3/locked"
+chmod 000 "$store3/locked/sealed"
+(cd "$work" && HANDOVER_DIR="$store3" HANDOVER_MAX_AGE_DAYS=30 "$HOOK" </dev/null >/dev/null 2>&1)
+chmod 755 "$store3/locked/sealed"
+if [[ -f "$store3/locked/old.md" ]]; then
+    ok "a subdirectory the sweep cannot fully read is kept"
+else
+    bad "a subdirectory the sweep cannot fully read was reaped"
+fi
+
+# A HANDOVER_DIR override that is not a handovers store must never be swept recursively.
+notstore="$tmp/home"
+mkdir -p "$notstore/project"
+touch -t "$old" "$notstore/project/file.txt" "$notstore/project"
+(cd "$work" && HANDOVER_DIR="$notstore" HANDOVER_MAX_AGE_DAYS=30 "$HOOK" </dev/null >/dev/null 2>&1)
+if [[ -f "$notstore/project/file.txt" ]]; then
+    ok "a HANDOVER_DIR not named handovers gets no directory sweep"
+else
+    bad "a HANDOVER_DIR not named handovers had its subdirectories reaped"
+fi
+
 if jq -e '.hooks.SessionStart[] | .hooks[] | select(.command == "~/.claude/hooks/handover-detect.sh")' \
         "$DIR/../settings.json.tmpl" >/dev/null 2>&1; then
     ok "settings.json.tmpl still registers handover-detect.sh on SessionStart"
