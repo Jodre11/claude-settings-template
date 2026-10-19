@@ -1141,7 +1141,7 @@ substr($0, 1, 1) == "\003" { if (substr($0, 2) != "0") failed = 1; next }
     t = p
     if (t ~ /[\200-\377]/) for (j = 1; j < nf; j += 2) gsub(F[j], F[j + 1], t)
     t = tolower("/" t)
-    if (t ~ sre && t !~ are) {
+    if (t ~ sre && t !~ are && (t !~ nre || t ~ lre || t ~ /\/[.][.](\/|$)/)) {
         print "H" idx "\t" p
         if (++hits >= maxh) exit
     }
@@ -1210,7 +1210,8 @@ _dhs_keep() {
 _dhs_run() {
     set +o pipefail
     "$1" 2>/dev/null </dev/null | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh="$PROBE_MAX_HITS" \
-        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v nre="$SECRET_NARROW_AWK_RE" \
+        -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
 }
 
 # dir_holds_secret [<lister>]: list every probe root with <lister> (default _dhs_list) in one bounded pipeline. Returns
@@ -1277,7 +1278,8 @@ dir_holds_secret() {
 _wh_run() {
     set +o pipefail
     { compgen -G "$1" 2>/dev/null; printf '\004\n'; } | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh=1 -v fin=1 \
-        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v nre="$SECRET_NARROW_AWK_RE" \
+        -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
 }
 
 # wild_holds_secret <pattern>: expand <pattern> (an absolute path glob whose directory part glob_quote escaped) and test

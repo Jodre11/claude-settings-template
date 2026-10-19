@@ -564,7 +564,7 @@ _git_ps_word() {
     elif [[ "$1" == ':('* && -n "$p" ]]; then
         GPW=0
         # shellcheck disable=SC2053  # the alternations are intentional patterns
-        if [[ "/$p" == $_SECRET_PATH_ANY && "/$p" != $_SECRET_ALLOW_ANY ]] \
+        if { [[ "/$p" == $_SECRET_PATH_ANY ]] && path_is_secret "$p" bash; } \
                 || { [[ "$p" == *[=:\*\?\[]* || "$p" == -[!-]?* ]] && _secret_variant "$p"; }; then
             GPW=1
         fi
@@ -5256,7 +5256,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 *'<'|*'<>')
                     if [[ "$sf" != *F* ]]; then sf+=F; fi
                     # shellcheck disable=SC2053  # the alternations are intentional patterns
-                    if [[ "/$tgt" == $_SECRET_PATH_ANY && "/$tgt" != $_SECRET_ALLOW_ANY ]] \
+                    if { [[ "/$tgt" == $_SECRET_PATH_ANY ]] && path_is_secret "$tgt" bash; } \
                             || { (( ${#tgt} <= 4096 )) && [[ "$tgt" == *[=:\*\?\[]* || "$tgt" == -[!-]?* ]] \
                                 && _secret_variant "$tgt"; }; then
                         if [[ "$sf" != *S* ]]; then rds="<$tgt"; sf+=S; fi
@@ -5338,8 +5338,8 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     if [[ -n "$GPW" ]]; then
         wsec=$GPW
         wsx=1
-    elif [[ "/$w" == $_SECRET_PATH_ANY && "/$w" != $_SECRET_ALLOW_ANY && "$w" != --exclude=* \
-            && "$w" != --exclude-dir=* ]]; then
+    elif [[ "/$w" == $_SECRET_PATH_ANY && "$w" != --exclude=* && "$w" != --exclude-dir=* ]] \
+            && path_is_secret "$w" bash; then
         wsec=1
     elif (( ${#w} <= 4096 )) && [[ "$w" == *[=:\*\?\[]* || "$w" == -[!-]?* ]] \
             && [[ "$w" == *[=:]* || "$w" == -[!-]?* || "$wlast" == *[!\*\?]* ]] && _secret_variant "$w"; then

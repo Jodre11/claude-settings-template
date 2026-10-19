@@ -736,6 +736,22 @@ fin_awk() { LC_ALL=C awk -v cap=10 -v maxh=1 -v fin=1 -v sre=x -v are=y -v folds
 [[ -z "$(printf '\004\n/a\n' | fin_awk)" ]] && ok "an end marker before more output does not count" \
     || bad "an early end marker: $(printf '\004\n/a\n' | fin_awk)"
 
+# The probe's filter applies the narrow allows as path_is_secret does: not below the vault or a credential directory,
+# and not past a .. segment; a general allow (*.example, *.pub) lifts through a .. segment.
+probe_awk() {
+    printf '%s\n' "$1" | LC_ALL=C awk -v cap=10 -v maxh=1 -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" \
+        -v nre="$SECRET_NARROW_AWK_RE" -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="" "$_DHS_AWK"
+}
+for p in /a/lib/certifi/cacert.pem /a/App/Secrets/Foo.cs /a/other/../.env.example /a/../x/id_rsa.pub; do
+    [[ "$(probe_awk "$p")" == E1 ]] && ok "the probe filter lifts a narrow allow: $p" \
+        || bad "the probe filter: $p gave $(probe_awk "$p")"
+done
+for p in /a/x/secrets/../../h/certifi/cacert.pem /a/App/Secrets/Foo.cs/.. /tmp/claude-a-vault/certifi/cacert.pem \
+        /a/.ssh/certifi/cacert.pem; do
+    [[ "$(probe_awk "$p")" == H* ]] && ok "the probe filter keeps a hit: $p" \
+        || bad "the probe filter missed: $p gave $(probe_awk "$p")"
+done
+
 # wild_holds_secret expands a quoted directory plus a wildcard-only component.
 rc=0
 glob_quote "$pd/w"

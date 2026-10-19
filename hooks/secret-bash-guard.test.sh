@@ -2565,6 +2565,50 @@ expect DENY  "a JSON file in a secrets folder denied"                   'cat sec
 expect_in "$GK" ALLOW "a recursive grep over C# Secrets and a CA bundle allowed" 'grep -rn x .'
 expect_in "$GX" DENY "a recursive grep still meets a secret file in a Secrets folder" 'grep -rn x .'
 expect_in "$GD" DENY "a recursive grep still meets a directory with a secret-shaped name" 'grep -rn x .'
+# The same allows never reach into the vault or a credential directory, where their * would cross a /.
+mkdir -p "$gf/vt/tmp/claude-t-vault/secrets" "$gf/vt/tmp/claude-t-vault/certifi"
+mkdir -p "$gf/hm/.ssh/certifi" "$gf/hm/.aws/certifi"
+: >"$gf/vt/tmp/claude-t-vault/secrets/x.cs"
+: >"$gf/vt/tmp/claude-t-vault/certifi/cacert.pem"
+: >"$gf/hm/.ssh/certifi/cacert.pem"
+: >"$gf/hm/.aws/certifi/cacert.pem"
+expect DENY  "a vault C# file denied"                                   'cat /tmp/claude-abc-vault/secrets/x.cs'
+expect DENY  "a vault CA bundle denied"                                 'cat /tmp/claude-abc-vault/certifi/cacert.pem'
+expect DENY  "a vault C# file denied through a redirect"                'cat < /tmp/claude-abc-vault/secrets/x.cs'
+expect DENY  "an ssh-directory CA bundle denied"                        'cat ~/.ssh/certifi/cacert.pem'
+expect DENY  "a C# file in the ssh directory denied"                    'cat ~/.ssh/secrets/x.cs'
+expect DENY  "an aws-directory CA bundle denied"                        'cat ~/.aws/certifi/cacert.pem'
+expect_in "$gf/vt/tmp/claude-t-vault" DENY "a recursive grep of a vault holding a C# file denied" 'grep -rn x .'
+expect DENY  "a recursive grep of a vault path holding a C# file denied" "grep -rn x $gf/vt/tmp/claude-t-vault"
+expect_in "$gf/hm/.ssh" DENY "a recursive grep of an ssh directory holding a CA bundle denied" 'grep -rn x .'
+expect_in "$gf/hm/.aws" DENY "a recursive grep of an aws directory holding a CA bundle denied" 'grep -rn x .'
+expect DENY  "a .. segment voids the C# allow into the vault" \
+    'cat src/Secrets/../../tmp/claude-abc-vault/x.cs'
+expect DENY  "a .. segment voids the C# allow beside the vault"         'cat /tmp/claude-abc-vault/../secrets/x.cs'
+expect DENY  "a .. segment voids the CA-bundle allow"                  'cat x/secrets/../../h/certifi/cacert.pem'
+expect DENY  "a .. segment voids the CA-bundle allow into ssh"          'cat x/secrets/../../.ssh/certifi/cacert.pem'
+expect DENY  "a .. segment voids the allow on a redirect target"       'cat < x/secrets/../../h/certifi/cacert.pem'
+expect DENY  "a .. segment voids the allow on a redirect into ssh"     'cat < x/secrets/../../.ssh/certifi/cacert.pem'
+expect DENY  "a trailing .. voids the C# allow"                        'cat src/Secrets/Foo.cs/..'
+expect DENY  "a .. segment voids the allow in a git literal pathspec" \
+    "git log -p -- ':(literal)x/secrets/../../h/certifi/cacert.pem'"
+expect ALLOW "a C# Secrets file without .. stays allowed"               'cat src/App/Secrets/Foo.cs'
+expect DENY  "a .. segment voids the C# allow for a sibling path"       'cat ../work/src/App/Secrets/Foo.cs'
+# A .. segment voids the narrow allows only: the general allows (*.example, *.pub) keep lifting through it.
+expect ALLOW "a .env.example one level up stays allowed"                'cat ../.env.example'
+expect ALLOW "a .env.example past a .. segment stays allowed"           'cat other/../.env.example'
+expect ALLOW "a public key one level up stays allowed"                  'cat ../x/id_rsa.pub'
+expect ALLOW "a .env.example one level up stays allowed as a redirect"  'cat < ../.env.example'
+expect ALLOW "a .env.example in a git literal pathspec stays allowed"   "git log -p -- ':(literal)../.env.example'"
+# A vault below a relative or variable directory (cwd /tmp, $TMPDIR) is a vault too.
+expect_in /tmp DENY "a relative vault C# file denied"                   'cat claude-abc-vault/secrets/x.cs'
+expect_in /tmp DENY "a relative vault CA bundle denied"                 'cat claude-abc-vault/certifi/cacert.pem'
+expect DENY  "a vault C# file below \$TMPDIR denied"                    'cat $TMPDIR/claude-x-vault/secrets/x.cs'
+mkdir -p "$gf/dd/x/secrets" "$gf/dd/h/certifi"
+: >"$gf/dd/h/certifi/cacert.pem"
+expect DENY  "a .. segment voids the allow for a glob the probe expands" "cat $gf/dd/x/secrets/../../h/certifi/cac*"
+expect_in "$gf/hm" DENY "a recursive grep above an ssh directory holding a CA bundle denied" 'grep -rn x .'
+expect_in "$gf/vt" DENY "a recursive grep above a vault holding a C# file denied" 'grep -rn x .'
 
 # Quoted words: a glob or $ inside quotes, or escaped, is text, unless the command hands its words to a shell again,
 # an awk or sed program can run one, or (for $) the stage's output feeds a later stage.

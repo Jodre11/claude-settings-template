@@ -244,7 +244,9 @@ _SECRET_GLOB_TESTS=0
 # path_is_secret joins each glob list into one @(…|…) pattern, so no glob may hold |, ( or ): one would split or close
 # the alternation and change what it matches.
 odd=""
-for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
+all_globs=("${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}" "${SECRET_PATH_ALLOW_NARROW[@]}"
+    "${SECRET_PATH_NOLIFT[@]}")
+for g in "${all_globs[@]}"; do
     [[ "$g" == *[\|\(\)]* ]] && odd+=" $g"
 done
 [[ -z "$odd" ]] && ok "no secret path glob holds |, ( or )" || bad "secret path globs that break the alternation:$odd"
@@ -291,27 +293,76 @@ for p in a/.ssh/known_hosts/../id_rsa a/.ssh/known_hosts.x/../deploy_key a/b.pub
         || bad "traversal past an allow glob missed: $p"
 done
 
-# The directory probe matches in awk: SECRET_PATH_AWK_RE and SECRET_ALLOW_AWK_RE, applied to "/<path>" lower-cased,
-# decide exactly as path_is_secret does.
+# A narrow allow (a C# Secrets folder, a certifi or botocore CA bundle) lifts a match from an anywhere-name glob only:
+# its * crosses /, so it must never reach into the vault or a credential directory.
+for p in /tmp/claude-abc-vault/secrets/x.cs /tmp/claude-abc-vault/certifi/cacert.pem \
+        /tmp/claude-abc-vault/botocore/cacert.pem /private/tmp/claude-abc-vault/secrets/x.cs \
+        '$CLAUDE_SECRET_DIR/x.cs' '${CLAUDE_SECRET_DIR}/certifi/cacert.pem' \
+        a/.ssh/certifi/cacert.pem a/.ssh/secrets/x.cs a/.ssh/botocore/cacert.pem a/.aws/certifi/cacert.pem \
+        a/.aws/secrets/x.cs a/.gnupg/certifi/cacert.pem a/.config/gh/certifi/cacert.pem a/.docker/certifi/cacert.pem \
+        a/.kube/certifi/cacert.pem a/.config/containers/certifi/cacert.pem A/.SSH/Certifi/CACERT.PEM; do
+    path_is_secret "$p" && ok "narrow allow never lifts a vault or credential directory: $p" \
+        || bad "narrow allow lifted a vault or credential directory: $p"
+done
+for p in src/App/Secrets/Foo.cs a/secrets/x.cs venv/lib/python3/site-packages/certifi/cacert.pem \
+        venv/lib/python3/site-packages/botocore/cacert.pem /home/u/.config/x/Secrets/Foo.cs; do
+    if path_is_secret "$p"; then bad "narrow allow no longer lifts an ordinary path: $p"; else
+        ok "narrow allow still lifts an ordinary path: $p"; fi
+done
+# The general allows are unchanged: the ssh client's public files and placeholders stay readable.
+for p in a/.ssh/id_ed25519.pub a/.ssh/known_hosts a/.ssh/config; do
+    if path_is_secret "$p"; then bad "general allow lost under a credential directory: $p"; else
+        ok "general allow still lifts: $p"; fi
+done
+# A .. segment voids the narrow allows too: it can climb out of an allowed name into a secret one.
+for p in x/secrets/../../h/certifi/cacert.pem src/Secrets/../../tmp/claude-abc-vault/x.cs a/Secrets/Foo.cs/..; do
+    path_is_secret "$p" && ok "a .. segment voids the narrow allow: $p" || bad "a .. segment kept the narrow allow: $p"
+done
+# The bash guard's operands (the second argument) keep the general allows through a .. segment, and void the narrow
+# ones; the Read guard's rule (no second argument) voids both.
+for p in ../.env.example other/../.env.example ../x/id_rsa.pub; do
+    if path_is_secret "$p" bash; then bad "a general allow was voided by .. for a bash operand: $p"; else
+        ok "a general allow lifts through .. for a bash operand: $p"; fi
+    path_is_secret "$p" && ok "a .. segment voids the general allow for a Read: $p" \
+        || bad "a .. segment kept the general allow for a Read: $p"
+done
+for p in ../work/src/App/Secrets/Foo.cs x/secrets/../../h/certifi/cacert.pem; do
+    path_is_secret "$p" bash && ok "a .. segment voids the narrow allow for a bash operand: $p" \
+        || bad "a .. segment kept the narrow allow for a bash operand: $p"
+done
+# A vault below a relative or variable directory is a vault too (cwd /tmp, or $TMPDIR).
+for p in claude-abc-vault/secrets/x.cs claude-abc-vault/certifi/cacert.pem '$TMPDIR/claude-x-vault/secrets/x.cs' \
+        '$TMPDIR/claude-x-vault/certifi/cacert.pem'; do
+    path_is_secret "$p" && ok "narrow allow never lifts a relative vault path: $p" \
+        || bad "narrow allow lifted a relative vault path: $p"
+done
+
+# The directory probe matches in awk: SECRET_PATH_AWK_RE, SECRET_ALLOW_AWK_RE, SECRET_NARROW_AWK_RE and
+# SECRET_NOLIFT_AWK_RE, applied to "/<path>" lower-cased, decide exactly as path_is_secret does.
 odd=""
-for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
+for g in "${all_globs[@]}"; do
     [[ "$g" == *[\+\^\\]* ]] && odd+=" $g"
 done
 [[ -z "$odd" ]] && ok "no path glob holds + ^ or \\" || bad "path globs the awk forms cannot carry:$odd"
 drift=""
-for g in "${SECRET_PATH_GLOBS[@]}" "${SECRET_PATH_ALLOW[@]}"; do
+awk_secret='BEGIN { t = tolower(p); exit !(t ~ s && t !~ a && (t !~ n || t ~ l || t ~ /\/[.][.](\/|$)/)) }'
+for g in "${all_globs[@]}"; do
     p="${g//\*/x}"
     for q in "$p" "${p^^}" "a/$p" "/abs/$p"; do
-        path_is_secret "$q" && want=0 || want=1
-        LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" \
-            'BEGIN { t = tolower(p); exit !(t ~ s && t !~ a) }' && got=0 || got=1
+        path_is_secret "$q" bash && want=0 || want=1
+        LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" -v n="$SECRET_NARROW_AWK_RE" \
+            -v l="$SECRET_NOLIFT_AWK_RE" "$awk_secret" && got=0 || got=1
         [[ "$got" == "$want" ]] || drift+=" '$q'"
     done
 done
-for q in README.md src/a.py .env.example x/.env.local '' / . .. a/proc/1/environ /tmp/claude-a-vault/secrets/g; do
-    path_is_secret "$q" && want=0 || want=1
-    LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" \
-        'BEGIN { t = tolower(p); exit !(t ~ s && t !~ a) }' && got=0 || got=1
+for q in README.md src/a.py .env.example x/.env.local '' / . .. a/proc/1/environ /tmp/claude-a-vault/secrets/g \
+        a/Secrets/Foo.cs a/secrets/x.cs a/.ssh/certifi/cacert.pem /tmp/claude-a-vault/secrets/x.cs \
+        /tmp/claude-a-vault/certifi/cacert.pem a/.aws/certifi/cacert.pem a/.ssh/secrets/x.cs x/botocore/cacert.pem \
+        x/secrets/../../h/certifi/cacert.pem a/Secrets/Foo.cs/.. a/.ssh/known_hosts/../x ../.env.example \
+        other/../.env.example ../x/id_rsa.pub ../work/src/App/Secrets/Foo.cs claude-abc-vault/secrets/x.cs; do
+    path_is_secret "$q" bash && want=0 || want=1
+    LC_ALL=C awk -v p="/$q" -v s="$SECRET_PATH_AWK_RE" -v a="$SECRET_ALLOW_AWK_RE" -v n="$SECRET_NARROW_AWK_RE" \
+        -v l="$SECRET_NOLIFT_AWK_RE" "$awk_secret" && got=0 || got=1
     [[ "$got" == "$want" ]] || drift+=" '$q'"
 done
 [[ -z "$drift" ]] && ok "the awk glob forms agree with path_is_secret" || bad "the awk glob forms drift on:$drift"
