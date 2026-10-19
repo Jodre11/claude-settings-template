@@ -590,9 +590,77 @@ t_text_heredoc_token_bound() {
     done
 }
 
+# run_guard_in <cwd> <cmd>: run_guard with the payload's cwd set; HOOK_BASH, when set, runs the hook.
+run_guard_in() {
+    local out
+    out=$(jq -nc --arg c "$2" --arg d "$1" '{tool_input:{command:$c}, cwd:$d}' | ${HOOK_BASH:+"$HOOK_BASH"} "$HOOK")
+    if [[ "$out" == *'"permissionDecision":"deny"'* ]]; then echo DENY; else echo ALLOW; fi
+}
+
+# expect_verdict_in <cwd> <ALLOW|DENY> <description> <command>
+expect_verdict_in() {
+    local got
+    got=$(run_guard_in "$1" "$4")
+    if [ "$got" = "$2" ]; then ok "$3"; else bad "$3 (want $2 got $got)"; fi
+}
+
+# A text heredoc that writes a generated file (a hydrated output or a Claude Code settings.json) is denied; a one-line
+# redirect to one stays the documented gap.
+t_heredoc_generated() {
+    local hd h body=$'\nx\nEOF' got b
+    hd=$(mktemp -d)
+    hd=$(cd "$hd" && pwd -P)
+    h="$hd/home"
+    : > "$hd/out"; : > "$hd/out.tmpl"; : > "$hd/notes.md"
+    mkdir -p "$hd/sub" "$hd/home/.claude"
+    : > "$hd/home/.claude/settings.json"
+    ln -s out "$hd/lnk"
+    HOME=$h expect_verdict_in "$hd" DENY  "a cat > heredoc to a hydrated output denied"  "cat > out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a cat >> heredoc to a hydrated output denied" "cat >> out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a tee heredoc to a hydrated output denied"    "tee out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a tee -a heredoc to a hydrated output denied" "tee -a out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a heredoc through a symlink to an output denied" \
+        "cat > lnk <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a heredoc to an output through .. denied" \
+        "cat > sub/../out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a heredoc to ~/.claude/settings.json denied" \
+        "cat > ~/.claude/settings.json <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to a plain file allowed" "cat > notes.md <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to the .tmpl itself allowed" "cat > out.tmpl <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to the session temp dir allowed" \
+        "cat > \"\$CLAUDE_TEMP_DIR\"/x <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" ALLOW "the documented gap: a one-line redirect to an output" 'echo x > out'
+    HOME=$h expect_verdict_in "$hd" ALLOW "the documented gap: a one-line append to a hook file" \
+        'printf x >> ~/.claude/hooks/x.sh'
+    got=$(jq -nc --arg c "cat > out <<'EOF'$body" --arg d "$hd" '{tool_input:{command:$c}, cwd:$d}' \
+        | HOME=$h "$HOOK" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+    if [[ "$got" == *out.tmpl* && "$got" == *hydrate.sh* ]]; then
+        ok "the hydrated-output deny names the .tmpl and hydrate.sh"
+    else
+        bad "the hydrated-output deny lacks the .tmpl or hydrate.sh: ${got:-none}"
+    fi
+    got=$(jq -nc --arg c "cat > ~/.claude/settings.json <<'EOF'$body" --arg d "$hd" \
+            '{tool_input:{command:$c}, cwd:$d}' \
+        | HOME=$h "$HOOK" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+    if [[ "$got" == *"Edit or Write"* ]]; then
+        ok "the settings.json deny names Edit or Write"
+    else
+        bad "the settings.json deny lacks Edit or Write: ${got:-none}"
+    fi
+    for b in "$BASH" /bin/bash; do
+        [[ -x "$b" ]] || continue
+        HOOK_BASH="$b" HOME=$h expect_verdict_in "$hd" DENY  "a heredoc to an output denied under $b" \
+            "cat > out <<'EOF'$body"
+        HOOK_BASH="$b" HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to a plain file allowed under $b" \
+            "cat > notes.md <<'EOF'$body"
+    done
+    rm -rf "$hd"
+}
+
 t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13; t14; t15
 t_heredoc; t_scanner; t_paren_messages; t_backstop; t_scan_fails_closed; t_scan_size_bound; t_heredoc_size_bound
 t_text_heredoc_token_bound
+t_heredoc_generated
 t_false_alarms
 t_messages
 echo "-----"

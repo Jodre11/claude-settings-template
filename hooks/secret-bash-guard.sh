@@ -409,7 +409,7 @@ scan_words=0
 # aws-vault is one), E env, e export, s set, v eval, Z a single-word fetch tool, f find (-exec starts a wrapper),
 # c cd, pushd, popd and zsh's chdir, k kubectl and oc, d gpg and age, h source and the .
 # builtin (a shell reading a script), b { or repeat (a zsh group or loop: denied), M ssh (a wrapper whose later words a
-# remote shell parses again).
+# remote shell parses again), q curl and wget (the files they send: _cu_word).
 # Every name also goes into plain_names, so shell_words never marks it plain, as do the words the fetch shapes read in
 # the first stage and, in a command with a pipe, ls and fd, which may print names for xargs (_np_start).
 word_classes=(
@@ -450,6 +450,7 @@ word_classes=(
     'cp d gpg age'
     'cp h source'
     'cp M ssh slogin'
+    'cp q curl wget'
 )
 VER_NAME_RE='^([a-z]+)[0-9][0-9.]*$'
 plain_names='! . { -- --debug --v --log-http --verbosity debug docker-compose podman-compose aws-vault doppler heroku'
@@ -962,7 +963,8 @@ _rr_hold() {
 }
 
 # _rr_dir <form> <kind> <abs> [<include> <exclude> <exclude-dir>]: probe the directory <abs>, denying it when it is at
-# or above $HOME or the vault; in a names-only walk, queue it for the reader after xargs.
+# or above $HOME or the vault (a one-level listing excepted: what it names is no deeper); in a names-only walk, queue it
+# for the reader after xargs.
 _rr_dir() {
     if (( RR_LIST )); then
         if [[ "$2" == findL ]]; then
@@ -972,7 +974,7 @@ _rr_dir() {
         fi
         return 0
     fi
-    if probe_root_too_wide "$3"; then
+    if [[ "$2" != one ]] && probe_root_too_wide "$3"; then
         _deny_wide "$1" "$3"
     fi
     # An rg root waits for _rr_rg_roots to learn whether .gitignore ignores it.
@@ -2309,20 +2311,32 @@ _find_collect() {
     done
 }
 
-# _find_roots <entries> <reader> <how>: probe each root in <entries>, entries of <tag><follow>\x1f<lister>\x1f<root>,
-# optionally followed by \x1f and the root's include globs, each ending in \x1e. The tag is r (a root), c (a word that
-# may be a root), a (hold an ask; the root field is the reason) or ! (too many roots). <how> names the reader in a
+# _find_roots <entries> <reader> <how> [<kind>]: probe each root in <entries>, entries of <tag><kind>\x1f<lister>\x1f
+# <root>, optionally followed by \x1f and the root's include globs, then by \x1d and its exclude globs (\x1f-separated),
+# each ending in \x1e. The tag is r (a root), c (a word that may be a root), a (hold an ask; the root field is the
+# reason) or ! (too many roots); the kind is 0 find, 1 findL, o one, g git or t tracked. <how> names the reader in a
 # decision: exec (find -exec), own (<reader> itself, reading a directory glob of its stage), or xargs (<lister> | xargs
-# <reader>). <kind> findL follows links in every root: a grep -r after xargs follows a link it is given, and each entry
-# listed under a root may be one.
+# <reader>). <kind> findL makes a find root follow links: a grep -r after xargs follows a link it is given, and each
+# entry listed under a root may be one.
 _find_roots() {
-    local rest="$1" e t k l r form inc
+    local rest="$1" e t k l r form inc exc
     while [[ -n "$rest" ]]; do
         e="${rest%%$'\x1e'*}"
         rest="${rest#*$'\x1e'}"
         t="${e:0:1}"
-        k="find"
-        if [[ "${e:1:1}" == 1 || "${4:-}" == findL ]]; then
+        exc=""
+        if [[ "$e" == *$'\x1d'* ]]; then
+            exc="${e#*$'\x1d'}"
+            e="${e%%$'\x1d'*}"
+        fi
+        case "${e:1:1}" in
+            1) k=findL ;;
+            o) k=one ;;
+            g) k=git ;;
+            t) k=tracked ;;
+            *) k="find" ;;
+        esac
+        if [[ "$k" == find && "${4:-}" == findL ]]; then
             k=findL
         fi
         e="${e:3}"
@@ -2342,7 +2356,7 @@ _find_roots() {
             '!') _hold_probe "$form" "it names more than 64 roots" ;;
             a) _hold_probe "$form" "$r" ;;
             c) _rr_cand "$form" "$k" "$r" "$inc" ;;
-            *) _rr_root "$form" "$k" "$r" "$inc" || : ;;
+            *) _rr_root "$form" "$k" "$r" "$inc" "$exc" || : ;;
         esac
     done
 }
@@ -3156,6 +3170,9 @@ _np_start() {
             npl=0
             npn=0
             npg=""
+            case "$nm" in
+                ls|fd|git) _nq_start ;;
+            esac
             if [[ "$act" != *n* ]]; then act+=n; fi ;;
     esac
 }
@@ -3306,7 +3323,320 @@ _np_end() {
     fi
     if (( ! snp )); then
         pnu=1
+        # Any ls queues what it lists (_nq_end), so its listing is seen by a reader that does not recurse.
+        if [[ "$npk" != ls ]]; then
+            pnn=1
+        fi
     fi
+}
+
+# _nq_start: start the root walk of an ls, fd or git stage, whose output a reader after xargs takes as its operands.
+_nq_start() {
+    nqk="$nm"
+    nqr=""
+    nqn=0
+    nqf=0
+    nqa=0
+    nqdd=0
+    nqv=""
+    nqp=0
+    nqc=0
+    nqL=0
+    nqx=0
+    nqdot=0
+    nqo=0
+}
+
+# _nq_root <word>: record a directory the stage lists (at most 64; nqc marks one holding a separator byte).
+_nq_root() {
+    if [[ "$1" == *$'\x1d'* || "$1" == *$'\x1e'* || "$1" == *$'\x1f'* ]]; then
+        nqc=1
+    elif (( nqn < 64 )); then
+        nqr+="$1"$'\x1e'
+        nqn=$(( nqn + 1 ))
+    else
+        nqn=65
+    fi
+}
+
+# _nq_word <word>: read a later word of an ls, fd or git stage for the directories it lists and how deep (nqf: the
+# whole tree, or every file git ignores) and whether it lists dot entries (nqa, ls only).
+_nq_word() {
+    local w="$1" b p
+    case "$nqk" in
+        ls)
+            # A separate option value (BSD -D, GNU -I -T -w and their long forms) is no operand, but on another ls
+            # the same word may be one: it is queued as a root, and the cwd stays a root too (nqdot).
+            if [[ "$nqv" == cand ]]; then
+                nqv=""
+                nqdot=1
+                _nq_root "$w"
+                return 0
+            fi
+            if (( ! nqdd )) && [[ "$w" == -?* ]]; then
+                case "$w" in
+                    --) nqdd=1 ;;
+                    --width|--hide|--ignore|--block-size|--format|--sort|--time|--time-style|--quoting-style\
+                    |--indicator-style|--tabsize)
+                        nqv=cand ;;
+                    # ls takes an unambiguous prefix of a long option.
+                    --?*)
+                        if [[ --recursive == "$w"* ]]; then nqf=1; fi
+                        if [[ --all == "$w"* || --almost-all == "$w"* ]]; then nqa=1; fi
+                        if [[ --dereference == "$w"* ]]; then nqL=1; fi ;;
+                    *)
+                        if [[ "$w" == *R* ]]; then nqf=1; fi
+                        if [[ "$w" == *[aAf]* ]]; then nqa=1; fi
+                        if [[ "$w" == *L* ]]; then nqL=1; fi
+                        if [[ "$w" == *[DITw] ]]; then nqv=cand; fi ;;
+                esac
+            else
+                nqo=1
+                _nq_root "$w"
+            fi ;;
+        fd)
+            if [[ -n "$nqv" ]]; then
+                if [[ "$nqv" == root ]]; then _nq_root "$w"; fi
+                nqv=""
+                return 0
+            fi
+            if (( ! nqdd )) && [[ "$w" == -?* ]]; then
+                case "$w" in
+                    --) nqdd=1 ;;
+                    --search-path|--base-directory) nqv=root ;;
+                    --search-path=*|--base-directory=*) _nq_root "${w#*=}" ;;
+                    --no-ignore*|--unrestricted) nqf=1 ;;
+                    --follow) nqL=1 ;;
+                    --*=*) ;;
+                    --*) if [[ "$_NP_FD_VAL" == *" $w "* ]]; then nqv=skip; fi ;;
+                    *)
+                        b="${w#-}"
+                        p="${b%%[etEdjScxXoC]*}"
+                        if [[ "$p" == *[Iu]* ]]; then nqf=1; fi
+                        if [[ "$p" == *L* ]]; then nqL=1; fi
+                        if [[ "$p" != "$b" ]]; then
+                            if [[ "${b:${#p}:1}" == C ]]; then
+                                if (( ${#p} + 1 == ${#b} )); then nqv=root; else _nq_root "${b:${#p}+1}"; fi
+                            elif (( ${#p} + 1 == ${#b} )); then
+                                nqv=skip
+                            fi
+                        fi ;;
+                esac
+            else
+                nqp=$(( nqp + 1 ))
+                if (( nqp > 1 )); then _nq_root "$w"; fi
+            fi ;;
+        git)
+            # git -C is read by the G walk (gcd); only the subcommand's own options matter here.
+            if [[ -z "$npg" ]] || (( nqdd )); then
+                return 0
+            fi
+            # git takes an unambiguous prefix of a long option.
+            case "$w" in
+                --) nqdd=1 ;;
+                --no-index) nqx=1 ;;
+                --?*) if [[ --others == "$w"* ]]; then nqf=1; fi ;;
+                -?*) if [[ "$w" == *o* ]]; then nqf=1; fi ;;
+            esac ;;
+    esac
+}
+
+# _nq_end: queue the stage's roots in pipe_find, for a reader after xargs: ls lists one level (the whole tree with -R)
+# and leaves out dot entries unless -a, -A or -f; fd lists the work tree as git does (the whole tree with -I or -u);
+# git ls-files lists what is tracked (the whole tree with -o), and git diff --name-only the work tree from its top.
+_nq_end() {
+    local k l r rest exc="" d
+    case "$nqk" in
+        ls)
+            l="ls"
+            k=o
+            if (( nqf )); then k=0; fi
+            if (( nqf && nqL )); then k=1; fi
+            if (( ! nqa )); then exc=$'\x1d''.*'; fi
+            if (( nqdot && ! nqo )) || { [[ -z "$nqr" ]] && (( ! nqc )); }; then nqr="."$'\x1e'"$nqr"; fi ;;
+        fd)
+            l=fd
+            k=g
+            if (( nqf )); then k=0; fi
+            if (( nqL )); then k=1; fi
+            nqr="."$'\x1e'"$nqr" ;;
+        git)
+            d="${gcd:-.}"
+            if (( gwt || nqx || rr_gitenv )); then
+                pipe_find+="a0"$'\x1f'"git $npg"$'\x1f'"git lists files outside the work tree it runs in"$'\x1e'
+                nqk=""
+                return 0
+            fi
+            case "$npg" in
+                ls-files)
+                    l="git ls-files"
+                    k=t
+                    if (( nqf )); then k=0; fi
+                    nqr="$d"$'\x1e' ;;
+                diff)
+                    if (( ! npn )); then
+                        nqk=""
+                        return 0
+                    fi
+                    l="git diff --name-only"
+                    k=t
+                    # Outside a work tree git diff compares any two paths it is given (as --no-index).
+                    if [[ "$d" != *'$'* && "$d" != '~'* ]]; then
+                        _pcwd
+                        if [[ "$d" != /* ]]; then d="$PCWD/$d"; fi
+                        r=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) || r=""
+                        if [[ -z "$r" ]]; then
+                            pipe_find+="a0"$'\x1f'"$l"$'\x1f'"git lists files outside the work tree it runs in"$'\x1e'
+                            nqk=""
+                            return 0
+                        fi
+                        d="$r"
+                    fi
+                    nqr="$d"$'\x1e' ;;
+                *)
+                    nqk=""
+                    return 0 ;;
+            esac ;;
+    esac
+    if (( nqn > 64 )); then
+        pipe_find+="!0"$'\x1f'"$l"$'\x1f\x1e'
+    fi
+    if (( nqc )); then
+        pipe_find+="a0"$'\x1f'"$l"$'\x1f'"a directory it lists holds a control character"$'\x1e'
+    fi
+    rest="$nqr"
+    while [[ -n "$rest" ]]; do
+        r="${rest%%$'\x1e'*}"
+        rest="${rest#*$'\x1e'}"
+        pipe_find+="r$k"$'\x1f'"$l"$'\x1f'"$r$exc"$'\x1e'
+    done
+    nqk=""
+}
+
+# _xhs_check: a here-string feeding xargs gives the reader its words as operands; deny one that names a secret path or
+# is a wildcard matching one. xargs removes quotes and backslashes, so they are dropped first; a wildcard holding a
+# variable is not expanded, as cat $f* is not.
+_xhs_check() {
+    local w
+    local -a ws=()
+    IFS=$' \t\n' read -r -d '' -a ws <<<"$xhs" || :
+    for w in ${ws[@]+"${ws[@]}"}; do
+        if (( ${#w} > 4096 )); then
+            continue
+        fi
+        w="${w//[\'\"\\]/}"
+        # shellcheck disable=SC2053  # _NAME_FOLD_ANY is an intentional pattern
+        if [[ "$w" == $_NAME_FOLD_ANY ]]; then
+            name_fold "$w"
+            w="$NAME_FOLD"
+        fi
+        if path_is_secret "$w" bash \
+                || { [[ "$w" != *'$'* ]] && _rr_has_glob "$w" && _wild_check "$w"; }; then
+            _deny_reader "$rdn $w (through xargs)"
+        fi
+    done
+}
+
+# curl's short options that take a value (curl --help all): the value is the rest of the word, or else the next word.
+_CU_SHORT_VAL='ACDEFHKPQTUXYbcdemortuwxyz'
+
+# _deny_upload <what>: deny a curl or wget upload of a secret-bearing file.
+_deny_upload() {
+    local msg="SECRET-PATH BLOCK: '$1' would send a secret-bearing file off-host, where a server may echo it back into"
+    msg+=" context. Send a non-secret file instead or, if the upload is intended, ask the user to run it with '!'."
+    hook_deny "$msg"
+}
+
+# _cu_word <word>: read a later word of a curl or wget stage for a file it reads to send; cuv names the option whose
+# value is due (d data, u --data-urlencode, F form, T upload, H header, or another letter whose value is skipped).
+_cu_word() {
+    local w="$1" b p c
+    if [[ -n "$cuv" ]]; then
+        c="$cuv"
+        cuv=""
+        _cu_value "$c" "$w"
+        return 0
+    fi
+    # wget takes an unambiguous prefix of a long option, with its value after = or as the next word.
+    if [[ "$cuk" == wget ]]; then
+        b="${w%%=*}"
+        if [[ "$b" == --post-f* && --post-file == "$b"* ]] || [[ "$b" == --body-f* && --body-file == "$b"* ]]; then
+            if [[ "$w" == *=* ]]; then _cu_value T "${w#*=}"; else cuv=T; fi
+        fi
+        return 0
+    fi
+    case "$w" in
+        --data|--data-ascii|--data-binary|--json) cuv=d ;;
+        --data-urlencode) cuv=u ;;
+        --form) cuv=F ;;
+        --upload-file) cuv=T ;;
+        --header|--proxy-header) cuv=H ;;
+        --*) ;;
+        -?*)
+            b="${w#-}"
+            p="${b%%[$_CU_SHORT_VAL]*}"
+            if [[ "$p" != "$b" ]]; then
+                c="${b:${#p}:1}"
+                if (( ${#p} + 1 == ${#b} )); then
+                    cuv="$c"
+                else
+                    _cu_value "$c" "${b:${#p}+1}"
+                fi
+            fi ;;
+    esac
+}
+
+# _cu_value <kind> <value>: set cuf to the file <value> makes curl or wget send, when it is a literal secret path: @file
+# for data and headers (@- is stdin), [name]@file for --data-urlencode (not name=…), name=@file or name=<file for a
+# form (up to a ;), the whole value for an upload (- and . are stdin).
+_cu_value() {
+    local v="$2" cfile=""
+    case "$1" in
+        d|H) if [[ "$v" == @?* ]]; then cfile="${v:1}"; fi ;;
+        u) if [[ "$v" == *@* && "${v%%@*}" != *=* ]]; then cfile="${v#*@}"; fi ;;
+        F)
+            if [[ "$v" == *=* ]]; then
+                cfile="${v#*=}"
+                if [[ "$cfile" == [@\<]?* ]]; then
+                    cfile="${cfile:1}"
+                    cfile="${cfile%%;*}"
+                else
+                    cfile=""
+                fi
+            fi ;;
+        T) cfile="$v" ;;
+    esac
+    if [[ -z "$cfile" || "$cfile" == - || "$cfile" == . || -n "$cuf" ]] || (( ${#cfile} > 4096 )); then
+        return 0
+    fi
+    # An upload's whole value is a word the shell expands as a wildcard where the command runs.
+    if [[ "$1" == T && "$cfile" != *'$'* ]] && _rr_has_glob "$cfile" \
+            && { path_glob_is_secret "$cfile" || _wild_check "$cfile"; }; then
+        cuf="$cfile"
+        return 0
+    fi
+    # A value holding a variable is judged by its text, as a cat operand is: @$F is not known, @$HOME/.aws/x is.
+    if [[ "$cfile" == *[\*\?\[\{]* || "$cfile" == '~'[!/]* ]]; then
+        return 0
+    fi
+    # shellcheck disable=SC2053  # _NAME_FOLD_ANY is an intentional pattern
+    if [[ "$cfile" == $_NAME_FOLD_ANY ]]; then
+        name_fold "$cfile"
+        cfile="$NAME_FOLD"
+    fi
+    if path_is_secret "$cfile" bash; then
+        cuf="$cfile"
+    fi
+}
+
+# _cu_end: deny the stage when curl or wget would send a secret file, or reads its stdin from one.
+_cu_end() {
+    if [[ -n "$cuf" ]]; then
+        _deny_upload "$cuk $cuf"
+    elif [[ "$sf" == *I* ]]; then
+        _deny_upload "$cuk <$ins"
+    fi
+    cuk=""
 }
 
 # Per-stage state. sf holds one letter per fact the stage-end checks read (R reader, S secret word, I secret input
@@ -3435,6 +3765,31 @@ npn=0
 npg=""
 snm=0
 pnu=0
+# pnn: as pnu, but for a reader after xargs that does not recurse, which an ls stage's queued roots cover.
+pnn=0
+# The root walk (_nq_start): nqk names the producer (ls, fd, git) and nqr holds the directories it lists (nqn of them;
+# nqc one holding a separator byte), nqf a whole-tree listing, nqL fd following links, nqa ls's dot entries, nqdd a --,
+# nqv an fd or ls value due, nqp fd's positionals, nqx a git diff --no-index and nqdot an ls value option, after
+# which the cwd stays a root unless an operand (nqo) is given; xhs holds the stage's here-string.
+nqk=""
+nqr=""
+nqn=0
+nqf=0
+nqa=0
+nqdd=0
+nqv=""
+nqp=0
+nqc=0
+nqL=0
+nqx=0
+nqdot=0
+nqo=0
+xhs=""
+# The upload walk (_cu_word): cuk names curl or wget, cuv the option whose value is due and cuf the first secret file
+# it would send.
+cuk=""
+cuv=""
+cuf=""
 xo=0
 xov=""
 xrep=""
@@ -4589,6 +4944,9 @@ _stage_end() {
     fi
     _jq_settle
     _mk_vsettle
+    if [[ -n "$cuk" ]]; then
+        _cu_end
+    fi
     if [[ -n "$sf" ]]; then
         if [[ "$sf" == *R* && "$sf" == *S* ]] && ! _p_clear; then
             _deny_reader "$rdn ${rdx:-$rds}"
@@ -4638,6 +4996,19 @@ _stage_end() {
     if [[ "$sf" == *Y* && -n "$pipe_find" ]] && (( ! rquiet )); then
         _find_roots "$pipe_find" "$rdn" xargs "$sxk"
     fi
+    if [[ "$sf" == *Y* && -n "$xhs" ]] && (( ! rquiet )); then
+        _xhs_check
+    fi
+    # Its input is a list the hook cannot see: an argument file, an input file, or an earlier stage it does not model.
+    if [[ "$sf" == *Y* ]] && (( ! rquiet )); then
+        if (( xaf )); then
+            _hold_probe "$rdn" "xargs or parallel reads its arguments from a file"
+        elif (( rgr && rgk != 2 )); then
+            _hold_probe "$rdn" "xargs or parallel reads its arguments from an input redirection"
+        elif (( pnn )); then
+            _hold_probe "$rdn" "an earlier stage prints the paths it reads, which the hook cannot see"
+        fi
+    fi
     if [[ -n "$wpend" ]]; then
         if (( wgo )); then
             wpend+="!0"$'\x1f'glob$'\x1f\x1e'
@@ -4667,6 +5038,9 @@ _stage_end() {
         else
             pipe_find+="$FIND_ENTRIES"
         fi
+    fi
+    if [[ -n "$nqk" ]]; then
+        _nq_end
     fi
     _np_end
     if (( wdd )); then
@@ -4702,6 +5076,9 @@ _stage_end() {
     rgt=""
     snp=0
     npk=""
+    nqk=""
+    xhs=""
+    cuk=""
     snm=0
     xo=0
     xov=""
@@ -5115,6 +5492,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             # one skipping a fetch record.
             if (( sclean )) && (( si > 1 || ! ( fetch_hit || swf_stage >= 0 ) )); then
                 pnu=1
+                pnn=1
                 si=$(( si + 1 ))
                 nw=0
                 cs=0
@@ -5129,12 +5507,15 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     && (( si > 1 || ! ( fetch_hit || swf_stage >= 0 ) )); then
                 if (( ! snp || rgr )); then
                     pnu=1
+                    pnn=1
                 fi
                 if (( wdd )); then
                     pdd=1
                 fi
                 snp=0
                 npk=""
+                nqk=""
+                xhs=""
                 wdd=0
                 si=$(( si + 1 ))
                 sf=""
@@ -5178,6 +5559,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             pipe_xd=""
             pxn=0
             pnu=0
+            pnn=0
             pdd=0
             continue ;;
         r*)
@@ -5243,6 +5625,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
             case "$op" in
                 *'<<<')
+                    xhs="$tgt"
                     if [[ "$sf" != *F* ]]; then sf+=F; fi
                     if [[ "$tgt" == *'$'* && "$tgt" =~ $secret_var_re ]]; then
                         msg="SECRET-ECHO BLOCK: a here-string of a secret-shaped variable ('$tgt') prints it into"
@@ -5526,6 +5909,12 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         fi
         if [[ "$act" == *n* ]]; then
             _np_word "$w"
+            if [[ -n "$nqk" ]]; then
+                _nq_word "$w"
+            fi
+        fi
+        if [[ "$act" == *q* ]]; then
+            _cu_word "$w"
         fi
         if [[ "$act" == *E* ]]; then
             if (( ! ewn )); then
@@ -6317,6 +6706,13 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 _deny_shell "eval" ;;
             Z)
                 if [[ "$act" != *Z* ]]; then act+=Z; fi ;;
+            q)
+                if [[ "$act" != *q* ]]; then
+                    act+=q
+                    cuk="$nm"
+                    cuv=""
+                    cuf=""
+                fi ;;
             f)
                 if [[ "$act" != *f* ]]; then act+=f; fi
                 # A find inside another's -exec adds to the first find's roots.
