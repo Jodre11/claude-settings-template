@@ -225,8 +225,8 @@ t_scanner() {
     expect_verdict DENY  "a trailing & is denied" 'sleep 100 &'
     expect_verdict DENY  "an unterminated quote is denied" "echo it's"
     expect_verdict DENY  "a trailing comment is no longer stripped" 'ls # note; more'
-    expect_verdict DENY  "an escaped ; still counts" 'find . -name x -exec rm {} \;'
-    expect_verdict DENY  "a multi-line quoted argument still counts as multi-line" $'jq \'.a\n| .b\' f.json'
+    expect_verdict ALLOW "an escaped ; is a literal argument" 'find . -name x -exec rm {} \;'
+    expect_verdict ALLOW "a multi-line quoted argument is one argument" $'jq \'.a\n| .b\' f.json'
     expect_verdict DENY  "UTF-8 text does not hide an operator" 'echo "naïve — café" && curl https://example.invalid'
     expect_verdict ALLOW "UTF-8 text in quotes allowed" 'echo "naïve — café"'
     expect_verdict ALLOW "2>&1 is a redirection, not a background job" 'git status 2>&1'
@@ -354,8 +354,247 @@ t_heredoc_size_bound() {
     else bad "a 300 KB adversarial command took $((SECONDS - start)) s to scan"; fi
 }
 
+# The deny reason of <command>, empty when the hook does not deny.
+deny_reason() {
+    printf '%s' "$1" | jq -Rsc '{tool_input:{command:.}}' | "$HOOK" \
+        | jq -r '.hookSpecificOutput | select(.permissionDecision == "deny") | .permissionDecisionReason'
+}
+
+# A command holding a here-document that is screened as commands names the heredoc form that works.
+t_messages() {
+    local got hd_note="one-stage cat > <file> or tee <file> here-document with a quoted delimiter"
+    got=$(deny_reason $'cat <<EOF\nfor x in a; do\necho $x\ndone\nEOF')
+    if [[ "$got" == *"here-document"* && "$got" == *"$hd_note"* ]]; then
+        ok "an unquoted heredoc with a loop body names the one-stage heredoc"
+    else
+        bad "an unquoted heredoc with a loop body names no heredoc remedy: ${got:-none}"
+    fi
+    got=$(deny_reason $'cat <<< x ; ls')
+    if [[ -n "$got" && "$got" != *"here-document"* ]]; then
+        ok "a here-string carries no heredoc note"
+    else
+        bad "a here-string wrongly carries the heredoc note: ${got:-none}"
+    fi
+    got=$(deny_reason $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && ls')
+    if [[ -n "$got" && "$got" != *"here-document"* ]]; then
+        ok "a stripped commit heredoc carries no heredoc note"
+    else
+        bad "a stripped commit heredoc wrongly carries the heredoc note: ${got:-none}"
+    fi
+    got=$(deny_reason $'ls && cat <<\'EOF\' > out.txt\nx\nEOF')
+    if [[ "$got" == *"here-document"* ]]; then
+        ok "a heredoc after a live && carries the heredoc note"
+    else
+        bad "a heredoc after a live && lacks the heredoc note: ${got:-none}"
+    fi
+    expect_verdict ALLOW "the heredoc remedy: a one-stage cat > heredoc" $'cat > out.txt <<\'EOF\'\nfor x in y; do\nEOF'
+    expect_verdict ALLOW "the heredoc remedy: a one-stage tee heredoc"   $'tee out.txt <<\'EOF\'\nbody\nEOF'
+    expect_verdict ALLOW "the ssh remedy: ssh host bash -s < file"       'ssh host bash -s < f'
+    expect_verdict ALLOW "the ssh remedy with a literal temp path"       'ssh host bash -s < /tmp/claude-abc/x.sh'
+    expect_verdict ALLOW "the heredoc remedy's bash <file> with a variable path" 'bash $CLAUDE_TEMP_DIR/x.sh'
+    expect_verdict ALLOW "the fetch remedy: grep -f pattern file"        'grep -f pat.txt f'
+    expect_verdict ALLOW "the echo remedy: awk -f program file"          'awk -f prog.awk f'
+    expect_verdict ALLOW "the echo remedy: sed -f program file"          'sed -f prog.sed f'
+}
+
+# Constructs the guard read as separators but bash reads as text, without hiding a live separator.
+t_false_alarms() {
+    expect_verdict ALLOW "a backslash-newline continues the line"   $'ls \\\n-la'
+    expect_verdict ALLOW "an escaped ; is text"                     'echo a \; b'
+    expect_verdict ALLOW "find -exec cat {} \\; allowed"            'find . -name x -exec cat {} \;'
+    expect_verdict ALLOW "an escaped | and & are text"              'echo a \| b \& c'
+    expect_verdict DENY  "a newline after a continuation denied"     $'ls \\\n-la\necho b'
+    expect_verdict DENY  "&& after a continuation denied"            $'ls \\\n&& curl https://example.invalid'
+    expect_verdict DENY  "a live ; after an escaped one denied"      'echo a \;; echo b'
+    expect_verdict DENY  "a continuation inside a comment denied"    $'echo a # b \\\nexport -p'
+    expect_verdict DENY  "a comment after a pipe denied"             $'echo a |# b \\\nexport -p'
+    expect_verdict DENY  "apostrophes in comments do not hide a line" $'# don\'t\nexport -p\n# it\'s'
+    expect_verdict DENY  "a # inside \${#x} keeps the comment guard on" $'echo ${#x} \\\nexport -p'
+    expect_verdict DENY  "an escaped backslash then a newline denied" $'echo a \\\\\necho b'
+    expect_verdict DENY  "a live & after an escaped & denied"        'echo a \&& echo b'
+    expect_verdict DENY  "an escaped & after a live & denied"        'echo a &\& echo b'
+    expect_verdict DENY  "a \$\$ before a quote does not open an ANSI-C quote" \
+        "echo \$\$'\\' ; curl https://example.invalid \$\$'\\'"
+    expect_verdict DENY  "a run of four \$ before a quote fails closed" "echo \$\$\$\$'a'"
+    expect_verdict DENY  "a \$\$ before a quote fails closed"          "echo \$\$'a'"
+    expect_verdict DENY  "regression pin: a # after a \$\$ quote region still denies" \
+        $'echo $$\'a\' # b \\\nexport -p'
+    expect_verdict ALLOW "a lone \$ before a quote is an ANSI-C quote" "echo \$'a\\'b'"
+    expect_verdict ALLOW "an escaped \$ before a quote is a plain quote" "echo \\\$'a'"
+    expect_verdict ALLOW "\$\$ with no quote after it is the PID"      'echo $$'
+    expect_verdict DENY  "a double quote nested in \${...} hides a ; from the scanner" \
+        "echo \"\${x:-\"'\"}\" ; printf 'SECOND-RAN\\n' \\'"
+    expect_verdict DENY  "a single quote nested in \${...} hides a ; from the scanner" \
+        $'echo "${x:-\'"\'}" ; printf \'SECOND-RAN\\n\' "${x:-\'"\'}"'
+    expect_verdict DENY  "a quote inside \${...} in double quotes fails closed" 'echo "${x:-"a"}"'
+    expect_verdict ALLOW "a \${...} with no nested quote in double quotes"   'echo "${x:-default}"'
+    expect_verdict ALLOW "a nested \${...} with no quote in double quotes"   'echo "${a:-${b}}"'
+    expect_verdict ALLOW "\${#x} and \${x/a/b} in double quotes"             'echo "${#x}" "${x/a/b}"'
+    expect_verdict ALLOW "a quoted word in an unquoted \${...} is unchanged" "echo \${x:-'a b'}"
+    expect_verdict ALLOW "a ' after a closed \${...} in double quotes is text" "echo \"\${x} it's\""
+    expect_verdict DENY  "a } inside \$[...] in \${...} does not close the nesting" \
+        $'echo "${HOME:-$[}]"\'"}" ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "a } inside \$[...] in a nested \${...} does not close the nesting" \
+        $'echo "${HOME:-${y:-$[}]}"\'"}}" ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "zsh reads ##' after \$[ in double quotes as a character, not a quote" \
+        $'echo "$["##\'"]" ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "zsh reads ##' after \$[ as a character, not a quote" \
+        $'echo $[##\'] ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "zsh reads ##' after \$[ in \${...} as a character, not a quote" \
+        $'echo ${HOME:-$[##\']} ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "a ##' after \$\$[ is denied" \
+        $'echo $$[##\'] ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict DENY  "a \$\$[ is denied like a \$[" 'echo $$[1]'
+    expect_verdict DENY  "a ##\" after \$\$[ is denied (zsh rejects this shape: fail-closed pin)" \
+        $'echo $$[##"] ; printf \'SECOND-RAN\\n\' "'
+    expect_verdict DENY  "a ##\" in \${...} is denied (zsh rejects this shape: fail-closed pin)" \
+        $'echo ${HOME:##"} ; printf \'SECOND-RAN\\n\' "'
+    expect_verdict DENY  "a backtick after ## is denied by the backtick check" $'echo ##`id`'
+    expect_verdict DENY  "a backtick after ## in double quotes is denied" $'echo "##`id`"'
+    expect_verdict ALLOW "a ## followed by a space or a letter is text" 'echo "## title" ##a'
+    expect_verdict DENY  "zsh reads ##' in \$((...)) as a character, not a quote" \
+        $'echo $((##\')) ; printf \'SECOND-RAN\\n\' \\\''
+    expect_verdict ALLOW "a quoted or escaped \$[ is text"   'echo '"'"'$[1]'"'"' \$[1] "\$[1]"'
+    expect_verdict ALLOW "a newline in single quotes is text"       $'echo \'a\nb\''
+    expect_verdict ALLOW "a newline in double quotes is text"       $'jq "\n.a" f.json'
+    expect_verdict ALLOW "a newline in \$'…' is text"               $'printf $\'a\nb\''
+    expect_verdict ALLOW "a backslash-newline in double quotes is text" $'echo "a\\\nb"'
+    expect_verdict ALLOW "a backslash-newline in \$'…' is text"     $'printf $\'a\\\nb\''
+    expect_verdict DENY  "an unquoted newline after a quoted one denied" $'echo \'a\nb\'\necho c'
+    expect_verdict DENY  "an unquoted newline after a multi-line double-quoted word denied" $'echo "a\nb"\necho c'
+    expect_verdict DENY  "a quote opened in a comment does not hide a line" $'echo # \'\nexport -p\n\''
+    expect_verdict DENY  "a double quote opened in a comment does not hide a line" $'echo # "\nexport -p\n"'
+    expect_verdict DENY  "an ANSI-C quote opened in a comment does not hide a line" $'echo # $\'\nexport -p\n\''
+    expect_verdict DENY  "a multi-line quoted word then a live ; denied" $'echo \'a\nb\' ; echo c'
+    expect_verdict DENY  "a multi-line quoted word then a substitution denied" $'echo "a\nb $(id)"'
+    expect_verdict ALLOW "a quoted /var/folders/ pattern is text"       "grep -c '/var/folders/' f"
+    expect_verdict ALLOW "rg of a quoted /var/folders/ pattern allowed" "rg '/var/folders/' f"
+    expect_verdict ALLOW "a /tmp/ string in a jq filter allowed"        "jq '.tmp = \"/tmp/x\"' f"
+    expect_verdict DENY  "a jq redirect into /tmp/ denied"              'jq . f > /tmp/out'
+    expect_verdict DENY  "a jq unquoted /tmp/ operand denied"           'jq . /tmp/x'
+    expect_verdict DENY  "a jq double-quoted /tmp/ operand denied"      "jq '.a' \"/tmp/x\""
+    expect_verdict DENY  "a jq redirect after a quoted /tmp/ filter denied" "jq '.t = \"/tmp/x\"' f > /tmp/out"
+    expect_verdict ALLOW "a jq read of a session temp file allowed"     'jq . /tmp/claude-x/f'
+    expect_verdict DENY  "a jq redirect into a quoted /tmp/ path denied" "jq . f > '/tmp/out'"
+    expect_verdict DENY  "find on a quoted /var/folders/ path denied"   "find '/var/folders/x' -delete"
+    expect_verdict DENY  "a redirect into a quoted /var/folders/ path denied" "cat f > '/var/folders/x'"
+    expect_verdict DENY  "find -fprint to a quoted /var/folders/ path denied" "find . -fprint '/var/folders/x'"
+    expect_verdict DENY  "grep with a redirect to a quoted /var/folders/ path denied" "grep x f > '/var/folders/y'"
+    expect_verdict DENY  "grep with an append to a quoted /var/folders/ path denied" "grep x f >> '/var/folders/y'"
+    expect_verdict DENY  "cat of a quoted /var/folders/ path denied"    "cat '/var/folders/x'"
+    expect_verdict DENY  "grep piped into tee of a quoted /var/folders/ path denied" "grep x f | tee '/var/folders/x'"
+    expect_verdict DENY  "jq piped into tee of a quoted /tmp/ path denied" "jq . f | tee '/tmp/x'"
+    expect_verdict DENY  "jq piped into tee -a of a quoted /var/folders/ path denied" \
+        "jq . f | tee -a '/var/folders/x'"
+    expect_verdict DENY  "grep piped into awk writing to /var/folders/ denied" \
+        "grep x f | awk '{print > \"/var/folders/x\"}'"
+    expect_verdict DENY  "grep piped into dd of= a quoted /var/folders/ path denied" \
+        "grep x f | dd of='/var/folders/x'"
+    expect_verdict DENY  "rg --pre running a quoted program denied"     "rg --pre 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre= running a quoted program denied"    "rg --pre='tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre split by quotes denied"              "rg -'-p're 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre spelt in an ANSI-C quote denied"     "rg \$'\\x2d\\x2dpre' 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --hostname-bin running a quoted program denied" \
+        "rg --hostname-bin 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg with an expansion in its options denied"   "rg \$OPT '/var/folders/' f"
+    expect_verdict DENY  "rg --pre behind a brace expansion denied"     "rg --{pre,x} 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre in double quotes denied"             "rg \"--pre\" 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pr (a prefix of --pre) denied"           "rg --pr 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg with a single-quoted --pre denied"         "rg '--pre' 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg with a single-quoted --pre=value denied"   "rg '--pre=tee /var/folders/o' x f"
+    expect_verdict DENY  "rg with a single-quoted --hostname-bin denied" "rg '--hostname-bin' 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre-glob denied"                        "rg --pre-glob=x '/var/folders/' f"
+    expect_verdict DENY  "rg --host (a prefix of --hostname-bin) denied" "rg --host 'tee /var/folders/o' x f"
+    expect_verdict DENY  "rg --pre split by a backslash-newline denied" \
+        $'rg --p\\\nre \'tee /var/folders/o\' x f'
+    expect_verdict DENY  "rg with a double-quoted \$ in a word denied"  "rg \"-\$x\" '/var/folders/' f"
+    expect_verdict DENY  "rg with a glob word denied"                   "rg '/var/folders/' *.txt"
+    expect_verdict DENY  "rg with a word glued to a quote denied"       "rg '/var/folders/'x f"
+    expect_verdict ALLOW "rg with short, valued and path words allowed" \
+        "rg -n --max-count=3 --glob '*.txt' '/var/folders/' src/f.txt"
+    expect_verdict ALLOW "rg with other long options and a quoted pattern allowed" \
+        "rg --hidden --no-ignore '/var/folders/' f"
+    expect_verdict DENY  "touch of a quoted /var/folders/ path denied"  "touch '/var/folders/x'"
+    expect_verdict DENY  "a read of an unquoted /var/folders/ path denied" 'cat /var/folders/x'
+    expect_verdict DENY  "a double-quoted /var/folders/ stays denied"   'grep -c "/var/folders/" f'
+    expect_verdict DENY  "\$TMPDIR stays denied in a reader"            'grep x "$TMPDIR/f"'
+    expect_verdict DENY  "echo into /tmp/ denied"                       'echo x > /tmp/f'
+    expect_verdict DENY  "git clone into /tmp/ denied"                  'git clone u /tmp/x'
+    expect_verdict DENY  "a quoted pattern then an unquoted /var/folders/ path denied" \
+        "grep '/var/folders/' /var/folders/x"
+    expect_verdict DENY  "a quoted pattern then a redirect into /var/folders/ denied" \
+        "grep '/var/folders/' f > /var/folders/o"
+    expect_verdict DENY  "a quoted pattern with an ANSI-C quote after a \$\$ fails closed" \
+        "grep '/var/folders/' \$\$'x' f"
+    # A quoted-delimiter cat or tee heredoc that writes a file has an inert body.
+    local th_head=$'cat > out.txt <<\'EOF\'\n' th_body
+    expect_verdict ALLOW "a single-quoted cat > heredoc writes a file" \
+        $'cat > out.txt <<\'EOF\'\n#!/usr/bin/env python3\nfor x in y; do\nEOF'
+    expect_verdict ALLOW "a double-quoted cat >> heredoc writes a file"  $'cat >> out.txt <<"EOF"\nline $(id)\nEOF'
+    expect_verdict ALLOW "a backslash-quoted cat > heredoc writes a file" $'cat > out.txt <<\\EOF\n`a`\nEOF'
+    expect_verdict ALLOW "a <<- cat > heredoc with a tab-indented closer"  $'cat > out.txt <<-\'EOF\'\n\tbody\n\tEOF'
+    expect_verdict ALLOW "a cat <<'EOF' > file heredoc with a final newline" $'cat <<\'EOF\' > out.txt\nbody\nEOF\n'
+    expect_verdict ALLOW "a tee heredoc writes a file"                     $'tee out.txt <<\'EOF\'\nbody\nEOF'
+    expect_verdict ALLOW "a tee -a heredoc writes two files"               $'tee -a a.txt b.txt <<\'EOF\'\nbody\nEOF'
+    expect_verdict DENY  "an unquoted-delimiter cat heredoc denied"        $'cat > out.txt <<EOF\n$(id)\nEOF'
+    expect_verdict DENY  "an interpreter heredoc denied"                   $'python3 - <<\'EOF\'\nprint(1)\nEOF'
+    expect_verdict DENY  "a cat heredoc piped to a shell denied"           $'cat <<\'EOF\' | sh\necho hi\nEOF'
+    expect_verdict DENY  "a command after the closing line denied" \
+        $'cat > out.txt <<\'EOF\'\nbody\nEOF\ncat .env'
+    expect_verdict DENY  "a closing line with a trailing blank denied" \
+        $'cat > out.txt <<\'EOF\'\nbody\nEOF \necho x'
+    expect_verdict DENY  "a cat heredoc with a file operand denied"        $'cat notes.txt > out.txt <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a cat heredoc with an fd redirection denied"     $'cat 2>err.txt <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a kubectl apply heredoc denied"                  $'kubectl apply -f - <<\'EOF\'\nkind: x\nEOF'
+    expect_verdict DENY  "a cat heredoc into /var/folders/ denied"         $'cat > /var/folders/x <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a cat heredoc into /tmp/ denied"                 $'cat > /tmp/x <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a cat heredoc to a quoted target holding a newline denied" \
+        $'cat > \'a\nb\' <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a heredoc token after a bare redirection operator denied" $'cat > <<\'EOF\' a\nx\nEOF'
+    expect_verdict ALLOW "a cat > \$CLAUDE_TEMP_DIR heredoc writes a file" \
+        $'cat > $CLAUDE_TEMP_DIR/x.py <<\'EOF\'\nx\nEOF'
+    expect_verdict ALLOW "a cat > \${CLAUDE_TEMP_DIR} heredoc writes a file" \
+        $'cat >> ${CLAUDE_TEMP_DIR}/x.py <<\'EOF\'\nx\nEOF'
+    expect_verdict ALLOW "a cat > \"\$CLAUDE_TEMP_DIR\" heredoc writes a file" \
+        $'cat > "$CLAUDE_TEMP_DIR"/x.py <<\'EOF\'\nx\nEOF'
+    expect_verdict ALLOW "a tee \"\$CLAUDE_TEMP_DIR\" heredoc writes a file" \
+        $'tee -a "$CLAUDE_TEMP_DIR"/x.py <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a CLAUDE_TEMP_DIR heredoc target with a .. segment denied" \
+        $'cat > $CLAUDE_TEMP_DIR/../x <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a CLAUDE_TEMP_DIR heredoc target with an expansion denied" \
+        $'cat > $CLAUDE_TEMP_DIR/${X} <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a CLAUDE_TEMP_DIR assignment before a heredoc denied" \
+        $'CLAUDE_TEMP_DIR=/tmp cat > $CLAUDE_TEMP_DIR/x <<\'EOF\'\nx\nEOF'
+    th_body=$(printf 'x%.0s' $(seq 1 $(( 32768 - ${#th_head} - 4 ))))
+    expect_verdict ALLOW "a cat > heredoc at the size bound writes a file" "${th_head}${th_body}"$'\nEOF'
+    expect_verdict DENY  "a cat > heredoc one character over the size bound denied" "${th_head}${th_body}x"$'\nEOF'
+}
+
+# A heredoc write whose first line holds many words is screened whole, and in time under any bash: the count of its
+# CLAUDE_TEMP_DIR words was superlinear under bash 3.2 in a UTF-8 locale.
+t_text_heredoc_token_bound() {
+    local cmd b start out
+    cmd="tee $(printf '$CLAUDE_TEMP_DIR/a %.0s' $(seq 1 60)) <<'EOF'"$'\nx\nEOF'
+    expect_verdict ALLOW "a tee heredoc of 60 targets writes a file" "$cmd"
+    cmd="tee $(printf '$CLAUDE_TEMP_DIR/a %.0s' $(seq 1 800)) <<'EOF'"$'\nx\nEOF'
+    expect_verdict DENY  "a tee heredoc of 800 targets is screened whole and denied" "$cmd"
+    for b in "$BASH" /bin/bash; do
+        [[ -x "$b" ]] || continue
+        start=$SECONDS
+        out=$(printf '%s' "$cmd" | jq -Rsc '{tool_input:{command:.}}' | LC_ALL=C.UTF-8 "$b" "$HOOK")
+        if (( SECONDS - start < 3 )) && [[ "$out" == *'"permissionDecision":"deny"'* ]]; then
+            ok "a tee heredoc of 800 targets is denied within 3 s under $b"
+        else
+            bad "a tee heredoc of 800 targets took $((SECONDS - start)) s under $b, or was not denied"
+        fi
+    done
+}
+
 t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13; t14; t15
 t_heredoc; t_scanner; t_paren_messages; t_backstop; t_scan_fails_closed; t_scan_size_bound; t_heredoc_size_bound
+t_text_heredoc_token_bound
+t_false_alarms
+t_messages
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

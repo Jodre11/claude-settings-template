@@ -56,7 +56,8 @@ expect deny "git lfs pull is denied"                    'git lfs pull'          
 expect deny "git replace is denied"                     'git replace HEAD HEAD~1' "$REVIEWER"
 
 hidden=('true | git commit -m x' 'command git commit -m x' 'env git commit -m x' '/usr/bin/git commit -m x'
-    'GIT_DIR=.git git commit -m x' 'git status | xargs git add' 'sudo git -C /repo push' '\git commit -m x')
+    'GIT_DIR=.git git commit -m x' 'git status | xargs git add' 'sudo git -C /repo push' '\git commit -m x'
+    "git push origin 'refs/*'" "git commit -m '\$X'")
 for c in "${hidden[@]}"; do
     expect deny "a reviewer is denied a hidden mutating git: $c"  "$c"                     "$REVIEWER"
     expect none "a non-reviewer is untouched by: $c"              "$c"                     general-purpose
@@ -70,6 +71,14 @@ expect none "a non-reviewer's commit heredoc with an odd quote is untouched" \
 # subcommand the walk finds.
 expect deny "a reviewer is denied a command the commit heredoc strip would change" \
     $'git log --grep commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)"' "$REVIEWER"
+expect deny "a commit message with a quoted newline is denied"  $'git commit -m \'a\nb\''  "$REVIEWER"
+expect deny "a quoted newline in a git option value does not end the walk" \
+    $'git -c \'a\nb=c\' commit -m x' "$REVIEWER"
+expect deny "a git after a quoted newline is denied"          $'echo \'a\nb\'\ngit commit -m x' "$REVIEWER"
+# A marked word (a single-quoted $ here) comes as an m element in the middle of the walk and moves nothing.
+expect deny "a marked word mid-walk does not hide the subcommand" "git -C '\$D' push" "$REVIEWER"
+expect deny "a marked glob mid-walk does not hide the subcommand" "git -C '*' push"   "$REVIEWER"
+expect none "a reviewer may echo a multi-line quoted git"      $'echo \'git commit\nx\''  "$REVIEWER"
 expect deny "a | ends the walk of an earlier bare git"         'git --no-pager | git commit -m x' "$REVIEWER"
 expect deny "a ; ends the walk of an earlier bare git"         'git --no-pager ; git commit -m x' "$REVIEWER"
 expect none "a reviewer may run git -C dir diff"               'git -C /repo diff HEAD~1' "$REVIEWER"

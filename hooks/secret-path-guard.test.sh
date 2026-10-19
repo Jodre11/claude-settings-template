@@ -53,9 +53,20 @@ for p in a/.ssh/id_ecdsa a/.ssh/work_ed25519 a/.docker/config.json a/.kube/confi
     [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == DENY ]] \
         && ok "Read of $p denied" || bad "Read of $p allowed"
 done
-for p in a/.ssh/config a/.ssh/known_hosts a/.ssh/id_ed25519.pub; do
+for p in a/.ssh/config a/.ssh/known_hosts a/.ssh/id_ed25519.pub a/Secrets/Keys.cs lib/certifi/cacert.pem; do
     [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == ALLOW ]] \
         && ok "Read of $p allowed" || bad "Read of $p denied"
+done
+for p in venv/lib/python3/site-packages/certifi/cacert.pem x/botocore/cacert.pem src/App/Secrets/Foo.cs; do
+    [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == ALLOW ]] \
+        && ok "Read of $p allowed" || bad "Read of $p denied"
+done
+# An allow for a C# Secrets folder or a CA bundle never reaches into the vault or a credential directory.
+for p in /tmp/claude-abc-vault/secrets/x.cs /tmp/claude-abc-vault/certifi/cacert.pem a/.ssh/certifi/cacert.pem \
+        a/.ssh/secrets/x.cs a/.aws/certifi/cacert.pem claude-abc-vault/secrets/x.cs \
+        claude-abc-vault/certifi/cacert.pem; do
+    [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == DENY ]] \
+        && ok "Read of $p denied" || bad "Read of $p allowed"
 done
 
 # A crash the ERR trap misses (bash 3.2 unbound variables, a crash inside a function) still asks: the hook installs

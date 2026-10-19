@@ -101,6 +101,29 @@ SECRET_PATH_ALLOW=(
     '*/.ssh/authorized_keys'
 )
 
+# Narrow overrides: C# namespace folders named Secrets, and the CA bundles certifi and botocore ship. A narrow allow
+# lifts a match from an anywhere-name glob (*/secrets/*, *.pem) only; it never lifts a path below a directory in
+# SECRET_PATH_NOLIFT, as the * of a narrow allow crosses / and would otherwise reach into the vault or ~/.ssh.
+SECRET_PATH_ALLOW_NARROW=(
+    '*/secrets/*.cs'
+    '*/certifi/cacert.pem'
+    '*/botocore/cacert.pem'
+)
+
+# Directories of secrets: the vault and the credential directories. No narrow allow applies below one of these.
+SECRET_PATH_NOLIFT=(
+    '$CLAUDE_SECRET_DIR/*'
+    '${CLAUDE_SECRET_DIR}/*'
+    '*/claude-*-vault/*'
+    '*/.ssh/*'
+    '*/.aws/*'
+    '*/.gnupg/*'
+    '*/.config/gh/*'
+    '*/.docker/*'
+    '*/.kube/*'
+    '*/.config/containers/*'
+)
+
 # Self-referential paths whose CONTENTS legitimately embed secret-shaped example vectors: the pattern library itself,
 # the design docs, and the SDD scratch dir (diffs/reports). The PostToolUse scrubber skips scanning a tool result whose
 # target is one of these — otherwise every Read/Grep/cat of the firewall's own source fires a false breach alarm,
@@ -243,11 +266,12 @@ _glob_awk_re() {
 # duplicates dropped; and SECRET_PATH_FRAGMENT_RE, an awk regex of the longest literal piece of each such "/"-adjusted
 # glob, lower-cased (each of . $ { } bracketed): "/<path>", lower-cased, can match a glob only if it holds that piece,
 # so a path matching none cannot be secret.
-# Also derive SECRET_PATH_AWK_RE and SECRET_ALLOW_AWK_RE: both lists as anchored awk EREs over the lower-cased
-# "/<path>", which the directory probe applies to every entry it lists.
+# Also derive SECRET_PATH_AWK_RE, SECRET_ALLOW_AWK_RE, SECRET_NARROW_AWK_RE and SECRET_NOLIFT_AWK_RE: the lists as
+# anchored awk EREs over the lower-cased "/<path>", which the directory probe applies to every entry it lists. A path
+# is secret when it matches a secret glob, no allow glob, and no narrow allow glob unless it is below a no-lift one.
 _secret_path_alternations() {
     local IFS='|' g gp last piece rest best seen='|' lb='{' rb='}'
-    local -a any=() allow=() pieces=() sre=() are=()
+    local -a any=() allow=() narrow=() nolift=() pieces=() sre=() are=() nare=() nlre=()
     SECRET_PATH_REPRESENTATIVES=()
     for g in "${SECRET_PATH_GLOBS[@]}"; do
         if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
@@ -281,8 +305,24 @@ _secret_path_alternations() {
         _glob_awk_re "$gp"
         are+=("$_GLOB_AWK_RE")
     done
+    for g in "${SECRET_PATH_ALLOW_NARROW[@]}"; do
+        if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
+        _glob_fold "$gp"
+        narrow+=("$_GLOB_FOLD")
+        _glob_awk_re "$gp"
+        nare+=("$_GLOB_AWK_RE")
+    done
+    for g in "${SECRET_PATH_NOLIFT[@]}"; do
+        if [[ "$g" == '*'* ]]; then gp="$g"; else gp="/$g"; fi
+        _glob_fold "$gp"
+        nolift+=("$_GLOB_FOLD")
+        _glob_awk_re "$gp"
+        nlre+=("$_GLOB_AWK_RE")
+    done
     _SECRET_PATH_ANY="@(${any[*]})"
     _SECRET_ALLOW_ANY="@(${allow[*]})"
+    _SECRET_NARROW_ANY="@(${narrow[*]})"
+    _SECRET_NOLIFT_ANY="@(${nolift[*]})"
     _SECRET_REPRESENTATIVE_LIST="$seen"
     # shellcheck disable=SC2034  # read by secret-bash-guard.sh
     SECRET_PATH_FRAGMENT_RE="${pieces[*]}"
@@ -290,6 +330,10 @@ _secret_path_alternations() {
     SECRET_PATH_AWK_RE="^(${sre[*]})$"
     # shellcheck disable=SC2034  # read by the directory probe in _lib.sh
     SECRET_ALLOW_AWK_RE="^(${are[*]})$"
+    # shellcheck disable=SC2034  # read by the directory probe in _lib.sh
+    SECRET_NARROW_AWK_RE="^(${nare[*]})$"
+    # shellcheck disable=SC2034  # read by the directory probe in _lib.sh
+    SECRET_NOLIFT_AWK_RE="^(${nlre[*]})$"
 }
 _secret_path_alternations
 
@@ -302,18 +346,25 @@ _SECRET_GLOB_MAX_CHARS=128
 _SECRET_GLOB_MAX_WILD=5
 _SECRET_GLOB_TESTS=0
 
-# path_is_secret <path>: 0 if <path> or /<path> matches a secret glob and neither matches an allow glob, else 1. A path
-# holding a .. segment ignores the allow globs: the segment can climb out of an allowed name into a secret one.
+# path_is_secret <path>: 0 if <path> or /<path> matches a secret glob and neither matches an allow glob, else 1. A
+# narrow allow glob counts only when the path is not below a no-lift directory (the vault, ~/.ssh, ~/.aws and the
+# like). A path holding a .. segment ignores the allow globs: the segment can climb out of an allowed name into a
+# secret one. Given a second argument (the bash guard's operands), only the narrow allows are ignored there: the
+# general allows (*.example, *.pub) keep lifting through a .. segment.
 path_is_secret() {
     local p="/$1"
     # The alternations are intentional patterns here — do NOT quote them.
     # shellcheck disable=SC2053
     [[ "$p" == $_SECRET_PATH_ANY ]] || return 1
     if [[ "$p" == */../* || "$p" == */.. ]]; then
-        return 0
+        # shellcheck disable=SC2053
+        [[ -z "${2:-}" || "$p" != $_SECRET_ALLOW_ANY ]]
+        return
     fi
     # shellcheck disable=SC2053
-    [[ "$p" != $_SECRET_ALLOW_ANY ]]
+    [[ "$p" != $_SECRET_ALLOW_ANY ]] || return 1
+    # shellcheck disable=SC2053
+    [[ "$p" != $_SECRET_NARROW_ANY || "$p" == $_SECRET_NOLIFT_ANY ]]
 }
 
 # Directory representatives: one name per glob whose last component is * or a literal under a directory part

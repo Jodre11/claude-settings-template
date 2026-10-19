@@ -34,13 +34,16 @@ expect_words() {
 
 # Quoting and escapes.
 expect_words "plain words"                     'cat a b'                    '[wcat][wa][wb]'
-expect_words "single quotes are literal"       "echo 'a \$b \\c'"           '[wecho][wa $b \c]'
+expect_words "single quotes are literal"       "echo 'a \$b \\c'"           '[wecho][md][wa $b \c]'
 expect_words "double quotes keep \$ text"      'echo "a $b"'                '[wecho][wa $b]'
-expect_words "double-quote escapes"            'echo "x\$y\"z\\w\q"'        '[wecho][wx$y"z\w\q]'
+expect_words "double-quote escapes"            'echo "x\$y\"z\\w\q"'        '[wecho][md][wx$y"z\w\q]'
 expect_words "adjacent quotes join one word"   'c""at a'"'b'"               '[wcat][wab]'
 expect_words "an unquoted backslash escapes"   '\cat x\ y'                  '[wcat][wx y]'
 expect_words "a backslash-newline is removed"  $'ca\\\nt x'                 '[wcat][wx]'
-expect_words "\$'…' keeps its content undecoded" "echo \$'a\\'b' c"         "[wecho][wa\\'b][wc]"
+expect_words "\$'…' keeps its content undecoded" "echo \$'a\\'b' c"         "[wecho][ma][wa\\'b][wc]"
+expect_words "a \$'…' without a backslash is not marked" "echo \$'ab' c"     '[wecho][wab][wc]'
+expect_words "a backslash in \$'…' marks a, after the other marks" "echo \$'a\\n'\$X" '[wecho][ma][wa\n$X]'
+expect_words "a backslash in \"…\" or '…' is not marked a" "echo 'a\\n' \"b\\\\n\"" '[wecho][wa\n][wb\n]'
 expect_words "\$\"…\" is read as \"…\""        'echo $"a b"'                '[wecho][wa b]'
 expect_words "an escaped quote opens nothing"  "echo \\' | cat 'a|b' x"     "[wecho][w'][|][wcat][wa|b][wx]"
 expect_words "an empty quoted word is a word"  "echo ''"                    '[wecho][w]'
@@ -100,7 +103,46 @@ expect_words "an empty word stays w"           "x ''"                       '[px
 w257=$(printf 'a%.0s' $(seq 1 257))
 expect_words "a word over 256 characters stays w" "x $w257"                 "[px][w$w257]" "$NAMES" "$FRAG"
 expect_words "without names nothing is p"      'ls a'                       '[wls][wa]'
-expect_words "a versioned listed name stays w"  'cat2 a'                     '[wcat2][pa]' "$NAMES" "$FRAG"
+expect_words "a quoted glob is marked"           "cat '*.md'"        '[wcat][mg][w*.md]'
+expect_words "an escaped glob is marked"         'cat \*'            '[wcat][mg][w*]'
+expect_words "a double-quoted glob is marked"    'cat "a?"'          '[wcat][mg][wa?]'
+expect_words "a quoted brace is marked"          "echo '{a,b}'"      '[wecho][mg][w{a,b}]'
+expect_words "a single-quoted \$ is marked"      "echo '\$X'"        '[wecho][md][w$X]'
+expect_words "an escaped \$ is marked"           'echo \$X'          '[wecho][md][w$X]'
+expect_words "an escaped \$ in \"…\" is marked"  'echo "\$X"'        '[wecho][md][w$X]'
+expect_words "a live \$ in \"…\" is not marked"  'echo "$X"'         '[wecho][w$X]'
+expect_words "a \$ closing the double quotes is a literal, marked"  'echo "a$"'         '[wecho][md][wa$]'
+expect_words "a lone \$ in double quotes is a literal, marked"   'echo "$"'           '[wecho][md][w$]'
+expect_words "a \$ before the closing \$ in \"…\" is live"        'echo "$$"'          '[wecho][mq][w$$]'
+expect_words "a quoted and a live \$ are marked q"               "echo '\$'\$X"       '[wecho][mq][w$$X]'
+expect_words "a closing-quote \$ and a live \$ are marked q"     'echo "$"$X'         '[wecho][mq][w$$X]'
+expect_words "a glob quoted and a \$ quoted and live: g, q"      "echo '*\$'\$X"      '[wecho][mgq][w*$$X]'
+expect_words "both marks, glob first"          "echo '*\$X'"       '[wecho][mgd][w*$X]'
+expect_words "a live glob voids g only"          "echo '\$X'*"       '[wecho][md][w$X*]'
+expect_words "a live \$ voids d only"            "echo '*'\$X"       '[wecho][mg][w*$X]'
+expect_words "a redirection target is not marked" "x > '*.txt'"      '[wx][r> *.txt]'
+expect_words "a long word is not marked"         "x '${w257}*'"      "[wx][w${w257}*]"
+expect_words "a long word holding a quoted brace is marked" "x '${w257}{a,b}'" "[wx][mg][w${w257}{a,b}]"
+expect_words "a long word holding a live brace is not marked" "x ${w257}{a,b}" "[wx][w${w257}{a,b}]"
+expect_words "a backslash in a long \$'…' word still marks a" "x \$'${w257}\\n'" "[wx][ma][w${w257}\\n]"
+expect_words "a long word holding a live brace and a quoted one is marked x" "x '{a,b}'${w257}{c,d}" \
+    "[wx][mx][w{a,b}${w257}{c,d}]"
+expect_words "quoted text before the live braces leaves no x"    'x "a b"{c,d}'      '[wx][wa b{c,d}]'
+expect_words "a quoted variable before the live braces leaves no x" 'x "$f"{,.bak}'  '[wx][w$f{,.bak}]'
+expect_words "a quoted braced name before the live braces leaves no x" 'x "${f}"{a,b}' '[wx][w${f}{a,b}]'
+expect_words "quoted text after the live braces leaves no x"     'x {a,b}"c d"'      '[wx][w{a,b}c d]'
+expect_words "quoted text between the live braces is marked x"   'x {a,"b c"}'       '[wx][mx][w{a,b c}]'
+expect_words "a quoted brace beside a live one is marked x"      'x "{"{a,b}'        '[wx][mx][w{{a,b}]'
+expect_words "an escaped brace beside a live one is marked x"    'x \{a,b}{c,d}'     '[wx][mx][w{a,b}{c,d}]'
+expect_words "a quoted brace in a parameter expansion of the name is marked x" 'x "${f:-{}"{a,b}' \
+    '[wx][mx][w${f:-{}{a,b}]'
+expect_words "x follows the other marks"                         "x '\$'\$X\"{\"{a,b}" '[wx][mqx][w$$X{{a,b}]'
+expect_words "a long word holding a live brace and a quoted \$ is marked d" "x ${w257}{a,b}'\$'" \
+    "[wx][md][w${w257}{a,b}\$]"
+expect_words "a long word keeps its text over the chunk bound" "x '{'$(printf 'b%.0s' $(seq 1 1300))'}'" \
+    "[wx][mg][w{$(printf 'b%.0s' $(seq 1 1300))}]"
+expect_words "a marked word is never p"          "x '{a}'"           '[px][mg][w{a}]' "$NAMES" "$FRAG"
+expect_words "a versioned listed name stays w" 'cat2 a'                     '[wcat2][pa]' "$NAMES" "$FRAG"
 expect_words "a dotted version stays w"         'cat3.12 a'                  '[wcat3.12][pa]' "$NAMES" "$FRAG"
 expect_words "a versioned path in upper case stays w" '/bin/CAT3 a'          '[w/bin/CAT3][pa]' "$NAMES" "$FRAG"
 expect_words "an unlisted versioned name is p"  'ls2 a'                      '[pls2][pa]' "$NAMES" "$FRAG"
@@ -225,6 +267,92 @@ flags() { shell_scan "$1"; printf '%s' "$SHELL_SCAN_FLAGS"; }
 [[ "$(flags 'find . \( -name a \)')" != *P* ]] && ok "P ignores an escaped (" || bad "P flagged an escaped ("
 [[ "$(flags "echo '(x)' \"(y)\"")" != *P* ]] && ok "P ignores a quoted (" || bad "P flagged a quoted ("
 [[ "$(flags 'echo $(x) <(y) >(z)')" != *P* ]] && ok "P leaves \$( <( >( to their own checks" || bad "P flagged \$("
+[[ "$(flags "echo \$\$'a'")" == *U* ]] \
+    && ok "U flags a run of \$ before a quote" || bad "U missed a run of \$ before a quote"
+[[ "$(flags "echo \$'a' \$x'b' \\\$'c' \$\$")" != *U* ]] \
+    && ok "U ignores a lone, a variable-adjacent, an escaped and a quote-less \$" || bad "U flagged a harmless \$"
+shell_scan $'echo $$\'\\\'# a\\;'
+[[ "$SHELL_SKELETON" == $'echo $$# a\\;' ]] \
+    && ok "both scan passes read the quote after \$\$ as plain" || bad "the scan passes disagree after \$\$"
+[[ "$(flags 'echo "${x:-"a"}"')" == *U* ]] \
+    && ok "U flags a quote nested in \${...} in double quotes" || bad "U missed a quote nested in \${...}"
+[[ "$(flags "echo \"\${x:-'a'}\"")" == *U* ]] \
+    && ok "U flags a single quote nested in \${...} in double quotes" || bad "U missed a ' nested in \${...}"
+[[ "$(flags 'echo "${x:-d}" "${a:-${b}}" "${#x}" "${x/a/b}" "${x}"')" != *U* \
+    && "$(flags "echo \"\${x} it's\" \${y:-'a'}")" != *U* ]] \
+    && ok "U ignores \${...} with no nested quote, a ' after it closes and an unquoted \${...}" \
+    || bad "U flagged a harmless \${...}"
+[[ "$(flags 'echo "$[1]"')" == *U* && "$(flags 'echo $[1]')" == *U* ]] \
+    && ok "U flags a \$[ in and out of double quotes" || bad "U missed a \$["
+[[ "$(flags $'echo $$[##\'] ; printf \'x\' \\\'')" == *U* && "$(flags 'echo "## t" ##a')" != *U* ]] \
+    && ok "U flags ##' and ignores ## with no quote after it" || bad "U wrong for ##'"
+[[ "$(flags $'echo ${HOME:##"} ; printf x "')" == *U* && "$(flags 'echo ${x:##\\}')" == *U* ]] \
+    && ok "U flags ##\" and ##\\" || bad "U missed ##\" or ##\\"
+[[ "$(flags 'echo $$[1]')" == *U* && "$(flags 'echo $$ [1] $$x[1]')" != *U* ]] \
+    && ok "U flags a \$\$[" || bad "U missed a \$\$["
+[[ "$(flags 'echo '"'"'$[1]'"'"' \$[1] "\$[1]"')" != *U* ]] \
+    && ok "U ignores a quoted or escaped \$[" || bad "U flagged a quoted or escaped \$["
+shell_scan $'echo "${x:-"#"}" \\;'
+[[ "$SHELL_SKELETON" == 'echo  _' ]] \
+    && ok "both scan passes keep a quote nested in \${...} inside the double quotes" \
+    || bad "the scan passes disagree on a quote nested in \${...}"
+
+# sq_strip: the command with '…' and $'…' removed, "…" and escapes kept; unchanged over the bound.
+sq_expect() {
+    sq_strip "$2"
+    if [[ "$SQ_STRIPPED" == "$3" ]]; then ok "$1"; else bad "$1: want [$3] got [$SQ_STRIPPED]"; fi
+}
+sq_expect "sq_strip removes '…' and keeps \"…\""   "grep 'a/var/folders/b' \"c d\" e"  'grep  "c d" e'
+sq_expect "sq_strip removes \$'…' with an escaped quote" "echo \$'x\\'y' z"            'echo  z'
+sq_expect "sq_strip keeps a quote inside \"…\""     "echo \"it's '/x/'\" 'y'"             "echo \"it's '/x/'\" "
+sq_expect "sq_strip keeps an escaped quote outside" "echo \\'/x/ 'y'"                    "echo \\'/x/ "
+sq_expect "sq_strip keeps a \${…} with a nested quote in \"…\"" "echo \"\${x:-'a'}\" 'b'" "echo \"\${x:-'a'}\" "
+sq_expect "sq_strip reads \$\$' as a plain quote"   "echo \$\$'a' b"                     'echo $$ b'
+sq_expect "sq_strip keeps a \$\"…\" whole"          'echo $"a b" '"'c'"                  'echo $"a b" '
+sq_expect "sq_strip drops an unterminated quote's tail" "echo 'a b"                      'echo '
+sq_expect "sq_strip keeps a newline between words"  $'echo \'a\'\nb'                      $'echo \nb'
+sq_expect "sq_strip leaves a quote-free command alone" 'cat /var/folders/x'              'cat /var/folders/x'
+
+# rg_plain_shape: rg with only plain options, single-quoted literals and plain paths; fails closed.
+rg_expect() {
+    local want="$3" got=1
+    if rg_plain_shape "$2"; then got=0; fi
+    if [[ "$got" == "$want" ]]; then ok "$1"; else bad "$1: want $want got $got"; fi
+}
+rg_expect "rg_plain_shape takes options, a quoted literal and paths" "rg -n --max-count=3 --hidden 'a b' d/f.txt" 0
+rg_expect "rg_plain_shape takes a lone rg and trailing spaces"        "rg  "                                    0
+rg_expect "rg_plain_shape refuses --pre"                              "rg --pre x f"                            1
+rg_expect "rg_plain_shape refuses --pre="                             "rg --pre=x f"                            1
+rg_expect "rg_plain_shape refuses --pre-glob"                         "rg --pre-glob=x f"                       1
+rg_expect "rg_plain_shape refuses --hostname-bin"                     "rg --hostname-bin x f"                   1
+rg_expect "rg_plain_shape refuses a prefix of --pre"                  "rg --pr x f"                             1
+rg_expect "rg_plain_shape refuses a prefix of --hostname-bin"         "rg --hostn x f"                          1
+rg_expect "rg_plain_shape allows --hidden and --passthru"             "rg --hidden --passthru x f"              0
+rg_expect "rg_plain_shape refuses a quoted --pre"                     "rg '--pre' x f"                          1
+rg_expect "rg_plain_shape refuses a quoted --pre=value"               "rg '--pre=tee x' x f"                    1
+rg_expect "rg_plain_shape refuses a quoted word starting with -"      "rg '-n' x f"                             1
+rg_expect "rg_plain_shape allows a quoted word with a - inside"       "rg 'a-b' x f"                            0
+rg_expect "rg_plain_shape refuses a bare - word"                      "rg - x f"                                1
+rg_expect "rg_plain_shape refuses -- and -- followed by a path"       "rg -- --pre"                             1
+rg_expect "rg_plain_shape refuses a - word the option forms miss"     "rg -/x f"                                1
+rg_expect "rg_plain_shape refuses braces"                            "rg --{pre,x} x f"                        1
+rg_expect "rg_plain_shape refuses a double-quoted word"               'rg "x" f'                                1
+rg_expect "rg_plain_shape refuses an expansion"                       'rg $x f'                                 1
+rg_expect "rg_plain_shape refuses a glob"                             "rg x *.txt"                              1
+rg_expect "rg_plain_shape refuses a word glued to a quote"            "rg 'a'b f"                               1
+rg_expect "rg_plain_shape refuses an ANSI-C quote"                    "rg \$'a' f"                              1
+rg_expect "rg_plain_shape refuses a backslash"                        'rg --p\re x f'                           1
+rg_expect "rg_plain_shape refuses a newline between words"            $'rg x\nf'                                1
+rg_expect "rg_plain_shape refuses a command over its bound"          "rg $(printf 'a%.0s' $(seq 1 5000))"      1
+sq_strip "$long"
+[[ "$SQ_STRIPPED" == "$long" ]] \
+    && ok "sq_strip returns a command over the bound unchanged" || bad "sq_strip changed a command over the bound"
+sq_strip "'${long:1}'"
+[[ "$SQ_STRIPPED" == "'${long:1}'" ]] \
+    && ok "sq_strip returns a quoted command over the bound unchanged" || bad "sq_strip scanned past the bound"
+sq_strip "'${long:3}'"
+[[ -z "$SQ_STRIPPED" ]] \
+    && ok "sq_strip strips a command at the bound" || bad "sq_strip left a command at the bound"
 
 # strip_commit_heredoc: the documented commit heredoc is replaced by -m ''; a prefix holding anything but plain
 # command-word characters (a quote, #, ;, |, &, $ or a backtick) before the marker is left alone, as its span may not
@@ -273,6 +401,58 @@ for body in 'fix ) early' 'a 1) list marker' 'run `date` now' "price \$'5' now";
         bad "a message '$body' was stripped"
     fi
 done
+
+# strip_text_heredoc: a quoted-delimiter cat or tee heredoc that writes a file is reduced to its first line; any other
+# shape comes back unchanged.
+tx() {  # tx <description> <want: first|whole> <cmd>
+    local got first="${3%%$'\n'*}"
+    got=$(strip_text_heredoc "$3")
+    if [[ "$2" == first && "$got" == "$first" ]] || [[ "$2" == whole && "$got" == "$3" ]]; then
+        ok "$1"
+    else
+        bad "$1"
+    fi
+}
+tx "a single-quoted cat > heredoc is reduced to its first line" first \
+    $'cat > out.txt <<\'EOF\'\n#!/usr/bin/env python3\nfor x in y; do\nEOF'
+tx "a double-quoted cat >> heredoc is reduced" first $'cat >> out.txt <<"EOF"\nline $(id)\nEOF'
+tx "a backslash-quoted delimiter is reduced" first $'cat > out.txt <<\\EOF\n`a`\nEOF'
+tx "a <<- heredoc with a tab-indented closer is reduced" first $'cat > out.txt <<-\'EOF\'\n\tbody\n\tEOF'
+tx "a cat <<'EOF' > file heredoc with a final newline is reduced" first $'cat <<\'EOF\' > out.txt\nbody\nEOF\n'
+tx "a tee heredoc is reduced" first $'tee out.txt <<\'EOF\'\nbody\nEOF'
+tx "a tee -a heredoc with two files is reduced" first $'tee -a a.txt b.txt <<\'EOF\'\nbody\nEOF'
+tx "an unquoted delimiter is left whole" whole $'cat > out.txt <<EOF\n$(id)\nEOF'
+tx "an interpreter heredoc is left whole" whole $'python3 - <<\'EOF\'\nprint(1)\nEOF'
+tx "a cat heredoc piped on is left whole" whole $'cat <<\'EOF\' | sh\necho hi\nEOF'
+tx "text after the closing line is left whole" whole $'cat > out.txt <<\'EOF\'\nbody\nEOF\ncat .env'
+tx "a closing line with a trailing blank is left whole" whole $'cat > out.txt <<\'EOF\'\nbody\nEOF \necho x'
+tx "a cat file operand is left whole" whole $'cat notes.txt > out.txt <<\'EOF\'\nx\nEOF'
+tx "a cat with an fd redirection is left whole" whole $'cat 2>err.txt <<\'EOF\'\nx\nEOF'
+tx "a heredoc with no closing line is left whole" whole $'cat > out.txt <<\'EOF\'\nbody'
+tx "a second closing line after the first is left whole" whole $'cat > out.txt <<\'EOF\'\nEOF\nrm -rf x\nEOF'
+tx "a cat with no redirection is left whole" whole $'cat <<\'EOF\'\nbody\nEOF'
+tx "a tee with no file is left whole" whole $'tee -a <<\'EOF\'\nbody\nEOF'
+tx "a quoted redirect target is left whole" whole $'cat > \'a b\' <<\'EOF\'\nx\nEOF'
+tx "a quoted newline in the first line is left whole" whole $'cat > \'a\nb\' <<\'EOF\'\nx\nEOF'
+tx "a command with no newline is unchanged" whole 'cat > out.txt'
+tx "a heredoc token after a bare redirection operator is left whole" whole $'cat > <<\'EOF\' a\nx\nEOF'
+tx "a cat > \$CLAUDE_TEMP_DIR target is reduced" first $'cat > $CLAUDE_TEMP_DIR/x.py <<\'EOF\'\nx\nEOF'
+tx "a cat > \${CLAUDE_TEMP_DIR} target is reduced" first $'cat > ${CLAUDE_TEMP_DIR}/x.py <<\'EOF\'\nx\nEOF'
+tx "a cat > \"\$CLAUDE_TEMP_DIR\" target is reduced" first $'cat > "$CLAUDE_TEMP_DIR"/x.py <<\'EOF\'\nx\nEOF'
+tx "an attached >\$CLAUDE_TEMP_DIR target is reduced" first $'cat >>$CLAUDE_TEMP_DIR/x.py <<\'EOF\'\nx\nEOF'
+tx "a tee of two CLAUDE_TEMP_DIR targets is reduced" first \
+    $'tee -a "$CLAUDE_TEMP_DIR"/a ${CLAUDE_TEMP_DIR}/b <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR target with a .. segment is left whole" whole $'cat > $CLAUDE_TEMP_DIR/../x <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR target ending in .. is left whole" whole $'cat > $CLAUDE_TEMP_DIR/a/.. <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR target with an expansion is left whole" whole $'cat > $CLAUDE_TEMP_DIR/${X} <<\'EOF\'\nx\nEOF'
+tx "a bare CLAUDE_TEMP_DIR target is left whole" whole $'cat > $CLAUDE_TEMP_DIR <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR assignment prefix is left whole" whole \
+    $'CLAUDE_TEMP_DIR=/tmp cat > $CLAUDE_TEMP_DIR/x <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR assignment as a word is left whole" whole \
+    $'cat > $CLAUDE_TEMP_DIR/x CLAUDE_TEMP_DIR=/tmp <<\'EOF\'\nx\nEOF'
+tx "a plain target holding CLAUDE_TEMP_DIR is left whole" whole $'cat > a/CLAUDE_TEMP_DIR/x <<\'EOF\'\nx\nEOF'
+tx "a CLAUDE_TEMP_DIR target in a double-quoted tail is left whole" whole \
+    $'cat > "$CLAUDE_TEMP_DIR/x" <<\'EOF\'\nx\nEOF'
 
 # _ms: the time in milliseconds (EPOCHREALTIME on bash 5; whole seconds before it).
 _ms() {
@@ -555,6 +735,22 @@ fin_awk() { LC_ALL=C awk -v cap=10 -v maxh=1 -v fin=1 -v sre=x -v are=y -v folds
     || bad "a cut expansion: $(printf '/a\n' | fin_awk)"
 [[ -z "$(printf '\004\n/a\n' | fin_awk)" ]] && ok "an end marker before more output does not count" \
     || bad "an early end marker: $(printf '\004\n/a\n' | fin_awk)"
+
+# The probe's filter applies the narrow allows as path_is_secret does: not below the vault or a credential directory,
+# and not past a .. segment; a general allow (*.example, *.pub) lifts through a .. segment.
+probe_awk() {
+    printf '%s\n' "$1" | LC_ALL=C awk -v cap=10 -v maxh=1 -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" \
+        -v nre="$SECRET_NARROW_AWK_RE" -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="" "$_DHS_AWK"
+}
+for p in /a/lib/certifi/cacert.pem /a/App/Secrets/Foo.cs /a/other/../.env.example /a/../x/id_rsa.pub; do
+    [[ "$(probe_awk "$p")" == E1 ]] && ok "the probe filter lifts a narrow allow: $p" \
+        || bad "the probe filter: $p gave $(probe_awk "$p")"
+done
+for p in /a/x/secrets/../../h/certifi/cacert.pem /a/App/Secrets/Foo.cs/.. /tmp/claude-a-vault/certifi/cacert.pem \
+        /a/.ssh/certifi/cacert.pem; do
+    [[ "$(probe_awk "$p")" == H* ]] && ok "the probe filter keeps a hit: $p" \
+        || bad "the probe filter missed: $p gave $(probe_awk "$p")"
+done
 
 # wild_holds_secret expands a quoted directory plus a wildcard-only component.
 rc=0

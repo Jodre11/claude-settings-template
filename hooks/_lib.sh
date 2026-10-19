@@ -128,9 +128,15 @@ hook_ask() {
     _hook_decision ask "$1"
 }
 
-# Emit a PreToolUse "deny" decision and exit.
+# The note a guard sets in HOOK_DENY_NOTE when the command holds a here-document.
+HEREDOC_DENY_NOTE=" This command holds a here-document, and its body is screened as commands. To write a file, use a"
+HEREDOC_DENY_NOTE+=" one-stage cat > <file> or tee <file> here-document with a quoted delimiter ('EOF') and nothing"
+HEREDOC_DENY_NOTE+=" after its closing line, or write the file with the Write tool and run 'bash <file>'."
+
+# Emit a PreToolUse "deny" decision and exit; a HOOK_DENY_NOTE a guard set is appended to the reason.
+HOOK_DENY_NOTE=""
 hook_deny() {
-    _hook_decision deny "$1"
+    _hook_decision deny "$1$HOOK_DENY_NOTE"
 }
 
 # hook_pass: end the hook with no decision (the native permission rules decide), or with the ask hook_hold_ask
@@ -363,18 +369,159 @@ strip_commit_heredoc() {
     return 0
 }
 
-# Byte-wise quote state machine for shell_scan (N unquoted, S '…', A $'…', D "…"). Streams the
-# skeleton, then prints a newline, the flags and a "." sentinel.
+# Awk body: print the closing line's number only when the first line equal to w (less leading tabs if dash) is the last.
+_TEXT_HEREDOC_AWK='
+NR >= 2 && !n {
+    l = $0
+    if (dash) { i = 1; while (substr(l, i, 1) == "\t") i++; l = substr(l, i) }
+    if (l == w) n = NR
+}
+END { if (n && n == NR) print n }'
+
+# _text_heredoc_word <word>: return 0 for a plain word, 2 for $CLAUDE_TEMP_DIR/<plain> (no .. segment), else 1.
+_text_heredoc_word() {
+    local plain_re='^[A-Za-z0-9_./~@%+=:,-]+$'
+    local tmp_re='^(\$CLAUDE_TEMP_DIR|\$\{CLAUDE_TEMP_DIR\}|"\$CLAUDE_TEMP_DIR")/([A-Za-z0-9_./~@%+=:,-]+)$'
+    if [[ "$1" =~ $plain_re ]]; then return 0; fi
+    if [[ "$1" =~ $tmp_re && "/${BASH_REMATCH[2]}/" != */../* ]]; then return 2; fi
+    return 1
+}
+
+# strip_text_heredoc <cmd>: print the first line alone when <cmd> is a quoted-delimiter cat or tee heredoc that writes a
+# file, else <cmd> unchanged. The body is inert only for that exact shape, a closing line that ends the command and
+# write-only first-line words.
+strip_text_heredoc() {
+    local cmd="$1" fl q="'" tok_re redir_re='^>>?(.+)$' t rc pend=0 nred=0 nfile=0 nheredoc=0 ntmp=0 occ
+    local -a toks
+    local dash=0 w="" first="" closing
+    tok_re="^<<(-?)(${q}([A-Za-z_][A-Za-z0-9_]*)${q}|\"([A-Za-z_][A-Za-z0-9_]*)\"|\\\\([A-Za-z_][A-Za-z0-9_]*))\$"
+    if (( ${#cmd} > COMMIT_HEREDOC_MAX_CHARS )) || [[ "$cmd" != *$'\n'* ]]; then printf '%s' "$cmd"; return 0; fi
+    fl="${cmd%%$'\n'*}"
+    IFS=$' \t' read -ra toks <<<"$fl" || { printf '%s' "$cmd"; return 0; }
+    if (( ${#toks[@]} > 64 )); then printf '%s' "$cmd"; return 0; fi
+    for t in ${toks[@]+"${toks[@]}"}; do
+        if [[ "$t" =~ $tok_re ]]; then
+            if (( pend )); then printf '%s' "$cmd"; return 0; fi
+            (( ++nheredoc ))
+            if [[ -n "${BASH_REMATCH[1]}" ]]; then dash=1; fi
+            w="${BASH_REMATCH[3]}${BASH_REMATCH[4]}${BASH_REMATCH[5]}"
+            continue
+        fi
+        if [[ -z "$first" ]]; then
+            if [[ "$t" == cat || "$t" == tee ]]; then first="$t"; continue; fi
+            printf '%s' "$cmd"
+            return 0
+        fi
+        if [[ "$first" == cat ]]; then
+            if (( pend )); then
+                rc=0; _text_heredoc_word "$t" || rc=$?
+                if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
+                if (( rc == 2 )); then (( ++ntmp )); fi
+                pend=0
+                (( ++nred ))
+            elif [[ "$t" == '>' || "$t" == '>>' ]]; then
+                pend=1
+            elif [[ "$t" =~ $redir_re ]]; then
+                rc=0; _text_heredoc_word "${BASH_REMATCH[1]}" || rc=$?
+                if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
+                if (( rc == 2 )); then (( ++ntmp )); fi
+                (( ++nred ))
+            else
+                printf '%s' "$cmd"
+                return 0
+            fi
+        elif [[ "$t" == -a || "$t" == --append ]]; then
+            :
+        elif [[ "$t" != -* ]]; then
+            rc=0; _text_heredoc_word "$t" || rc=$?
+            if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
+            if (( rc == 2 )); then (( ++ntmp )); fi
+            (( ++nfile ))
+        else
+            printf '%s' "$cmd"
+            return 0
+        fi
+    done
+    # Every CLAUDE_TEMP_DIR in the line must be an accepted target: no reassignment or other use of it.
+    occ="${fl//CLAUDE_TEMP_DIR/}"
+    if (( (${#fl} - ${#occ}) != ntmp * 15 )); then printf '%s' "$cmd"; return 0; fi
+    if (( nheredoc != 1 || pend )) || [[ -z "$first" ]] || { [[ "$first" == cat ]] && (( nred < 1 )); } \
+            || { [[ "$first" == tee ]] && (( nfile < 1 )); }; then
+        printf '%s' "$cmd"
+        return 0
+    fi
+    closing=$(printf '%s' "$cmd" | LC_ALL=C awk -v w="$w" -v dash="$dash" "$_TEXT_HEREDOC_AWK") || closing=""
+    if [[ -z "$closing" ]]; then printf '%s' "$cmd"; return 0; fi
+    printf '%s' "$fl"
+    return 0
+}
+
+# Byte-wise quote state machine for shell_scan (N unquoted, S '…', A $'…', D "…"). A first pass sets
+# cm to 1 when the command holds an unquoted, unescaped #. Streams the skeleton, then prints a newline,
+# the flags and a "." sentinel. With cm 0, unquoted backslash-newline is dropped and an escaped ; & or |
+# prints _ (both read as text), and a newline inside '…', $'…' or "…" is text and prints nothing; with cm 1
+# every escape and every newline is printed verbatim, since a comment can hide what bash reads as a separator
+# and a quote opened inside one is no quote. A run of two or more $ before a ' reports U: bash and zsh disagree on it.
+# Inside "…" a ${ opens a nesting level and its } closes it; a quote met at level 1 or more reports U (the
+# shells read it as a nested quote and the scan cannot follow), and neither pass lets it end the "…".
+# An unquoted or "…" $[ or $$[ (its ] may follow a } the scan would count) and a ## before a ', " or \ (zsh
+# reads that character as a literal) report U in the main pass only: U denies whatever the comment guard says.
 _SHELL_SCAN_AWK='
-{ s = (NR == 1) ? $0 : s "\n" $0 }
-END {
-    n = length(s); st = "N"; subst = 0; paren = 0
+# Returns 1 when s holds an unquoted, unescaped #, else 0.
+function has_comment(s, n, q,    i, c, st, dp) {
+    st = "N"; dp = 0
     for (i = 1; i <= n; i++) {
         c = substr(s, i, 1)
         if (st == "N") {
-            if (c == "\\") { printf "%s%s", c, substr(s, i + 1, 1); i++ }
+            if (c == "\\") i++
             else if (c == q) st = "S"
             else if (c == "\"") st = "D"
+            else if (c == "$" && substr(s, i + 1, 1) == "$") { while (substr(s, i + 1, 1) == "$") i++ }
+            else if (c == "$" && substr(s, i + 1, 1) == q) { st = "A"; i++ }
+            else if (c == "$" && substr(s, i + 1, 1) == "\"") { st = "D"; i++ }
+            else if (c == "#") return 1
+        } else if (st == "S") {
+            if (c == q) st = "N"
+        } else if (st == "A") {
+            if (c == "\\") i++
+            else if (c == q) st = "N"
+        } else {
+            if (c == "\\") i++
+            else if (c == "$" && substr(s, i + 1, 1) == "{") { dp++; i++ }
+            else if (c == "}" && dp > 0) dp--
+            else if (c == "\"" && dp == 0) st = "N"
+        }
+    }
+    return 0
+}
+{ s = (NR == 1) ? $0 : s "\n" $0 }
+END {
+    n = length(s); st = "N"; subst = 0; paren = 0; bad = 0; dp = 0
+    cm = has_comment(s, n, q)
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (st == "N" || st == "D") {
+            if (c == "$" && substr(s, i + 1, 1) == "[") bad = 1
+            else if (c == "#" && substr(s, i + 1, 1) == "#") {
+                e = substr(s, i + 2, 1)
+                if (e == q || e == "\"" || e == "\\") bad = 1
+            }
+        }
+        if (st == "N") {
+            if (c == "\\") {
+                d = substr(s, i + 1, 1); i++
+                if (cm) printf "%s%s", c, d
+                else if (d == ";" || d == "&" || d == "|") printf "_"
+                else if (d != "\n") printf "%s%s", c, d
+            }
+            else if (c == q) st = "S"
+            else if (c == "\"") st = "D"
+            else if (c == "$" && substr(s, i + 1, 1) == "$") {
+                for (j = i; substr(s, j + 1, 1) == "$"; j++) ;
+                if (substr(s, j + 1, 1) == q || substr(s, j + 1, 1) == "[") bad = 1
+                printf "%s", substr(s, i, j - i + 1)
+                i = j
+            }
             else if (c == "$" && substr(s, i + 1, 1) == q) { st = "A"; i++ }
             else if (c == "$" && substr(s, i + 1, 1) == "\"") { st = "D"; i++ }
             else {
@@ -383,19 +530,22 @@ END {
             }
         } else if (st == "S") {
             if (c == q) st = "N"
-            else if (c == "\n") printf "\n"
+            else if (c == "\n" && cm) printf "\n"
         } else if (st == "A") {
-            if (c == "\\") { i++; if (substr(s, i, 1) == "\n") printf "\n" }
+            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") printf "\n" }
             else if (c == q) st = "N"
-            else if (c == "\n") printf "\n"
+            else if (c == "\n" && cm) printf "\n"
         } else {
-            if (c == "\\") { i++; if (substr(s, i, 1) == "\n") printf "\n" }
+            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") printf "\n" }
+            else if (c == "$" && substr(s, i + 1, 1) == "{") { dp++; i++ }
+            else if (c == "}" && dp > 0) dp--
+            else if (dp > 0 && (c == "\"" || c == q)) bad = 1
             else if (c == "\"") st = "N"
             else if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "(")) subst = 1
-            else if (c == "\n") printf "\n"
+            else if (c == "\n" && cm) printf "\n"
         }
     }
-    printf "\n%s%s%s.", (subst ? "S" : ""), (paren ? "P" : ""), (st != "N" ? "U" : "")
+    printf "\n%s%s%s.", (subst ? "S" : ""), (paren ? "P" : ""), ((st != "N" || bad) ? "U" : "")
 }'
 
 # shell_scan runs awk only on commands up to this many characters. The per-byte substr loop is
@@ -404,12 +554,16 @@ END {
 SHELL_SCAN_MAX_CHARS=65536
 
 # shell_scan <cmd>: quote-aware scan of a shell command. Sets SHELL_SKELETON (<cmd> with the
-# content of '…', $'…' and "…" removed; newlines inside quotes kept; escapes outside quotes kept
-# verbatim; comments NOT stripped) and SHELL_SCAN_FLAGS: S = "…" holds $( or a backtick (both
-# run commands; $(( counts, since bash falls back to command substitution when arithmetic
-# fails), P = an unquoted, unescaped ( not preceded by $, < or > (a subshell, grouping, zsh glob
-# qualifier or extglob), U = a quote is left open, E = the scan itself failed or <cmd> is over
-# SHELL_SCAN_MAX_CHARS. Always returns 0.
+# content of '…', $'…' and "…" removed; newlines inside quotes kept only when the command holds an unquoted,
+# unescaped # (otherwise they are text and dropped with the rest); comments NOT stripped; escapes
+# outside quotes kept verbatim, except that when the command holds no unquoted, unescaped # a
+# backslash-newline is dropped and an escaped ; & or | becomes _) and SHELL_SCAN_FLAGS: S = "…"
+# holds $( or a backtick (both run commands; $(( counts, since bash falls back to command
+# substitution when arithmetic fails), P = an unquoted, unescaped ( not preceded by $, < or >
+# (a subshell, grouping, zsh glob qualifier or extglob), U = a quote is left open, a run of two or more $
+# precedes a ' (bash and zsh read it differently), a quote sits inside ${…} within "…", or there is a $[ or a
+# ## before a ', " or \ outside single quotes, E = the scan itself failed or <cmd> is over SHELL_SCAN_MAX_CHARS.
+# Always returns 0.
 # shellcheck disable=SC2034  # SHELL_SKELETON and SHELL_SCAN_FLAGS are read by the calling hook
 shell_scan() {
     local raw
@@ -429,19 +583,134 @@ shell_scan() {
     SHELL_SKELETON="${raw%$'\n'*}"
 }
 
+# Quote-state awk for sq_strip, in the states of _SHELL_SCAN_AWK (N, S '…', A $'…', D "…" with ${…} nesting;
+# a run of $ is passed through whole, as there). Streams the command with '…' and $'…' removed, then a "."
+# sentinel. Every shape where the scanner reads a quote differently from the shells reports U there.
+_SQ_STRIP_AWK='
+{ s = (NR == 1) ? $0 : s "\n" $0 }
+END {
+    n = length(s); st = "N"; dp = 0
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (st == "N") {
+            if (c == "\\") { printf "%s%s", c, substr(s, i + 1, 1); i++ }
+            else if (c == q) st = "S"
+            else if (c == "\"") { printf "%s", c; st = "D" }
+            else if (c == "$" && substr(s, i + 1, 1) == "$") {
+                for (j = i; substr(s, j + 1, 1) == "$"; j++) ;
+                printf "%s", substr(s, i, j - i + 1)
+                i = j
+            }
+            else if (c == "$" && substr(s, i + 1, 1) == q) { st = "A"; i++ }
+            else if (c == "$" && substr(s, i + 1, 1) == "\"") { printf "$\""; st = "D"; i++ }
+            else printf "%s", c
+        } else if (st == "S") {
+            if (c == q) st = "N"
+        } else if (st == "A") {
+            if (c == "\\") i++
+            else if (c == q) st = "N"
+        } else {
+            if (c == "\\") { printf "%s%s", c, substr(s, i + 1, 1); i++ }
+            else if (c == "$" && substr(s, i + 1, 1) == "{") { printf "${"; dp++; i++ }
+            else if (c == "}" && dp > 0) { printf "%s", c; dp-- }
+            else if (c == "\"" && dp == 0) { printf "%s", c; st = "N" }
+            else printf "%s", c
+        }
+    }
+    printf "."
+}'
+
+# sq_strip <cmd>: sets SQ_STRIPPED to <cmd> with the content and delimiters of '…' and $'…' removed, "…" kept
+# whole and escapes outside quotes kept. Over SHELL_SCAN_MAX_CHARS, or when awk fails, SQ_STRIPPED is <cmd>.
+# shellcheck disable=SC2034  # SQ_STRIPPED is read by the calling hook
+sq_strip() {
+    local raw
+    SQ_STRIPPED="$1"
+    if (( ${#1} > SHELL_SCAN_MAX_CHARS )); then
+        return 0
+    fi
+    raw=$(printf '%s' "$1" | LC_ALL=C awk -v q="'" "$_SQ_STRIP_AWK") || raw=""
+    if [[ "$raw" == *. ]]; then
+        SQ_STRIPPED="${raw%.}"
+    fi
+    return 0
+}
+
+# rg_plain_shape <cmd>: 0 when <cmd> is rg followed only by space-separated plain options, single-quoted literals and
+# plain paths, none of them an option that may run a program (--pre, --hostname-bin or a prefix or extension of
+# either). Anything else (braces, globs, $, double quotes, backslashes, newlines) returns 1. Fails closed.
+rg_plain_shape() {
+    local rest="${1#rg}" name
+    local re_long='^--([a-z0-9-]+)(=[A-Za-z0-9._/:,-]*)?( .*)?$'
+    local re_short='^-[A-Za-z0-9]+(=[A-Za-z0-9._/:,-]*)?( .*)?$'
+    local re_quoted="^'[^']*'( .*)?\$"
+    local re_path='^[A-Za-z0-9._/~:,+][A-Za-z0-9._/~:,+-]*( .*)?$'
+    if (( ${#1} > 4096 )); then
+        return 1
+    fi
+    while [[ -n "$rest" ]]; do
+        if [[ "$rest" != " "* ]]; then
+            return 1
+        fi
+        while [[ "$rest" == " "* ]]; do
+            rest="${rest# }"
+        done
+        if [[ -z "$rest" ]]; then
+            return 0
+        fi
+        if [[ "$rest" =~ $re_long ]]; then
+            name="${BASH_REMATCH[1]}"
+            if [[ "$name" == pre* || "$name" == hostname-bin* || "pre-glob" == "$name"* \
+                    || "hostname-bin" == "$name"* ]]; then
+                return 1
+            fi
+            rest="${BASH_REMATCH[3]}"
+        elif [[ "$rest" =~ $re_short ]]; then
+            rest="${BASH_REMATCH[2]}"
+        elif [[ "$rest" =~ $re_quoted ]]; then
+            if [[ "$rest" == "'-"* ]]; then
+                return 1
+            fi
+            rest="${BASH_REMATCH[1]}"
+        elif [[ "$rest" != -* && "$rest" =~ $re_path ]]; then
+            rest="${BASH_REMATCH[1]}"
+        else
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Byte-wise tokeniser for shell_words, in the quote states of _SHELL_SCAN_AWK. Prints each element followed by \x1f,
 # then a \x1e sentinel. A word is held in buf up to MAXB characters, so it can be classified and an all-digit word
 # read as an fd prefix (2>, 10<); a longer one is streamed as it arrives, so no string grows without bound.
 _SHELL_WORDS_AWK='
 function begin_word() {
     if (inw) return
-    inw = 1; wq = 0; long = 0; buf = ""
+    inw = 1; wq = 0; long = 0; buf = ""; lc = ""; ln = 0
+    wg = 0; wgl = 0; wd = 0; wdl = 0; wdq = 0; wb = 0
+    qn = 0; qopen = -1; qclose = -1; qbr = 0; wa = 0
     if (pend != "") { printf "r%s ", pend; pend = ""; wr = 1 } else wr = 0
 }
-function add(ch) {
-    if (wr || long) { printf "%s", ch; return }
+function add(ch, live, pbr) {
+    if (wr) { printf "%s", ch; return }
+    if (!live) {
+        qn++
+        if ((ch == "{" || ch == "}") && !pbr) qbr = 1
+    }
+    if (ch == "$") { wd = 1; if (live) wdl = 1; else wdq = 1 }
+    else if (ch == "*" || ch == "?" || ch == "[" || ch == "{") {
+        wg = 1; if (live) wgl = 1
+        if (ch == "{") { wb = 1; if (live && qopen < 0) qopen = qn }
+    }
+    else if (ch == "}" && live) qclose = qn
+    if (long) {
+        lc = lc ch
+        if (length(lc) >= MAXB) { lk[++ln] = lc; lc = "" }
+        return
+    }
     buf = buf ch
-    if (length(buf) > MAXB) { printf "w%s", buf; buf = ""; long = 1 }
+    if (length(buf) > MAXB) { lc = buf; buf = ""; long = 1 }
 }
 function plain(b,   nm) {
     if (b == "" || b ~ /[$=:*?[\200-\377]/ || b ~ /^-[^-]/ || tolower("/" b) ~ frag) return 0
@@ -452,11 +721,24 @@ function plain(b,   nm) {
     sub(/[0-9][0-9.]*$/, "", nm)
     return !(nm in CLS)
 }
-function end_word() {
+function end_word(   mk, lm, i) {
     if (!inw) return
     inw = 0
-    if (wr || long) printf "%s", US
-    else printf "%s%s%s", (classify && plain(buf)) ? "p" : "w", buf, US
+    if (wr) { printf "%s", US; return }
+    mk = ((wg && !wgl) ? "g" : "") ((wd && !wdl) ? "d" : "") ((wdq && wdl) ? "q" : "")
+    if (qopen >= 0 && (qbr || qclose > qopen)) mk = mk "x"
+    if (long) {
+        lm = wb ? mk : ""
+        if (wa) lm = lm "a"
+        if (lm != "") printf "m%s%s", lm, US
+        printf "w"
+        for (i = 1; i <= ln; i++) printf "%s", lk[i]
+        printf "%s%s", lc, US
+        return
+    }
+    if (wa) mk = mk "a"
+    if (mk != "") printf "m%s%s", mk, US
+    printf "%s%s%s", (classify && mk == "" && plain(buf)) ? "p" : "w", buf, US
 }
 function dangling() {
     if (pend != "") { printf "r%s %s", pend, US; pend = "" }
@@ -466,7 +748,7 @@ function sep(t) {
     printf "%s%s", t, US
 }
 BEGIN {
-    US = sprintf("%c", 31); SENT = sprintf("%c", 30); MAXB = 256
+    US = sprintf("%c", 31); SENT = sprintf("%c", 30); MAXB = 256; pelo = -1; pehi = -1
     classify = (names != "" && frag != "")
     if (classify) { k = split(names, a, " "); for (j = 1; j <= k; j++) CLS[a[j]] = 1 }
 }
@@ -484,7 +766,7 @@ END {
             continue
         }
         if (st == "A") {
-            if (c == "\\") { add(c); add(ch[i + 1]); i++ }
+            if (c == "\\") { wa = 1; add(c); add(ch[i + 1]); i++ }
             else if (c == q) st = "N"
             else add(c)
             continue
@@ -497,7 +779,14 @@ END {
                 else add(c)
             }
             else if (c == "\"") st = "N"
-            else add(c)
+            else {
+                if (c == "$" && ch[i + 1] == "{") {
+                    j = i + 2
+                    while (ch[j] ~ /^[A-Za-z0-9_]$/) j++
+                    if (j > i + 2 && ch[j] == "}") { pelo = i + 1; pehi = j }
+                }
+                add(c, c == "$" && ch[i + 1] != "\"", i == pelo || i == pehi)
+            }
             continue
         }
         nx = ch[i + 1]
@@ -544,7 +833,7 @@ END {
         if (c == "\"") { begin_word(); wq = 1; st = "D"; continue }
         if (c == "$" && nx == q) { begin_word(); wq = 1; st = "A"; i++; continue }
         if (c == "$" && nx == "\"") { begin_word(); wq = 1; st = "D"; i++; continue }
-        begin_word(); add(c)
+        begin_word(); add(c, 1)
     }
     end_word(); dangling()
     printf "%s", SENT
@@ -555,6 +844,13 @@ END {
 # r<op> <target> (a redirection: the operator as written with any fd prefix, one space, then the target word), | (a
 # pipe, | or |&) and ; (any other separator: ; & && || newline ( ), and <( or >( ). $'…' keeps its content undecoded.
 # # does not start a comment: zsh honours one only under INTERACTIVE_COMMENTS, so its text is screened as words.
+# m<flags> directly precedes the w element of a word of at most 256 characters (or of more, if it holds a {), other
+# than a redirection target, whose glob characters (g: * ? [ {) or $ (d) are all quoted or escaped, none live (unquoted
+# and unescaped; a $ inside "…" is live unless escaped or last before the closing quote); q: a quoted $ and a live one
+# both; x: a word with a live { in which a { or } is quoted or escaped, or a quoted or escaped character lies between
+# its first live { and last live } (so the unquoted text may not brace-expand as the shell does); a: a $'…' part holds a
+# backslash, which stays as written (the word of any length gets it); flags in the order g, d, q, x, a. A marked word
+# is never p. A consumer that does not read m skips it.
 # Parameters, ~, braces and globs stay as written. Given <names> (space-separated lower-case words) and <fragments> (a
 # lower-case awk regex), a word of at most 256 characters becomes p<word> instead when it is plain: not empty, no $ = :
 # * ? [ and no non-ASCII byte, not a single-dash option, "/<word>" lower-cased not matching <fragments>, and its
@@ -720,10 +1016,11 @@ probe_add() {
     PROBE_N=$(( PROBE_N + 1 ))
 }
 
-# _dhs_find <root> [-L]: list every entry under <root>, relative to it, skipping .git and node_modules.
+# _dhs_find <root> [-L]: list every entry under <root>, relative to it, except a directory named secrets (whose files
+# the secret globs match themselves), skipping .git and node_modules.
 _dhs_find() {
     cd "$1" || return 1
-    command find ${2:+"$2"} . \( -name .git -o -name node_modules \) -prune -o -print
+    command find ${2:+"$2"} . \( -name .git -o -name node_modules \) -prune -o \( -type d -iname secrets \) -o -print
 }
 
 # _dhs_git <root> <ls-files option>...: list the work tree's files under <root>, one per line, and return git's status,
@@ -747,6 +1044,7 @@ _dhs_git() {
 
 # _dhs_rev <kind>: list, relative to it, every file of a revision's tree; <kind> is rev, the directory git runs in, the
 # revision and the path of the tree from that directory, \x1d-separated. Returns git's status, or tr's when git's is 0.
+# --full-tree: below the repository root, ls-tree would also filter the tree <dir>:./<path> names by the cwd prefix.
 _dhs_rev() {
     local s="${1#rev$'\x1d'}" d rv p
     local -a ps=()
@@ -754,7 +1052,7 @@ _dhs_rev() {
     s="${s#*$'\x1d'}"
     rv="${s%%$'\x1d'*}"
     p="${s#*$'\x1d'}"
-    if git -C "$d" ls-tree -r -z --name-only "$rv^{commit}:./$p" | LC_ALL=C tr '\0' '\n'; then
+    if git -C "$d" ls-tree --full-tree -r -z --name-only "$rv^{commit}:./$p" | LC_ALL=C tr '\0' '\n'; then
         ps=("${PIPESTATUS[@]}")
     else
         ps=("${PIPESTATUS[@]}")
@@ -783,7 +1081,8 @@ _dhs_nested() {
         if [[ -z "$d" ]]; then
             continue
         elif [[ -d "$r/$d" ]]; then
-            (cd "$r" && command find "./$d" \( -name .git -o -name node_modules \) -prune -o -print) || rc=1
+            (cd "$r" && command find "./$d" \( -name .git -o -name node_modules \) -prune -o \
+                \( -type d -iname secrets \) -o -print) || rc=1
         else
             rc=1
         fi
@@ -842,7 +1141,7 @@ substr($0, 1, 1) == "\003" { if (substr($0, 2) != "0") failed = 1; next }
     t = p
     if (t ~ /[\200-\377]/) for (j = 1; j < nf; j += 2) gsub(F[j], F[j + 1], t)
     t = tolower("/" t)
-    if (t ~ sre && t !~ are) {
+    if (t ~ sre && t !~ are && (t !~ nre || t ~ lre || t ~ /\/[.][.](\/|$)/)) {
         print "H" idx "\t" p
         if (++hits >= maxh) exit
     }
@@ -911,7 +1210,8 @@ _dhs_keep() {
 _dhs_run() {
     set +o pipefail
     "$1" 2>/dev/null </dev/null | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh="$PROBE_MAX_HITS" \
-        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v nre="$SECRET_NARROW_AWK_RE" \
+        -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
 }
 
 # dir_holds_secret [<lister>]: list every probe root with <lister> (default _dhs_list) in one bounded pipeline. Returns
@@ -978,7 +1278,8 @@ dir_holds_secret() {
 _wh_run() {
     set +o pipefail
     { compgen -G "$1" 2>/dev/null; printf '\004\n'; } | LC_ALL=C awk -v cap="$PROBE_MAX_ENTRIES" -v maxh=1 -v fin=1 \
-        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
+        -v sre="$SECRET_PATH_AWK_RE" -v are="$SECRET_ALLOW_AWK_RE" -v nre="$SECRET_NARROW_AWK_RE" \
+        -v lre="$SECRET_NOLIFT_AWK_RE" -v folds="$SECRET_FOLDS_AWK" "$_DHS_AWK"
 }
 
 # wild_holds_secret <pattern>: expand <pattern> (an absolute path glob whose directory part glob_quote escaped) and test

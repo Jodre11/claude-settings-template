@@ -8,9 +8,12 @@
 #   5. Temp-directory write policy
 #   6. Subshells and grouping: an unquoted ( (also a zsh glob qualifier or extglob, by intent)
 #
-# The documented git-commit heredoc message is removed first (strip_commit_heredoc, the one
-# sanctioned exemption). The syntax checks then run on a quote-aware skeleton of the command
-# (shell_scan): operators inside string literals are ignored, but nothing outside them is hidden.
+# The documented git-commit heredoc message is removed first (strip_commit_heredoc), and so is the body of a
+# quoted-delimiter cat or tee heredoc that writes a file (strip_text_heredoc): the two sanctioned exemptions. A cat
+# heredoc is not a read-only cat for the temp-write rule below. The syntax checks then run on a quote-aware skeleton
+# of the command (shell_scan): operators inside string literals are ignored, but nothing outside them is hidden.
+# A backslash-newline continuation, a newline inside quotes and an escaped ; & or | read as text, but only in
+# a command with no unquoted, unescaped # (a comment can hide what bash reads as a separator).
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -23,6 +26,14 @@ if [[ -z "$cmd" ]]; then
 fi
 
 checked=$(strip_commit_heredoc "$cmd")
+text_checked=$(strip_text_heredoc "$checked")
+text_heredoc=0
+if [[ "$text_checked" != "$checked" ]]; then
+    text_heredoc=1
+fi
+checked="$text_checked"
+shell_scan "$checked"
+stripped="$SHELL_SKELETON"
 
 # ── Temp directory enforcement ──
 # Block $TMPDIR / /var/folders/ unconditionally. Block bare /tmp/ writes (must use $CLAUDE_TEMP_DIR).
@@ -36,19 +47,53 @@ checked=$(strip_commit_heredoc "$cmd")
 # falls back to an in-place delete. They still fall through to the syntax checks. Any other
 # /var/folders/ or $TMPDIR reference remains blocked.
 if mentions_temp_path "$checked" && ! cmd_mentions_review_worktree "$checked"; then
-    if [[ "$checked" == *'$TMPDIR'* || "$checked" == */var/folders/* ]]; then
+    ro=0
+    jq_first=0
+    pat_first=0
+    ro_re='^(cat|ls|head|tail|wc|file|stat|diff|less|more|grep|rg|find|readlink)[[:space:]]'
+    if (( text_heredoc )); then
+        :
+    elif [[ "$checked" =~ $ro_re ]]; then
+        ro=1
+    elif [[ "$checked" =~ ^jq[[:space:]] ]]; then
+        jq_first=1
+    fi
+    if [[ "$checked" =~ ^(grep|rg|jq)[[:space:]] ]]; then
+        pat_first=1
+    fi
+    # A single-quoted /var/folders/ or /tmp/ is a search pattern, a filter string or a file operand it reads, not a
+    # write, only for a pattern or filter tool (grep, rg, jq) that is the whole command: no output redirection and no
+    # pipe in the quote-aware skeleton. rg also needs a strict shape (plain options, single-quoted literals and plain
+    # paths, no --pre or --hostname-bin, which run a program). Every other command is tested on its full text.
+    sq_text="$checked"
+    sq_ok=0
+    if (( pat_first )) && [[ "$stripped" != *'>'* && "$stripped" != *'|'* ]]; then
+        sq_ok=1
+    fi
+    if (( sq_ok )) && [[ "$checked" =~ ^rg[[:space:]] ]] && ! rg_plain_shape "$checked"; then
+        sq_ok=0
+    fi
+    if (( sq_ok )); then
+        sq_strip "$checked"
+        sq_text="$SQ_STRIPPED"
+    fi
+    if [[ "$checked" == *'$TMPDIR'* || "$sq_text" == */var/folders/* ]]; then
         hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR instead of \$TMPDIR or /var/folders/. See CLAUDE.md 'Temporary Files' section."
     fi
     if ! cmd_mentions_session_temp "$checked"; then
-        # Allow read-only commands against bare /tmp/, deny anything else writing there
-        if ! [[ "$checked" =~ ^(cat|ls|head|tail|wc|file|stat|diff|less|more|grep|rg|find|readlink)[[:space:]] ]]; then
-            hook_deny "TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR for writing to temp. See CLAUDE.md 'Temporary Files' section."
+        # Allow read-only commands against bare /tmp/, deny anything else writing there; jq is judged on its
+        # unquoted text, so a redirection or operand into /tmp/ still denies.
+        temp_write_msg="TEMP DIRECTORY VIOLATION: Use \$CLAUDE_TEMP_DIR for writing to temp."
+        temp_write_msg+=" See CLAUDE.md 'Temporary Files' section."
+        if (( jq_first )); then
+            if mentions_temp_path "$sq_text"; then
+                hook_deny "$temp_write_msg"
+            fi
+        elif (( ! ro )); then
+            hook_deny "$temp_write_msg"
         fi
     fi
 fi
-
-shell_scan "$checked"
-stripped="$SHELL_SKELETON"
 
 warnings=""
 
@@ -61,7 +106,7 @@ if [[ "$SHELL_SCAN_FLAGS" == *S* ]]; then
     warnings="${warnings} git commit -F <file> for a commit message)\n"
 fi
 if [[ "$SHELL_SCAN_FLAGS" == *U* ]]; then
-    warnings="${warnings}  - unterminated quote detected\n"
+    warnings="${warnings}  - unterminated or ambiguous quote detected\n"
 fi
 if [[ "$SHELL_SCAN_FLAGS" == *P* ]]; then
     warnings="${warnings}  - subshell or grouping '(...)' detected (use separate Bash calls)\n"
@@ -122,6 +167,10 @@ if [[ "$stripped" =~ (^|[[:space:]])case[[:space:]] ]] \
 fi
 
 if [[ -n "$warnings" ]]; then
+    if [[ "${stripped//<<</}" == *'<<'* ]]; then
+        # shellcheck disable=SC2034  # read by hook_deny
+        HOOK_DENY_NOTE="$HEREDOC_DENY_NOTE"
+    fi
     msg=$(printf "CLAUDE.md VIOLATION (Bash rules):\n%bRewrite as separate Bash tool calls." "$warnings")
     hook_deny "$msg"
 fi
