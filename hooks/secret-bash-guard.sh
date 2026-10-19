@@ -33,6 +33,8 @@ FETCH_MSG="SECRET-FETCH BLOCK: this command emits a live secret to stdout (→ c
 FETCH_MSG+=" instead, as the whole command with one redirection of stdout: '... > \$CLAUDE_SECRET_DIR/<name>'. Then"
 FETCH_MSG+=" have a script read that file. A registry password may instead be piped straight into"
 FETCH_MSG+=" '... login --password-stdin'."
+FETCH_MSG+=" If the phrase is only a search pattern, write it to a file in \$CLAUDE_TEMP_DIR and search with"
+FETCH_MSG+=" 'grep -f <file>'."
 HEREDOC_MSG="COMMIT-HEREDOC BLOCK: this commit message heredoc cannot be screened safely (the words before -m hold"
 HEREDOC_MSG+=" quotes or shell syntax, the message holds a backquote or \$' or has a stray closing parenthesis, or"
 HEREDOC_MSG+=" text follows a message that leaves a quote or ( open). Put the message in a file and use"
@@ -169,6 +171,7 @@ gh_re+='|status[[:space:]](.*[[:space:]])?(-t|--show-token))([^[:alnum:]_.-]|$)'
 # The other tools' forms are matched only on a text that names one of them (tools_re): bash's regex engine takes time
 # in proportion to the pattern's size for every character, so one pattern of them all would slow every command.
 tools_re="(${ci_ansible}|${ci_tf}|${ci_npm}|${ci_doppler}|${ci_heroku}|${ci_launchctl}|${ci_av})"
+fetch_nl_re="(${ci_tf}|${ci_av})"
 fetch_forms2=(
     "${ci_ansible}${aws_gap}view"
     "${ci_tf}${tf_gap}output${tf_gap}--?(raw|json)(=true)?"
@@ -258,6 +261,21 @@ _fetch_copies() {
     fi
 }
 
+# _fetch_nl_copy <text> <text with its quotes and backslashes removed, or empty>: match <text>'s copy with every newline
+# made a space, with its own dequoted and masked copies. Only the terraform, tofu and aws-vault forms keep their gaps
+# off a newline (every other form's gap crosses one, so <text> matched it already), so a text naming none of them, as
+# written or dequoted, is left.
+_fetch_nl_copy() {
+    if ! [[ "$1" =~ $fetch_nl_re || "$2" =~ $fetch_nl_re ]]; then
+        return 0
+    fi
+    fetch_nlsp=$(printf '%s' "$1" | LC_ALL=C tr '\n' ' ') || fetch_hit=1
+    if _fetch_match "$fetch_nlsp"; then
+        fetch_hit=1
+    fi
+    _fetch_copies "$fetch_nlsp"
+}
+
 # The pre-check's third text: the command with its quotes and backslashes removed, as in the second, and each |, ; and
 # & that is quoted or escaped replaced by a space. Such a separator is no stage boundary, so a form's [^|;&] gaps may
 # cross it. '…' and $'…' run to their close ($'…' with its backslash escapes), "…" honours \ before $ ` " \ and newline,
@@ -300,6 +318,7 @@ fetch_checked=$(strip_commit_heredoc "$cmd")
 if [[ "$fetch_checked" == "$cmd" && "$cmd" == *$'-m "$(cat <<\'EOF\'\n'* ]]; then
     hook_deny "$HEREDOC_MSG"
 fi
+fetch_checked=$(strip_text_heredoc "$fetch_checked")
 fetch_masked=""
 # The forms match the command as written and with every backslash-newline removed, as bash removes it before it splits
 # words; a comment does not continue across one, so the joined copy alone would hide a form after it (inside '…' it
@@ -325,6 +344,15 @@ if [[ "$fetch_joined" != "$fetch_checked" ]]; then
     _fetch_copies "$fetch_joined"
     fetch_jdequoted="$FC_D"
     fetch_jmasked="$FC_M"
+fi
+# A form's gaps stop at a newline, but a newline inside quotes is part of a word, so a form the quote's lines would
+# split (terraform 'a<NL>b' output -raw x) is matched on a copy with every newline made a space. A hit there reaches
+# the one-line deny below; prose that spans a newline is denied too, the safe side.
+if [[ "$fetch_checked" == *$'\n'* ]]; then
+    _fetch_nl_copy "$fetch_checked" "$fetch_dequoted"
+    if [[ "$fetch_joined" != "$fetch_checked" ]]; then
+        _fetch_nl_copy "$fetch_joined" "$fetch_jdequoted"
+    fi
 fi
 gh_soft=0
 strun=0
@@ -389,7 +417,7 @@ word_classes=(
     'nm R uniq cut paste diff cmp comm join fold rev tr column pr fmt expand unexpand iconv look dd openssl tar zip'
     'nm R gzip bzip2 xz zstd zcat ggrep ugrep ug'
     'nm J jq'
-    'nm W awk gawk'
+    'nm W awk gawk mawk nawk'
     'nm G git'
     'nm H sh bash zsh dash ksh'
     'nm K python python3 perl ruby node php pypy bun deno lua luajit rscript osascript'
@@ -409,7 +437,7 @@ word_classes=(
     'nm B sudo doas trap make gmake npx npm pnpm yarn bunx expect tclsh pwsh powershell busybox tmux screen fish'
     'nm B tcsh csh gsed'
     'cp A sudo doas nice nohup time timeout command builtin exec noglob nocorrect xargs stdbuf ionice caffeinate'
-    'cp A chronic flock unbuffer setsid direnv parallel'
+    'cp A chronic flock unbuffer setsid direnv parallel taskset chrt script'
     'cp b repeat'
     'cp E env'
     'cp e export'
@@ -531,7 +559,7 @@ _git_ps_word() {
     if [[ "$p" == *[[:space:]\;\&\|\<\>\(\)\`\$\{\}\\\'\"]* ]]; then
         return 0
     fi
-    if _rr_ps_exclude "$1"; then
+    if _rr_ps_exclude "$1" "${wmk//[!b]/}"; then
         GPW=0
     elif [[ "$1" == ':('* && -n "$p" ]]; then
         GPW=0
@@ -612,11 +640,30 @@ _deny_copier() {
     hook_deny "$msg"
 }
 
-# _deny_shell <form>: deny a shell or command runner given a command string.
+SSH_REMEDY="Write the commands to a file in \$CLAUDE_TEMP_DIR with the Write tool and run"
+SSH_REMEDY+=" 'ssh <host> bash -s < <file>' with the file's literal path (not \$CLAUDE_TEMP_DIR) instead."
+
+# _deny_shell <form> [<remedy>]: deny a shell or command runner given a command string; <remedy> replaces the default
+# remedy sentence.
 _deny_shell() {
-    local msg="SHELL-STRING BLOCK: '$1' runs a command string this hook cannot screen. Write the commands to a"
-    msg+=" script in \$CLAUDE_TEMP_DIR with the Write tool and run it with 'bash <file>' instead."
+    local msg="SHELL-STRING BLOCK: '$1' runs a command string this hook cannot screen. "
+    if [[ -n "${2:-}" ]]; then
+        msg+="$2"
+    else
+        msg+="Write the commands to a script in \$CLAUDE_TEMP_DIR with the Write tool and run it with 'bash <file>'"
+        msg+=" instead."
+    fi
     hook_deny "$msg"
+}
+
+# _deny_fed <form> [<remedy>]: _deny_shell for a shell fed by a pipe or redirection; a here-document in the stage adds
+# the heredoc note, except when <remedy> is the ssh one, whose command takes a file and no here-document.
+_deny_fed() {
+    if (( shd )) && [[ -z "${2:-}" ]]; then
+        # shellcheck disable=SC2034  # read by hook_deny
+        HOOK_DENY_NOTE="$HEREDOC_DENY_NOTE"
+    fi
+    _deny_shell "$@"
 }
 
 # _plain_word <s>: 0 if <s> is one plain word (a program or path) with no whitespace or shell syntax.
@@ -675,6 +722,9 @@ _cmd_var_word() {
     if [[ "$w" == */[Ee][Nn][Vv] ]]; then
         gev=1
     fi
+    if [[ "$w" == *=* && ( "${w%%=*}" == *[\$\`\\\{\*\?\[]* || "$wmk" == *n* ) ]]; then
+        rr_gitps=1
+    fi
     if [[ "$w" == [A-Z]*=* ]]; then
         v="${w%%=*}"
         v="${v%+}"
@@ -690,6 +740,8 @@ _cmd_var_word() {
                     _git_cfg_key "$v" "${w#*=}" "${w#*=}" ;;
                 GIT_CONFIG_PARAMETERS)
                     _deny_shell GIT_CONFIG_PARAMETERS ;;
+                GIT_*PATHSPECS)
+                    rr_gitps=1 ;;
             esac
         fi
     fi
@@ -946,7 +998,7 @@ _rr_root() {
         return 1
     fi
     _pcwd
-    if _rr_has_glob "$o"; then
+    if (( ! RR_LIT )) && _rr_has_glob "$o"; then
         _rr_glob_dir "$o"
         c="${o##*/}"
         if [[ "$o" != *'**'* && "$o" != *'{'* && "$1" != git* && "$o" != *'$'* && "$o" != '~'[!/]* ]] \
@@ -1255,6 +1307,26 @@ _RR_RG_VAL+=' ignore-file max-depth maxdepth max-filesize type type-not type-add
 _RR_RG_VAL+=' before-context color colors context context-separator field-context-separator field-match-separator'
 _RR_RG_VAL+=' hostname-bin hyperlink-format max-columns path-separator replace sort sortr generate '
 _RR_GIT_VAL=' max-depth context before-context after-context threads max-count '
+# The value options whose value names a file or a program, so it is no pattern.
+_RR_FILE_VAL=' file exclude-from include-from from filter ignore-file pre hostname-bin '
+# The flags (options taking no value) of each tool; a bare long option in neither table may take the next word as its
+# value, so it voids the pattern roles.
+_RR_GREP_FLAGS=' extended-regexp fixed-strings basic-regexp perl-regexp ignore-case no-ignore-case invert-match'
+_RR_GREP_FLAGS+=' word-regexp line-regexp count color colour files-with-matches files-without-match only-matching quiet'
+_RR_GREP_FLAGS+=' silent no-messages byte-offset with-filename no-filename line-number line-buffered null null-data'
+_RR_GREP_FLAGS+=' text initial-tab recursive dereference-recursive binary version help '
+_RR_RG_FLAGS=' hidden no-ignore no-ignore-vcs no-ignore-dot no-ignore-parent no-ignore-global no-ignore-files'
+_RR_RG_FLAGS+=' no-ignore-exclude follow ignore-case smart-case case-sensitive fixed-strings word-regexp line-regexp'
+_RR_RG_FLAGS+=' line-number no-line-number count count-matches files files-with-matches files-without-match json'
+_RR_RG_FLAGS+=' vimgrep heading no-heading multiline multiline-dotall pcre2 invert-match only-matching quiet'
+_RR_RG_FLAGS+=' with-filename no-filename column no-column trim stats sort-files unrestricted no-messages null'
+_RR_RG_FLAGS+=' null-data text binary search-zip crlf byte-offset passthru pretty no-config one-file-system version'
+_RR_RG_FLAGS+=' help type-list pcre2-version '
+_RR_GIT_FLAGS=' line-number ignore-case word-regexp invert-match count name-only files-with-matches'
+_RR_GIT_FLAGS+=' files-without-match full-name extended-regexp fixed-strings perl-regexp basic-regexp cached untracked'
+_RR_GIT_FLAGS+=' no-index recurse-submodules heading break show-function function-context all-match quiet column'
+_RR_GIT_FLAGS+=' only-matching null no-color color text textconv no-textconv exclude-standard no-exclude-standard and'
+_RR_GIT_FLAGS+=' or not '
 
 # _rr_start <reader>: begin the probe walk of a grep, egrep, fgrep, ggrep, ugrep, ug, rg, git grep, git diff or diff.
 # The first reader of a stage owns its walk: a later reader-named word is an operand of it. A reader inside find -exec
@@ -1306,6 +1378,16 @@ _rr_start() {
     rrfl=0
     rrask=""
     rrcd=""
+    rrvf=0
+    rrunk=$rrasg
+    rrdyn=0
+    # Roles (P, F) are given only when the tool is the stage's first command word: a wrapper's option value can look
+    # like the command.
+    case "$rrn" in
+        grep|rg) rrown=$cw1 ;;
+        'git grep') rrown=$gown ;;
+        *) rrown=0 ;;
+    esac
     case "$rrn" in
         rg)
             rrec=1
@@ -1331,8 +1413,9 @@ _rr_start() {
 }
 
 # _rr_op <tag> <word>: record a positional word of the walked reader (tag w), or a word that is an option's value under
-# one reading only (tag m). Positional words after git's -- are tagged W. At most 65 positional and 64 m words are
-# kept; the counts go on.
+# one reading only (tag m). Positional words after git's -- are tagged W. Each entry is the tag, the word's glob marker
+# (rrg, 1 when its glob characters are all quoted, 2 when a brace expanded to it) and the word. At most 65 positional
+# and 64 m words are kept; the counts go on.
 _rr_op() {
     local t="$1"
     if [[ "$t" == m ]]; then
@@ -1349,7 +1432,7 @@ _rr_op() {
             t=W
         fi
     fi
-    rrops+="$t$2"$'\x1e'
+    rrops+="$t$rrg$2"$'\x1e'
 }
 
 # _rr_inc <glob>, _rr_exc <glob>, _rr_xdir <glob>: record an --include, --exclude or --exclude-dir value. GNU and BSD
@@ -1423,7 +1506,14 @@ _rr_short() {
             else
                 if [[ "$c" == e || "$c" == f ]]; then rre=1; fi
                 if [[ -z "$b" ]]; then
-                    if [[ "$c" == d && "$rrn" == grep ]]; then rrv=d; else rrv=v; fi
+                    if [[ "$c" == d && "$rrn" == grep ]]; then
+                        rrv=d
+                    else
+                        rrv=v
+                        if [[ "$c" == f ]]; then rrvf=1; fi
+                    fi
+                elif [[ "$c" != f ]]; then
+                    RR_ROLE=P
                 fi
             fi
             return 0
@@ -1449,12 +1539,31 @@ _rr_short() {
 # that does (an abbreviation, or an option one grep gives an optional value, leaves an m word). An option this does not
 # list is a flag.
 _rr_long() {
-    local n="${1%%=*}" v="" eq=0 k
+    local n="${1%%=*}" v="" eq=0 k rvt="" rft="" rfv=0
     if [[ "$1" == *=* ]]; then
         v="${1#*=}"
         eq=1
     fi
     k="${n#--}"
+    if [[ "$_RR_FILE_VAL" == *" $k "* ]]; then
+        rfv=1
+    fi
+    case "$rrn" in
+        grep) rvt="$_RR_GREP_VAL"; rft="$_RR_GREP_FLAGS" ;;
+        rg) rvt="$_RR_RG_VAL"; rft="$_RR_RG_FLAGS" ;;
+        'git grep') rvt="$_RR_GIT_VAL"; rft="$_RR_GIT_FLAGS" ;;
+    esac
+    # An = form names its value: a pattern or a setting unless the option takes a file or a program. A bare option in
+    # neither table may take the next word as its value.
+    if [[ -n "$rvt" ]]; then
+        if (( eq )); then
+            if [[ "$rvt" == *" $k "* ]] && (( ! rfv )); then
+                RR_ROLE=P
+            fi
+        elif [[ "$rvt" != *" $k "* && "$rft" != *" $k "* ]]; then
+            rrunk=1
+        fi
+    fi
     case "$rrn" in
         grep)
             if [[ --recursive == "$n"* || --dereference-recursive == "$n"* || "$n" == --index || "$n" == --depth ]]
@@ -1501,7 +1610,12 @@ _rr_long() {
                 return 0
             fi
             if [[ "$_RR_GREP_VAL" == *" $k "* ]]; then
-                if [[ "$k" == context || "$k" == group-separator ]]; then rrv=m; else rrv=v; fi
+                if [[ "$k" == context || "$k" == group-separator ]]; then
+                    rrv=m
+                else
+                    rrv=v
+                    rrvf=$rfv
+                fi
             elif [[ "$_RR_GREP_ABBR" == *" $k"* ]]; then
                 rrv=m
             fi ;;
@@ -1520,6 +1634,7 @@ _rr_long() {
             esac
             if (( ! eq )) && [[ "$_RR_RG_VAL" == *" $k "* ]]; then
                 rrv=v
+                rrvf=$rfv
             fi ;;
         'git grep')
             if [[ --no-index == "$n"* ]]; then rrnoi=1; fi
@@ -1534,6 +1649,7 @@ _rr_long() {
             if (( ! eq )); then
                 if [[ "$_RR_GIT_VAL" == *" $k "* ]]; then
                     rrv=v
+                    rrvf=$rfv
                 elif [[ "$_RR_GIT_VAL" == *" $k"* ]]; then
                     rrv=m
                 fi
@@ -1552,15 +1668,19 @@ _rr_long() {
 
 # _rr_word <word>: feed the next word of the walked reader's stage to the probe walk.
 _rr_word() {
-    local p="$rrv"
+    local p="$rrv" pf="$rrvf"
+    RR_ROLE=""
     if [[ -n "$p" ]]; then
         rrv=""
+        rrvf=0
         case "$p" in
-            v) return 0 ;;
-            d) if [[ "$1" == recurse ]]; then rrec=1; fi; return 0 ;;
-            i) _rr_inc "$1"; return 0 ;;
-            x) _rr_exc "$1"; return 0 ;;
-            X) _rr_xdir "$1"; return 0 ;;
+            v)
+                if (( ! pf )); then RR_ROLE=P; fi
+                return 0 ;;
+            d) RR_ROLE=P; if [[ "$1" == recurse ]]; then rrec=1; fi; return 0 ;;
+            i) RR_ROLE=P; _rr_inc "$1"; return 0 ;;
+            x) RR_ROLE=P; _rr_exc "$1"; return 0 ;;
+            X) RR_ROLE=P; _rr_xdir "$1"; return 0 ;;
             m)
                 if [[ "$1" == recurse ]]; then rrec=1; fi
                 rrmv=1
@@ -1571,6 +1691,17 @@ _rr_word() {
                 # Under the reading where the last option took no value, this word is an option of its own.
                 rrsup=1 ;;
         esac
+    fi
+    if (( ! rrdd )); then
+        # A $'...' escape stays as written in the word (\x2d for -): a leading numeric one may be an option, and one
+        # inside an option word may be a bundled letter such as f. Other escapes decode to no letter.
+        case "$1" in
+            \\[xuU0-7]*|-*\\[xuU0-7]*) rrunk=1 ;;
+        esac
+    fi
+    # An option word git grep reads after the shell assembles it (--recurse-sub${X}modules) may name any option.
+    if (( ! rrdd )) && [[ "$rrn" == 'git grep' && "$1" == -* && ( "$1" == *[\$\`\\\{\*\?\[]* || "$wmk" == *b* ) ]]; then
+        rrdyn=1
     fi
     if (( ! rrdd )) && [[ "$1" == -- ]]; then
         rrdd=1
@@ -1584,6 +1715,11 @@ _rr_word() {
     elif [[ "$rrn" == 'git grep' && ( "$1" == '(' || "$1" == ')' ) ]]; then
         :
     else
+        # The first positional is the pattern, unless an option gives one (settled in _rr_settle); git grep's pathspecs
+        # after -- are not.
+        if (( rron == 0 )) && { [[ "$rrn" != 'git grep' ]] || (( ! rrsep )); }; then
+            RR_ROLE=F
+        fi
         _rr_op w "$1"
     fi
     rrsup=0
@@ -1592,6 +1728,16 @@ _rr_word() {
 # _rr_settle: end the probe walk (_rr_settle_walk), then restore the globals the walk's probes read.
 _rr_settle() {
     _rr_settle_walk
+    # An ambiguous option or an unknown one may have taken a word as its value, so no word of the walk is a pattern; an
+    # option that gave the pattern, or rg --files, leaves the first positional a file.
+    if (( rrown )); then
+        if (( rrmv || rrunk )); then
+            _p_void
+        elif (( spf && (rre || rrfl) )); then
+            _snx "$spfw"
+            spf=0
+        fi
+    fi
     RR_LIST=0
     RR_RGCOL=0
     RR_DEEP=1
@@ -1622,7 +1768,7 @@ _rr_stdin_ok() {
 # glob keeps the literal magic before it in every match, so it may stay.
 _rr_ps_exclude() {
     local m
-    if [[ "$1" == *[\$\`\{]* ]]; then
+    if [[ "$1" == *[\$\`\{]* || "${2:-}" == [2b] ]]; then
         return 1
     fi
     if [[ "$1" == ':('* ]]; then
@@ -1639,54 +1785,192 @@ _rr_ps_exclude() {
     [[ "$m" == *'!'* || "$m" == *'^'* ]]
 }
 
+# _rr_cat <dir> <object>: set RR_CAT to the type git cat-file -t prints for <object> in <dir> (blob, tree or commit), or
+# to absent when git says its path is not in the revision (the only failure read as an answer), else to empty. One call
+# within the walks' git budget; none once it is spent.
+_rr_cat() {
+    local st=0
+    RR_CAT=""
+    if (( rr_gitn >= RR_GIT_MAX )); then
+        return 0
+    fi
+    rr_gitn=$(( rr_gitn + 1 ))
+    RR_CAT=$(git -C "$1" cat-file -t "$2" 2>&1) || st=$?
+    if (( st != 0 )); then
+        case "$RR_CAT" in
+            "fatal: path '"*"' does not exist in '"*"'" \
+                | "fatal: path '"*"' exists on disk, but not in '"*"'") RR_CAT=absent ;;
+            *) RR_CAT="" ;;
+        esac
+    fi
+}
+
 # _rr_rev_ok <rev>: 0 if git grep's operand <rev>, read as a revision, confines the search to what the hook can screen:
-# the command has --, and each pathspec after it is literal (no pattern or $, which the shell expands), names no
-# secret, and names a blob or a tree in the commit <rev> peels to (git cat-file, run in git -C's directory or the
-# payload's cwd, one call per pathspec within the walks' git budget). A tree is probed from the revision (the rev
-# probe kind lists it with git ls-tree), not from the work tree; an exclude pathspec is skipped, as it only drops
-# files, but at least one other pathspec is needed. : magic, a tree-ish operand (rev:path), a tree revision (whose
-# path from the root no pathspec shows) and an unknown revision all fail the cat-file test. A git -c core setting or a
-# GIT_CONFIG assignment fails it too, as the hook's own git call cannot carry them, and so does an earlier cd or an
-# env -C, after which git runs somewhere the cat-file call does not. --recurse-submodules fails a tree, whose
-# submodules git searches at their recorded commits.
+# <rev> peels to a commit (git cat-file, run in git -C's directory or the payload's cwd, within the walks' git budget)
+# and holds no $, :, backslash, pattern or leading -. With -- each pathspec after it is literal (no $ or backslash,
+# which the shell or git reads on, nor an absolute or ~ one) or a pattern standing for the directory before its first
+# pattern component (none climbing out with ..), names no secret, and names a blob or a tree of the commit, or nothing
+# in it (an ASCII name, as git precomposes any other before it matches). A tree is probed from the revision (the rev
+# probe kind lists it with git ls-tree), not from the work tree. An exclude pathspec is skipped, as it only drops
+# files; the whole tree is listed when the root is named, or no other pathspec is left. Without --, the one operand
+# is the revision and the whole tree is listed. Other : magic, a tree-ish operand (rev:path) and a tree or unknown
+# revision fail. A git -c core setting, a GIT_CONFIG assignment or a pathspec setting (rr_gitps: spelled out, or in a
+# git option or variable name the shell may assemble, which holds a $, backquote, backslash, brace or pattern
+# character, or a variable written under a computed name) fails it too, as the hook's own git call cannot carry them,
+# and so does an earlier cd or an env -C, after which git runs somewhere the cat-file call does not. So does an option
+# word the shell assembles or expands (rrunk, rrdyn), which could be --recurse-submodules or any other. That flag fails
+# every tree and every absent path (a gitlink hides what lies under it), as git searches the submodules at their
+# recorded commits; so does submodule.recurse, asked of the repository (_rr_subrec fails closed). A pathspec that
+# equals or lies under a tree path in a different case also fails (_rr_case_clear), since a setting that folds case
+# would match it.
 _rr_rev_ok() {
-    local rest="$rrops" o t ty dir n=0
-    if (( ! rrsep || gcore || rr_gitcfg || cdc || ecd )); then
+    local rest="$rrops" o t dir p np=0 whole=0 n cl="" s us=$'\x1f' sub="$rrsub"
+    if (( gcore || rr_gitcfg || rr_gitps || cdc || ecd || rrunk || rrdyn )); then
         return 1
+    fi
+    if [[ "$1" == *[\$:\\]* || "$1" == -* ]] || _rr_has_glob "$1"; then
+        return 1
+    fi
+    _cd_text
+    if [[ "$CDT" == *PATHSPECS* || "$CDT" == *-pathspecs* ]]; then
+        return 1
+    fi
+    _cd_dyn
+    if (( cddyn )); then
+        return 1
+    fi
+    if (( ! rrsep )); then
+        n=$rron
+        if (( ! rre )); then
+            n=$(( n - 1 ))
+        fi
+        if (( n != 1 || rrmv || rrmn )); then
+            return 1
+        fi
+        whole=1
     fi
     _pcwd
     if ! norm_path "${rrcd:-.}" "$PCWD"; then
         return 1
     fi
     dir="$NORM_PATH"
-    while [[ -n "$rest" ]]; do
+    _rr_cat "$dir" "$1^{commit}"
+    if [[ "$RR_CAT" != commit ]]; then
+        return 1
+    fi
+    if (( ! sub )) && _rr_subrec "$dir"; then
+        sub=1
+    fi
+    while (( rrsep )) && [[ -n "$rest" ]]; do
         o="${rest%%$'\x1e'*}"
         rest="${rest#*$'\x1e'}"
         t="${o:0:1}"
-        o="${o:1}"
+        # The glob marker is skipped: a pathspec is git's own pattern, quoted or not.
+        g="${o:1:1}"
+        o="${o:2}"
         if [[ "$t" != W ]]; then
             continue
         fi
-        if [[ "$o" == :* ]] && _rr_ps_exclude "$o"; then
-            continue
-        fi
-        n=$(( n + 1 ))
-        if [[ "$o" == *'$'* ]] || _rr_has_glob "$o" || (( rr_gitn >= RR_GIT_MAX )); then
+        if [[ "$o" == :* ]]; then
+            if _rr_ps_exclude "$o" "$g"; then
+                continue
+            fi
             return 1
         fi
-        name_fold "$o"
+        if [[ "$o" == *[\$\\]* || "$o" == [/~]* ]]; then
+            return 1
+        fi
+        np=$(( np + 1 ))
+        p="$o"
+        if _rr_has_glob "$o"; then
+            if [[ "/$o/" == */../* ]]; then
+                return 1
+            fi
+            _rr_glob_dir "$o"
+            p="$RR_GLOB_DIR"
+            if [[ "$p" == . ]]; then
+                whole=1
+                continue
+            fi
+        fi
+        name_fold "$p"
         if path_is_secret "$NAME_FOLD"; then
             return 1
         fi
-        rr_gitn=$(( rr_gitn + 1 ))
-        ty=$(git -C "$dir" cat-file -t "$1^{commit}:./$o" 2>/dev/null)
-        if [[ "$ty" == tree ]] && (( ! rrsub )) && norm_path "$o" "$dir"; then
-            _rr_dir "$form" "rev"$'\x1d'"$dir"$'\x1d'"$1"$'\x1d'"$o" "$NORM_PATH"
-        elif [[ "$ty" != blob ]]; then
+        if (( whole )); then
+            continue
+        fi
+        s="$p"
+        while [[ "$s" == */ ]]; do
+            s="${s%/}"
+        done
+        s="${s#./}"
+        if [[ -n "$s" && "$s" != . ]]; then
+            if [[ "/$s/" == *//* || "/$s/" == */./* || "/$s/" == */../* || "$s" == *[!\ -~]* ]]; then
+                return 1
+            fi
+            cl+="$s$us"
+        fi
+        _rr_cat "$dir" "$1^{commit}:./$p"
+        case "$RR_CAT" in
+            blob) ;;
+            tree)
+                if (( sub )) || ! norm_path "$p" "$dir"; then
+                    return 1
+                fi
+                _rr_dir "$form" "rev"$'\x1d'"$dir"$'\x1d'"$1"$'\x1d'"$p" "$NORM_PATH" ;;
+            absent)
+                # git precomposes a non-ASCII pathspec (core.precomposeunicode), so its spelling here may differ.
+                if (( sub )) || [[ "$p" == *[!\ -~]* ]]; then
+                    return 1
+                fi ;;
+            *) return 1 ;;
+        esac
+    done
+    if (( np == 0 )); then
+        whole=1
+    fi
+    if (( whole )); then
+        if (( sub )); then
             return 1
         fi
-    done
-    (( n > 0 ))
+        _rr_dir "$form" "rev"$'\x1d'"$dir"$'\x1d'"$1"$'\x1d' "$dir"
+    elif [[ -n "$cl" ]] && ! _rr_case_clear "$dir" "$1" "$cl"; then
+        return 1
+    fi
+    return 0
+}
+
+# _rr_case_clear <dir> <rev> <pathspecs>: 0 if no path of <rev>'s tree (listed from <dir>, one budgeted git call, at
+# most 50000 paths) equals or lies under a pathspec of the \x1f-separated list in a different case. A pathspec setting
+# that folds case (GIT_ICASE_PATHSPECS, however it is spelled) would match those paths, which the exact lookups of
+# _rr_rev_ok did not see (a sibling Docs/ beside a pathspec docs, whatever the exact lookup found). A path holding a
+# newline, any failure, or a spent budget reads as a clash.
+_rr_case_clear() {
+    local out st=0
+    if (( rr_gitn >= RR_GIT_MAX )); then
+        return 1
+    fi
+    rr_gitn=$(( rr_gitn + 1 ))
+    out=$(git -C "$1" ls-tree --full-tree -r --name-only -z "$2^{commit}:./" 2>/dev/null \
+        | LC_ALL=C tr '\0' '\036' | LC_ALL=C awk -v ps="$3" -v cap=50000 '
+        BEGIN {
+            RS = sprintf("%c", 30)
+            n = split(ps, S, sprintf("%c", 31))
+            for (i = 1; i <= n; i++) L[i] = tolower(S[i])
+        }
+        {
+            if (++c > cap || index($0, "\n")) { print "cap"; bad = 1; exit }
+            lp = tolower($0)
+            for (i = 1; i <= n; i++) {
+                if (L[i] == "") continue
+                if ((lp == L[i] || index(lp, L[i] "/") == 1) && !($0 == S[i] || index($0, S[i] "/") == 1)) {
+                    print "clash"; bad = 1; exit
+                }
+            }
+        }
+        END { if (!bad) print "ok" }') || st=$?
+    [[ "$out" == ok && "$st" == 0 ]]
 }
 
 # _rr_settle_walk: a reader that prints contents has each operand probed (the first is its pattern unless -e or -f gave
@@ -1694,12 +1978,13 @@ _rr_rev_ok() {
 # existing path probes its working directory (git -C's, for git), except an rg whose stdin it reads. A reader after
 # xargs takes more words from its input, so neither shortcut applies there. Inside find -exec, a {} operand is find's
 # and, under -execdir, a relative root holds an ask. A names-only reader queues its roots for a reader after xargs and
-# marks the stage (srl). A git grep operand that is no path may be a revision, which holds an ask unless the pathspecs
-# after -- confine it to blobs (_rr_rev_ok); a pathspec with magic may reach past the root and holds one too. After
+# marks the stage (srl). A git grep operand that is no path may be a revision, which holds an ask unless _rr_rev_ok
+# lists what the search reads from it; a pathspec with magic may reach past the root and holds one too. After
 # xargs or parallel, a recursive reader's operand holding the replacement string
 # has the directory before it probed, following links (xk), as grep -r follows a link it is given.
 _rr_settle_walk() {
-    local rest="$rrops" o ro t first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk rrrv=0
+    local rest="$rrops" o ro t g first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk
+    local rrrv=0
     act="${act//r/}"
     case "$rrn" in
         grep)
@@ -1781,7 +2066,8 @@ _rr_settle_walk() {
         o="${rest%%$'\x1e'*}"
         rest="${rest#*$'\x1e'}"
         t="${o:0:1}"
-        o="${o:1}"
+        g="${o:1:1}"
+        o="${o:2}"
         ro="$o"
         # find's {}, or a path under it with no .. segment, stays inside find's roots; another word built on {} may not.
         if (( rrex )) && [[ "$o" == *'{}'* ]]; then
@@ -1831,7 +2117,7 @@ _rr_settle_walk() {
         if [[ "$rrn" == 'git grep' ]]; then
             # An exclude pathspec only drops files: what the other operands (or the working directory) name is probed.
             if [[ "$o" == :* ]]; then
-                if ! _rr_ps_exclude "$o"; then
+                if ! _rr_ps_exclude "$o" "$g"; then
                     _rr_hold "$form" "the pathspec '$o' holds magic the hook does not resolve"
                     any=1
                 fi
@@ -1846,18 +2132,26 @@ _rr_settle_walk() {
             # naming no path may be one.
             if [[ "$t" == w ]] && (( ! rrnoi && ! rrunt )) && { (( rrsep )) || { [[ "$o" != *'$'* ]] \
                     && ! _rr_has_glob "$o" && ! _rr_exists "$o"; }; }; then
-                if _rr_rev_ok "$ro"; then
+                # A word a brace built is never cleared as a revision; with no --, it is also read as a path.
+                if [[ "$g" != 2 ]] && _rr_rev_ok "$ro"; then
                     rrrv=1
                 else
                     _rr_hold "$form" "'$o' may name a revision, whose files the hook cannot list"
                 fi
-                any=1
-                continue
+                if [[ "$g" != 2 ]] || (( rrsep )); then
+                    any=1
+                    continue
+                fi
             fi
+        fi
+        # A marked operand is a literal name, unless the stage re-parses its words or runs a shell from awk or sed.
+        if [[ "$g" == 1 ]] && (( ! srp && ! sgv )); then
+            RR_LIT=1
         fi
         if _rr_root "$form" "$kind" "$o" "$inc" "$exc" "$xd"; then
             any=1
         fi
+        RR_LIT=0
     done
     if (( RR_RGCOL )); then
         RR_RGCOL=0
@@ -2060,7 +2354,7 @@ _find_roots() {
 # does, queue the directory before them in wpend instead, for the stage end to probe when the stage reads. Every other
 # such word records the directory it expands in (wpip) for a reader after xargs.
 _wild_word() {
-    local w="$1" d c pat msg wrc=0 rest wd
+    local w="$1" d c pat msg wrc=0 rest wd dg=0
     if [[ "$w" == */* ]]; then
         d="${w%/*}"
         c="${w:${#d}+1}"
@@ -2070,6 +2364,7 @@ _wild_word() {
         c="$w"
     fi
     if _rr_has_glob "$d"; then
+        dg=1
         if [[ "$d" == *'**'* || "$d" == *'{'* ]]; then
             _rr_glob_dir "$w"
             if [[ "$wpend" != *$'\x1f'"$RR_GLOB_DIR"$'\x1e'* ]]; then
@@ -2086,7 +2381,7 @@ _wild_word() {
         return 1
     fi
     # The directory the word expands in (. for a bare wildcard), kept in wpip for a reader after xargs.
-    if _rr_has_glob "$d"; then
+    if (( dg )); then
         _rr_glob_dir "$w"
         wd="$RR_GLOB_DIR"
     else
@@ -2111,7 +2406,7 @@ _wild_word() {
         hook_hold_ask "$msg"
         return 1
     fi
-    if _rr_has_glob "$d"; then
+    if (( dg )); then
         _rr_glob_dir "$w"
         if [[ "$w" == *'$'* ]] || ! norm_path "$RR_GLOB_DIR" "$PCWD" || [[ ! -d "$NORM_PATH" ]]; then
             return 1
@@ -2133,6 +2428,10 @@ _wild_word() {
         glob_quote "$NORM_PATH"
         pat="${GLOB_QUOTED%/}/$rest"
     else
+        # A plain one-component name that is no directory under a clean cwd needs no normalising to be refused.
+        if [[ "$d" != *[!A-Za-z0-9_-]* && "/$PCWD/" != */./* && "/$PCWD/" != */../* && ! -d "$PCWD/$d" ]]; then
+            return 1
+        fi
         if ! norm_path "$d" "$PCWD" || [[ ! -d "$NORM_PATH" ]]; then
             return 1
         fi
@@ -2421,7 +2720,7 @@ _cd_word() {
         return 0
     fi
     act="${act//c/}"
-    if [[ "$cdo$w" == *[\$\*\?\[\{~]* ]]; then
+    if [[ "$cdo$w" == *[\$\*\?\[\{~]* || "$wmk" == *b* ]]; then
         _hold_cd "$cdo $w" "it substitutes into the cwd a word the hook cannot resolve"
         return 0
     fi
@@ -3166,6 +3465,13 @@ rr_gitcfg=0
 if [[ "$cmd" == *GIT_CONFIG* ]]; then
     rr_gitcfg=1
 fi
+# A pathspec setting (GIT_ICASE_PATHSPECS and kin, or a git --icase-pathspecs option) changes which names a pathspec
+# matches, so one absent from a revision by its spelling may still read a file.
+rr_gitps=0
+if [[ "$cmd" == *PATHSPECS* || "$cmd" == *-pathspecs* || -n "${GIT_ICASE_PATHSPECS+x}" \
+        || -n "${GIT_GLOB_PATHSPECS+x}" || -n "${GIT_NOGLOB_PATHSPECS+x}" || -n "${GIT_LITERAL_PATHSPECS+x}" ]]; then
+    rr_gitps=1
+fi
 # The cd walk (_cd_word): cdd marks a --, cdn counts operands and cdo holds the first; cdc counts the cd commands so far
 # (each costs a few pattern tests and a fork, so past CD_MAX the rest hold an ask unchecked), and cdtb the characters
 # of the paths whose ancestors _cd_tree has tested (at most CD_TREE_BUDGET); cdp marks a command that sets CDPATH, or
@@ -3190,10 +3496,1013 @@ cdc=0
 cdp=-1
 cdsf=0
 CDSID=""
+# Quoted words: mk is the marker shell_words puts before a word (g: its glob characters are all quoted or escaped, d:
+# its $ are), wmk the current word's. A marked glob is a literal name, unless the stage re-parses its words (srp: a
+# shell, watch, parallel, su, a runner, an interpreter, eval, ssh) or runs an awk or sed program (ssa a or s) that can
+# run a shell (sgv); so the first 64 marked glob words (wmq, wmqn of them) wait for the stage end, where such a stage
+# expands them after all. The first marked secret-shaped $ word (vmq) is text too, unless the stage re-parses it, runs
+# awk or sed, or ends at a pipe (spipe), whose next stage may expand it; vsa marks a V that came from awk or sed. rrg
+# is the glob marker the rr walk records with each operand, and RR_LIT has _rr_root read its operand as a literal name.
+# The sed walk (_sed_word): ssw marks a pending -e value, ssdd a --, and the first ssl operands (ssn so far) may be the
+# program. The -e values join, newline between, into ssp (sse counts them, -f scripts included); with none, each of
+# those operands waits in sso, and _sed_settle runs _sed_runs_shell on them at the stage end. The scan costs time in
+# step with the program text, so the text collected over the whole command (sbud bytes) is held to SED_BUDGET_MAX.
+_SED_NL=$'\n'
+SED_WHY=""
+SED_BUDGET_MAX=8192
+sbud=0
+mk=""
+wmk=""
+spipe=0
+rrg=0
+RR_LIT=0
+# Operand roles: cw1 marks a word that is its stage's first command word (after assignments), wrole the role a walk
+# gives the current word (P a pattern or an option's value, F the first positional, which is a pattern unless an option
+# gave one, x a word that is neither but starts no command), wsx a word whose S came from a git pathspec or a wildcard,
+# never P. A stage counts the S sources that are not P (snx, rdx the first), the P ones (spn), and whether an F one
+# stands (spf, spfw the word); ngr counts a git reader subcommand no class lookup counts; gown and ghown mark git and gh
+# as the first command word. The rr walk: rrown owns roles (the tool is the first command word), rrvf marks a pending
+# value naming a file or a program, rrunk an option the tables do not know, which may take the next word as its value,
+# and RR_ROLE the role _rr_word gives the word. rrasg marks a leading assignment, whose variable may change how the tool
+# reads its options (GREP_OPTIONS, POSIXLY_CORRECT); a word the shell may expand or split sets rrunk too.
+cw1=0
+wrole=""
+wsx=0
+RR_ROLE=""
+rrown=0
+rrvf=0
+rrunk=0
+rrdyn=0
+# The jq walk: jqown jq is the first command word and owns roles, jqq the roles of the next option values (P a value,
+# S a file), jqf -f was seen, jqa --args or --jsonargs was seen, jqn the operands so far, jqdd -- was seen, jqunk an
+# option the walk does not know; jqfs a -f option and jqbad an operand that is not a plain path were seen, in any jq
+# stage.
+jqown=0
+jqq=""
+jqf=0
+jqa=0
+jqn=0
+jqdd=0
+jqunk=0
+jqfs=0
+jqbad=0
+JQ_NORM=""
+# The git log, show and diff walk (act t): gtq the role of the next option value (P text, S a file), gtdd -- was seen,
+# gtunk an option the walk does not know, gts the subcommand. For a diff that owns its roles, gdf defers the reader
+# decision to the stage end: gdn an option that makes the output names only (--stat, --name-only) was seen, gdp one that
+# may print contents, or that the walk does not know.
+gtq=""
+gtdd=0
+gtunk=0
+gts=""
+gdf=0
+gdn=0
+gdp=0
+# Long options of git log, show and diff that take no separate value.
+_GT_FLAGS=' patch stat numstat shortstat name-only name-status summary dirstat no-patch oneline graph all decorate'
+_GT_FLAGS+=' no-decorate no-merges merges first-parent reverse follow cached staged merge-base abbrev-commit'
+_GT_FLAGS+=' no-abbrev-commit pretty color no-color no-renames relative quiet exit-code no-ext-diff no-textconv'
+_GT_FLAGS+=' ignore-all-space ignore-space-change find-renames find-copies pickaxe-all pickaxe-regex'
+_GT_FLAGS+=' regexp-ignore-case all-match invert-grep extended-regexp fixed-strings perl-regexp basic-regexp source'
+_GT_FLAGS+=' full-diff word-diff raw full-index binary patch-with-stat patch-with-raw minimal histogram patience text'
+_GT_FLAGS+=' date-order author-date-order topo-order left-right boundary cherry-pick cherry-mark cherry not branches'
+_GT_FLAGS+=' tags remotes '
+
+# _wild_check <word>: 0 if <word> is a wildcard the shell expands, where the command runs, into a secret name. A
+# wildcard-only last component (cat *, cat ~/.aws/*) is expanded where the command will run, and a pattern in a
+# directory part (cat */*) queues its directory for the stage end. The test that the word ends in a wildcard or holds
+# a pattern before a / keeps the function call off the glob-heavy hot path (cat a1* a2* …).
+_wild_check() {
+    local wc
+    if (( ${#1} > 4096 )) || [[ "$1" != *[\*\?] && "$1" != *[\*\?\[\{]*/* ]]; then
+        return 1
+    fi
+    # With 64 patterns expanded, wpip already marked unknown and an ask held, _wild_word changes nothing for a word with
+    # no pattern before its last /, so it is not called.
+    if (( _wild_n >= 64 && wpq >= 64 )) && [[ "$wpip" == '!'* && -n "${_HOOK_HELD_ASK:-}" \
+            && "$1" != *[\*\?\[\{]*/* ]]; then
+        return 1
+    fi
+    if [[ "$1" == */* ]]; then
+        wc="${1%/*}"
+        wc="${1:${#wc}+1}"
+    else
+        wc="$1"
+    fi
+    [[ "$1" == *[\*\?\[\{]*/* || "$wc" != *[!\*\?]* ]] && _wild_word "$1"
+}
+
+# _awk_word <word>: set sgv when a word of an awk stage may make its program run a shell: system, getline, a | or an @
+# (gawk's @include, @load and indirect calls) in any word (a program given as an operand, by -e or by --source), or an
+# option that loads code the hook cannot see (-f, -E, -i, -l, -D, mawk's -W, and the long options starting with those
+# letters).
+_awk_word() {
+    if [[ "$1" == *system* || "$1" == *getline* || "$1" == *'|'* || "$1" == *@* || "$1" == --[defil]* \
+            || ( "$1" == -[!-]* && "${1%%[Fv]*}" == *[fEilDW]* ) ]]; then
+        sgv=1
+    fi
+}
+
+# The sed scanner reads a program by byte index (the hook runs under LC_ALL=C, so ${P:i:1} costs the same at any index,
+# where slicing off the rest at each step is quadratic) and shares the caller's P (program), i (index), L (length),
+# d (delimiter) and aw (bracket reading).
+# _sed_blanks: past spaces and tabs.
+_sed_blanks() {
+    while (( i < L )); do
+        case "${P:i:1}" in
+            ' '|$'\t') i=$(( i + 1 )) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 0
+}
+
+# _sed_digits: past decimal digits.
+_sed_digits() {
+    while (( i < L )); do
+        case "${P:i:1}" in
+            [0-9]) i=$(( i + 1 )) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 0
+}
+
+# _sed_eol: past the next newline, or to the end.
+_sed_eol() {
+    while (( i < L )); do
+        i=$(( i + 1 ))
+        if [[ "${P:i-1:1}" == "$_SED_NL" ]]; then
+            return 0
+        fi
+    done
+    return 0
+}
+
+# _sed_label: past a label: anything but white space, ; and }.
+_sed_label() {
+    while (( i < L )); do
+        case "${P:i:1}" in
+            [[:space:]]|';'|'}') return 0 ;;
+            *) i=$(( i + 1 )) ;;
+        esac
+    done
+    return 0
+}
+
+# _sed_eoc: 0 at the end of a sed command: past blanks, the end of the program or one of ; } # newline.
+_sed_eoc() {
+    _sed_blanks
+    if (( i >= L )); then
+        return 0
+    fi
+    case "${P:i:1}" in
+        ';'|'}'|'#'|"$_SED_NL") return 0 ;;
+    esac
+    return 1
+}
+
+# _sed_skip_delim <regex>: past the closing delimiter d of the text at i, honouring \ escapes; with <regex> 1 and aw 1,
+# a [...] bracket expression may hold d. Returns 1 if the text is unterminated.
+_sed_skip_delim() {
+    local c k
+    while (( i < L )); do
+        c="${P:i:1}"
+        i=$(( i + 1 ))
+        if [[ "$c" == "$d" ]]; then
+            return 0
+        elif [[ "$c" == '\' ]]; then
+            i=$(( i + 1 ))
+        elif [[ "$c" == '[' && "$1" == 1 && "$aw" == 1 ]]; then
+            k=$i
+            if [[ "${P:k:1}" == '^' ]]; then k=$(( k + 1 )); fi
+            if [[ "${P:k:1}" == ']' ]]; then k=$(( k + 1 )); fi
+            while :; do
+                if (( k >= L )); then
+                    return 1
+                fi
+                c="${P:k:1}"
+                k=$(( k + 1 ))
+                if [[ "$c" == ']' ]]; then
+                    break
+                fi
+                if [[ "$c" == '[' ]]; then
+                    case "${P:k:1}" in
+                        ':'|'.'|'=')
+                            c="${P:k:1}"
+                            k=$(( k + 1 ))
+                            while :; do
+                                if (( k + 1 >= L )); then
+                                    return 1
+                                fi
+                                if [[ "${P:k:1}" == "$c" && "${P:k+1:1}" == ']' ]]; then
+                                    k=$(( k + 2 ))
+                                    break
+                                fi
+                                k=$(( k + 1 ))
+                            done ;;
+                    esac
+                fi
+            done
+            i=$k
+        fi
+    done
+    return 1
+}
+
+# _sed_addr: past one sed address at i (d too): 0 if one was there, 1 if none, 2 if it is malformed.
+_sed_addr() {
+    local c="${P:i:1}"
+    case "$c" in
+        [0-9])
+            _sed_digits
+            if [[ "${P:i:1}" == '~' ]]; then
+                i=$(( i + 1 ))
+                _sed_digits
+            fi ;;
+        '$')
+            i=$(( i + 1 )) ;;
+        /|'\')
+            if [[ "$c" == / ]]; then
+                d=/
+                i=$(( i + 1 ))
+            else
+                d="${P:i+1:1}"
+                i=$(( i + 2 ))
+            fi
+            if [[ -z "$d" || "$d" == "$_SED_NL" || "$d" == '\' ]] || ! _sed_skip_delim 1; then
+                return 2
+            fi
+            while [[ "${P:i:1}" == [IM] ]]; do
+                i=$(( i + 1 ))
+            done ;;
+        *)
+            return 1 ;;
+    esac
+    return 0
+}
+
+# _sed_parse <program> <aw>: walk the sed program's commands, reading a [...] bracket in a regex as one when <aw> is 1
+# (POSIX, BSD sed) and not when 0 (GNU sed ends a regex at the first delimiter). Returns 0 for a program with no e
+# command and no s///e flag, 1 on finding one, 2 if the program cannot be parsed, 3 on an r or R command whose file name
+# (to the end of its line) is a secret path, 4 on one whose name holds a backslash, which the hook cannot screen (the
+# name is cut at it for the secret test). Either bracket reading returning 1, 3 or 4 decides; 2 only when both do.
+_sed_parse() {
+    local P="$1" aw="$2" L=${#1} i=0 c d a j
+    while :; do
+        while (( i < L )); do
+            case "${P:i:1}" in
+                [[:space:]]|';'|'{'|'}') i=$(( i + 1 )) ;;
+                *) break ;;
+            esac
+        done
+        if (( i >= L )); then
+            return 0
+        fi
+        if _sed_addr; then a=0; else a=$?; fi
+        if (( a == 2 )); then
+            return 2
+        fi
+        if (( a == 0 )); then
+            _sed_blanks
+            if [[ "${P:i:1}" == ',' ]]; then
+                i=$(( i + 1 ))
+                _sed_blanks
+                case "${P:i:1}" in
+                    '+'|'~')
+                        i=$(( i + 1 ))
+                        _sed_digits ;;
+                    *)
+                        if ! _sed_addr; then
+                            return 2
+                        fi ;;
+                esac
+            fi
+        fi
+        while (( i < L )); do
+            case "${P:i:1}" in
+                [[:space:]]|'!') i=$(( i + 1 )) ;;
+                *) break ;;
+            esac
+        done
+        c="${P:i:1}"
+        i=$(( i + 1 ))
+        case "$c" in
+            '{'|'}') ;;
+            [=dDgGhHnNpPxzF])
+                if ! _sed_eoc; then
+                    return 2
+                fi ;;
+            [qQl])
+                _sed_blanks
+                _sed_digits
+                if ! _sed_eoc; then
+                    return 2
+                fi ;;
+            s|y)
+                d="${P:i:1}"
+                i=$(( i + 1 ))
+                if [[ -z "$d" || "$d" == "$_SED_NL" || "$d" == '\' ]]; then
+                    return 2
+                fi
+                if [[ "$c" == s ]]; then
+                    if ! _sed_skip_delim 1 || ! _sed_skip_delim 0; then
+                        return 2
+                    fi
+                    while (( i < L )); do
+                        case "${P:i:1}" in
+                            [0-9gpiImM]) i=$(( i + 1 )) ;;
+                            *) break ;;
+                        esac
+                    done
+                    case "${P:i:1}" in
+                        e) return 1 ;;
+                        w)
+                            _sed_eol
+                            continue ;;
+                    esac
+                else
+                    if ! _sed_skip_delim 0 || ! _sed_skip_delim 0; then
+                        return 2
+                    fi
+                fi
+                if ! _sed_eoc; then
+                    return 2
+                fi ;;
+            [aic])
+                while (( i < L )); do
+                    j="${P:i:1}"
+                    if [[ "$j" == "$_SED_NL" ]]; then
+                        i=$(( i + 1 ))
+                        break
+                    elif [[ "$j" == '\' ]]; then
+                        i=$(( i + 2 ))
+                    else
+                        i=$(( i + 1 ))
+                    fi
+                done ;;
+            [rR])
+                _sed_blanks
+                j=$i
+                _sed_eol
+                d="${P:j:i-j}"
+                d="${d%"$_SED_NL"}"
+                name_fold "${d%%\\*}"
+                if path_is_secret "$NAME_FOLD"; then
+                    return 3
+                fi
+                if [[ "$d" == *\\* ]]; then
+                    return 4
+                fi ;;
+            [wW]|'#')
+                _sed_eol ;;
+            ':')
+                _sed_blanks
+                j=$i
+                _sed_label
+                if (( i == j )); then
+                    return 2
+                fi ;;
+            [btTv])
+                _sed_blanks
+                _sed_label ;;
+            e)
+                return 1 ;;
+            *)
+                return 2 ;;
+        esac
+    done
+}
+
+# _sed_runs_shell <program>: 0 if the sed program may run a shell (an e command, an s///e flag), reads a secret file (an
+# r or R command) or cannot be parsed, with SED_WHY e, read or parse; 1 for a program that parses with none of them,
+# which is when one bracket reading succeeds and neither finds an e or a secret read. A program with no [ reads the
+# same both ways.
+_sed_runs_shell() {
+    local a=0 b=0
+    SED_WHY=""
+    if (( ${#1} > SED_BUDGET_MAX )); then
+        SED_WHY=parse
+        return 0
+    fi
+    _sed_parse "$1" 0 || a=$?
+    if [[ "$1" == *'['* ]]; then
+        _sed_parse "$1" 1 || b=$?
+    else
+        b=$a
+    fi
+    if (( a == 1 || b == 1 )); then
+        SED_WHY=e
+        return 0
+    fi
+    if (( a == 3 || b == 3 )); then
+        SED_WHY="read"
+        return 0
+    fi
+    if (( a == 4 || b == 4 )); then
+        SED_WHY=parse
+        return 0
+    fi
+    if (( a == 2 && b == 2 )); then
+        SED_WHY=parse
+        return 0
+    fi
+    return 1
+}
+
+# _sed_budget <text>: count <text> against the command's sed program budget; deny when it is spent.
+_sed_budget() {
+    sbud=$(( sbud + ${#1} + 1 ))
+    # A $'…' escape stays as written (\n, \x2e), so the program the shell passes is not the text parsed here.
+    if (( sbud > SED_BUDGET_MAX )) || [[ "$wmk" == *a* && "$1" == *\\* ]]; then
+        sgv=1
+        _deny_shell "a sed program the guard cannot parse"
+    fi
+}
+
+# _sed_expr <text>: take an -e value of the sed stage as one of its programs, joined to the others by a newline.
+_sed_expr() {
+    if (( sse )); then
+        ssp+="$_SED_NL"
+    fi
+    sse=$(( sse + 1 ))
+    _sed_budget "$1"
+    ssp+="$1"
+}
+
+# _sed_settle: at the end of a sed stage, deny a program that may run a shell or that the hook cannot parse. The
+# programs are the -e values joined; with none, the operands that may be the program (sso). When an option of unknown
+# arity (ssunk) leaves the program's place open, every one is screened; otherwise only the first must parse, as the
+# others are files or BSD's program (BSD sed has no e). BSD's -i value (ssix), when it is empty or a bare suffix, is no
+# program, and when it is empty (BSD's -i '') the operand after it is. An e command or a secret r reading is denied in
+# any operand.
+_sed_settle() {
+    local why="" i=0 n=${#sso[@]} p
+    if [[ "$ssa" != s ]]; then
+        return 0
+    fi
+    if (( sse )); then
+        if _sed_runs_shell "$ssp"; then why="$SED_WHY"; fi
+    else
+        while (( i < n )); do
+            p="${sso[i]}"
+            if _sed_runs_shell "$p"; then
+                if [[ "$SED_WHY" == e || "$SED_WHY" == read ]]; then
+                    why="$SED_WHY"
+                    break
+                elif (( i == ssix )) && [[ "$p" != *[!A-Za-z0-9._~+@%-]* ]]; then
+                    :
+                elif (( ssunk || i == 0 )) || { (( ssix >= 0 && i == ssix + 1 )) && [[ -z "${sso[ssix]}" ]]; }; then
+                    why="$SED_WHY"
+                    break
+                fi
+            fi
+            i=$(( i + 1 ))
+        done
+    fi
+    if [[ -n "$why" ]]; then
+        sgv=1
+        if [[ "$why" == e ]]; then
+            _deny_shell "sed with an e command"
+        fi
+        if [[ "$why" == read ]]; then
+            _deny_reader "sed with an r or R command on a secret file"
+        fi
+        _deny_shell "a sed program the guard cannot parse"
+    fi
+}
+
+# _script_file_check <file>: deny a sed or awk script file that is standard input or a descriptor (-, /dev, /proc, a ..
+# segment), or whose name a $ or backquote builds: the hook cannot see the program such a file holds. A name under
+# $CLAUDE_TEMP_DIR is the remedy the denies give, so only what follows that prefix is tested. The name must also be
+# literal: a backslash (an escape that stays as written) or an unquoted glob or brace (the marker g says they are all
+# quoted) is expanded by the shell into a name the hook never saw.
+_script_file_check() {
+    local sfile="$1"
+    case "$1" in
+        '$CLAUDE_TEMP_DIR/'*|'${CLAUDE_TEMP_DIR}/'*) sfile="${1#*/}" ;;
+    esac
+    if [[ "$1" == - || "$sfile" == *[\$\`\\]* ]] || [[ "$sfile" == *[\*\?\[\{]* && "$wmk" != *g* ]] \
+            || _names_input "$sfile" fd; then
+        _deny_shell "sed or awk -f with the program on standard input or a descriptor" \
+            "Write the program to a plain file with the Write tool and pass that file to -f."
+    fi
+}
+
+# _awk_file_opt <value> <kind>: take the value of an awk option that names a script file: the joined text <value>, or
+# the next word when it is empty (awfv). <kind> W is mawk's -W: only exec, e and file (any prefix) take a file, as
+# "-W exec FILE" or "-Wexec=FILE".
+_awk_file_opt() {
+    local v="$1"
+    if [[ "$2" == W ]]; then
+        case "$v" in
+            e*|f*|E*|F*) ;;
+            *) return 0 ;;
+        esac
+        if [[ "$v" == *=* ]]; then
+            v="${v#*=}"
+        else
+            v=""
+        fi
+    fi
+    if [[ -n "$v" ]]; then
+        _script_file_check "$v"
+    else
+        awfv=1
+    fi
+}
+
+# _awk_file_word <word>: walk a word of an awk stage for its script file, which _script_file_check screens: -f and -E
+# (alone or anywhere in a short bundle, the value joined or the next word), the long --file and --exec in any prefix
+# gawk accepts, with = or the next word, and mawk's -W exec or file. F, v, e, i, l and D take the rest of the bundle.
+_awk_file_word() {
+    local b c
+    if (( awfv )); then
+        awfv=0
+        _script_file_check "$1"
+        return 0
+    fi
+    if (( awfw )); then
+        awfw=0
+        _awk_file_opt "$1" W
+        return 0
+    fi
+    case "$1" in
+        --*)
+            case "${1%%=*}" in
+                --f|--fi|--fil|--file|--e|--ex|--exe|--exec|--i|--in|--inc|--incl|--inclu|--includ|--include\
+                |--l|--lo|--loa|--load)
+                    if [[ "$1" == *=* ]]; then _script_file_check "${1#*=}"; else awfv=1; fi ;;
+            esac ;;
+        -?*)
+            b="${1:1}"
+            while [[ -n "$b" ]]; do
+                c="${b:0:1}"
+                b="${b:1}"
+                case "$c" in
+                    f|E) _awk_file_opt "$b" f; return 0 ;;
+                    i|l)
+                        # gawk's -i and -l take the rest of the bundle as their value, but the rest is walked as
+                        # letters too (-il FILE), so a script file named in the next word is not missed.
+                        _awk_file_opt "$b" f
+                        if [[ -z "$b" ]]; then return 0; fi ;;
+                    W)
+                        if [[ -n "$b" ]]; then _awk_file_opt "$b" W; else awfw=1; fi
+                        return 0 ;;
+                    F|v|e|D) return 0 ;;
+                esac
+            done ;;
+    esac
+}
+
+# _sed_word <word>: walk a word of a sed stage. The program is an -e or --expression value (joined or the next word),
+# or one of the first ssl operands; -f or --file loads a script the hook cannot see. A letter that may take the next
+# word as its value (BSD's -i and -I, GNU's -l, any unknown one) lets one more operand be the program.
+_sed_word() {
+    local b c iv=$ssiv unk=0
+    ssiv=0
+    if (( ssvs || ssfv )); then
+        if (( ssvs )); then
+            ssvs=0
+            # A value that looks like an option is walked as one: -l -f - would otherwise hide the -f.
+            if [[ "$1" != -* ]]; then
+                return 0
+            fi
+        fi
+        if (( ssfv )); then
+            ssfv=0
+            _script_file_check "$1"
+            return 0
+        fi
+    fi
+    if (( ssw )); then
+        ssw=0
+        _sed_expr "$1"
+        return 0
+    fi
+    if (( ! ssdd )); then
+        case "$1" in
+            --) ssdd=1; return 0 ;;
+            --e*=*) _sed_expr "${1#*=}"; return 0 ;;
+            --e*) ssw=1; return 0 ;;
+            --fi*=*) sse=$(( sse + 1 )); sgv=1; _script_file_check "${1#*=}"; return 0 ;;
+            --fi*) sse=$(( sse + 1 )); sgv=1; ssfv=1; return 0 ;;
+            --f*) sgv=1; return 0 ;;
+            --*=*) return 0 ;;
+            --l*) ssvs=1; return 0 ;;
+            --[qsdpnzubrhvi]*) return 0 ;;
+            --*) ssl=$(( ssl + 1 )); ssunk=$(( ssunk + 1 )); return 0 ;;
+            -?*)
+                b="${1:1}"
+                while [[ -n "$b" ]]; do
+                    c="${b:0:1}"
+                    b="${b:1}"
+                    case "$c" in
+                        [nrEsuza]) ;;
+                        e)
+                            if [[ -n "$b" ]]; then _sed_expr "$b"; else ssw=1; fi
+                            return 0 ;;
+                        f)
+                            sse=$(( sse + 1 ))
+                            sgv=1
+                            if [[ -n "$b" ]]; then _script_file_check "$b"; else ssfv=1; fi
+                            return 0 ;;
+                        l)
+                            if [[ -z "$b" ]]; then ssvs=1; fi
+                            return 0 ;;
+                        i|I)
+                            if [[ -z "$b" ]]; then ssl=$(( ssl + 1 )); ssiv=1; fi
+                            return 0 ;;
+                        *)
+                            # The rest of the bundle is still walked: -Xf - holds an -f.
+                            if (( ! unk )); then
+                                unk=1
+                                ssl=$(( ssl + 1 ))
+                                ssunk=$(( ssunk + 1 ))
+                            fi ;;
+                    esac
+                done
+                return 0 ;;
+        esac
+    fi
+    if (( ssn < ssl )); then
+        ssn=$(( ssn + 1 ))
+        _sed_budget "$1"
+        if (( iv )); then
+            ssix=${#sso[@]}
+        fi
+        sso+=("$1")
+    fi
+}
+
+# _sed_rename <word>: a further sed name <word> at command position (a wrapper's option value may have come first)
+# starts the command's own operands: drop <word> if it was taken as an operand (after a check for an e command: a
+# word ending in /sed is a sed name by its basename), screen what was read, then walk afresh. sgv and the other awk and
+# sed facts already decided stay.
+_sed_rename() {
+    local n=${#sso[@]}
+    if (( n > 0 )) && [[ "${sso[$(( n - 1 ))]}" == "$1" ]]; then
+        if _sed_runs_shell "$1" && [[ "$SED_WHY" == e || "$SED_WHY" == read ]]; then
+            sgv=1
+            if [[ "$SED_WHY" == read ]]; then
+                _deny_reader "sed with an r or R command on a secret file"
+            fi
+            _deny_shell "sed with an e command"
+        fi
+        unset "sso[$(( n - 1 ))]"
+        ssn=$(( ssn - 1 ))
+    fi
+    _sed_settle
+    sse=0
+    ssp=""
+    sso=()
+    ssix=-1
+    ssiv=0
+    ssvs=0
+    ssfv=0
+    ssunk=0
+    ssn=0
+    ssl=1
+    ssw=0
+    ssdd=0
+}
+
+# _mk_settle: in a stage that re-parses its words or runs a shell from awk or sed, expand the marked glob words after
+# all.
+_mk_settle() {
+    local rest="$wmq" w
+    if (( ! srp && ! sgv )); then
+        return 0
+    fi
+    while [[ -n "$rest" ]]; do
+        w="${rest%%$'\x1e'*}"
+        rest="${rest#*$'\x1e'}"
+        if _wild_check "$w"; then
+            if [[ "$sf" != *S* ]]; then rds="$w"; sf+=S; fi
+            _snx "$w"
+        fi
+    done
+}
+
+# _snx <word>: count an S source that is not a P word; rdx names the first.
+_snx() {
+    snx=$(( snx + 1 ))
+    if [[ -z "$rdx" ]]; then
+        rdx="$1"
+    fi
+}
+
+# _w_expands: 0 when the current word holds a glob, a brace, a $ or a backquote the shell may expand or split, that no
+# marker says is quoted.
+_w_expands() {
+    [[ "$w" == *\`* || "$wmk" == *b* ]] || [[ "$w" == *[\*\?\[\{]* && "$wmk" != *g* ]] \
+        || [[ "$w" == *\$* && "$wmk" != *d* ]]
+}
+
+# _asm_hold <text> <what>: hold an ask for the current word when <text>, the part of it that names a tool or a git
+# option or subcommand, is one the shell may assemble: a numeric escape kept as written (\x \u \U \0-\7 of a $'...'
+# body; other backslashes assemble nothing), or a $, backquote, glob or brace with a comma or a x..y sequence in it that
+# no marker says is quoted ({} and {+..} stand for themselves). Plain quotes are decoded, so none survives into a name.
+# The tool's screens run on its literal name, so an assembled one skips them.
+_asm_hold() {
+    local msg
+    if [[ "$1" == *\\[xuU0-7]* || "$wmk" == *n* ]] || { [[ "$wmk" == *b* && "$1" == "$w" ]]; } \
+            || { [[ "$1" == *[\$\`\*\?\[]* || "$1" == *\{*,*\}* || "$1" == *\{?*..?*\}* ]] && _w_expands; }; then
+        msg="SECRET-SCAN ASK: $2 '$w' may be assembled by the shell, so the hook cannot tell which tool or git"
+        msg+=" subcommand runs."
+        if [[ "$2" == a\ word\ of* ]]; then msg+=" (An --opt=value value is not held.)"; fi
+        msg+=" Approve it only if that reads no secret file."
+        hook_hold_ask "$msg"
+    fi
+}
+
+# _p_void: the stage's P and F roles are void, so each of their S sources counts as one that is not P.
+_p_void() {
+    if (( spn + spf > 0 )) && [[ -z "$rdx" ]]; then
+        rdx="$rds"
+    fi
+    snx=$(( snx + spn + spf ))
+    spn=0
+    spf=0
+}
+
+# _p_clear: 0 when R and S do not deny: every S source is a P or F word and the stage has exactly one reader.
+_p_clear() {
+    (( snx == 0 && spn + spf > 0 && nrd + ngr == 1 ))
+}
+
+# _jq_mod_check <word>: deny a word of a jq stage that loads a module by a name the hook cannot read, whatever wraps the
+# jq and wherever the walk thinks the word stands.
+_jq_mod_check() {
+    local w="$1" msg bad=0
+    if [[ "$w" == *modulemeta* ]]; then
+        bad=1
+    elif [[ "$w" == *import* || "$w" == *include* ]]; then
+        # An escape, a search path in the import's metadata, or a live $ hides the module's name.
+        if [[ "$w" == *\\* || "$w" == *search* ]] || [[ "$w" == *\$* && "$wmk" != *d* ]]; then
+            bad=1
+        fi
+    fi
+    if (( bad )); then
+        msg="SECRET-PATH BLOCK: this jq filter loads a module by a name the hook cannot read (modulemeta, or an"
+        msg+=" import or include path written with an escape, a search path or a variable), so it may read a secret"
+        msg+=" file. Name the module in a plain import literal, or read the file with a plain reader."
+        hook_deny "$msg"
+    fi
+    # With -f the program is a file the hook cannot see read: every operand of the stage, in either order, must be a
+    # plain path.
+    if [[ "$w" == --from-file ]] || [[ "$w" == -[!-]* && "$w" == *f* ]]; then
+        jqfs=1
+    elif [[ "$w" != -* || "$w" == - ]]; then
+        # Only a word that is not obviously a plain path needs the full test.
+        if [[ "$w" == *[!A-Za-z0-9._/+-]* || "$w" == - || "$w" == *..* || "$w" == *//* || "$w" == */./* \
+            || "$w" == /[DdPp]* ]] && ! _jq_path_ok "$w"; then
+            jqbad=1
+        fi
+    fi
+    if (( jqfs && jqbad )); then
+        msg="SECRET-PATH BLOCK: this jq has -f and an operand that may be its program on standard input or a"
+        msg+=" descriptor, where the hook cannot see it (a path outside [A-Za-z0-9._/+-], -, /dev, /proc or one"
+        msg+=" through ..). Write the program to a plain file and pass that file to -f."
+        hook_deny "$msg"
+    fi
+}
+
+# _jq_path_ok <word>: 0 when the word is a plain path (only [A-Za-z0-9._/+-]) that is not -, under /dev or /proc (any
+# case), or through a .. segment once repeated slashes, /./ segments and a leading ./ are removed.
+_jq_path_ok() {
+    local re='^[A-Za-z0-9._/+-]+$'
+    if [[ ! "$1" =~ $re ]]; then
+        return 1
+    fi
+    _jq_norm "$1"
+    case "$JQ_NORM" in
+        -|..|../*|*/../*|*/..|/[Dd][Ee][Vv]|/[Dd][Ee][Vv]/*|/[Pp][Rr][Oo][Cc]|/[Pp][Rr][Oo][Cc]/*) return 1 ;;
+    esac
+    return 0
+}
+
+# _jq_norm <path>: set JQ_NORM to the path with repeated slashes collapsed, /./ segments and a leading ./ removed.
+_jq_norm() {
+    local n="$1" sl=/
+    while [[ "$n" == *//* ]]; do
+        n="${n//\/\//$sl}"
+    done
+    while [[ "$n" == */./* ]]; do
+        n="${n//\/.\//$sl}"
+    done
+    while [[ "$n" == ./* ]]; do
+        n="${n#./}"
+    done
+    JQ_NORM="$n"
+}
+
+# _jq_word <word>: give a word of a jq that is its stage's first command word its role in wrole: an --arg name or value
+# P, the filter F (unless it names a module to import or include), anything else (an input, a program or a --rawfile
+# file, a word after --args) a file.
+_jq_word() {
+    local w="$1" known c i n
+    wrole=""
+    if [[ -z "$jqq" ]] && (( ! jqdd )); then
+        # A $'...' escape stays as written in the word (\x2d for -): a leading numeric one may be an option, and one
+        # inside an option word may be a letter such as f. Other escapes decode to no letter.
+        case "$w" in
+            \\[xuU0-7]*|-*\\[xuU0-7]*) jqunk=1 ;;
+        esac
+    fi
+    if (( jqa )); then
+        if [[ "$w" == --from-file ]] || [[ "$w" == -[!-]* && "$w" == *f* ]]; then
+            jqf=1
+        fi
+        return 0
+    fi
+    if [[ -n "$jqq" ]]; then
+        if [[ "$jqq" == P* ]]; then
+            wrole=P
+        fi
+        jqq="${jqq:1}"
+        return 0
+    fi
+    if (( jqdd )) || [[ "$w" != -* || "$w" == - ]]; then
+        if (( jqn == 0 )) && [[ "$w" != *import* && "$w" != *include* && "$w" != *modulemeta* ]]; then
+            wrole=F
+        fi
+        jqn=$(( jqn + 1 ))
+        return 0
+    fi
+    case "$w" in
+        --)
+            jqdd=1 ;;
+        --arg|--argjson)
+            jqq=PP ;;
+        --rawfile|--slurpfile|--argfile)
+            jqq=PS ;;
+        --indent)
+            jqq=P ;;
+        --library-path)
+            jqq=S ;;
+        --from-file)
+            jqf=1 ;;
+        --args|--jsonargs)
+            jqa=1 ;;
+        --*)
+            known=' null-input raw-input slurp compact-output tab raw-output raw-output0 join-output ascii-output'
+            known+=' sort-keys color-output monochrome-output unbuffered stream stream-errors seq exit-status binary '
+            if [[ "$known" != *" ${w#--} "* ]]; then
+                jqunk=1
+            fi ;;
+        *)
+            c="${w#-}"
+            n=${#c}
+            i=0
+            while (( i < n )); do
+                case "${c:i:1}" in
+                    f) jqf=1 ;;
+                    L)
+                        if (( i == n - 1 )); then
+                            jqq=S
+                        else
+                            jqunk=1
+                        fi ;;
+                    [nrjasecCMSRhV]) : ;;
+                    *) jqunk=1 ;;
+                esac
+                i=$(( i + 1 ))
+            done ;;
+    esac
+}
+
+# _jq_settle: in a jq stage that owns its roles, an unknown option voids them; with -f the first operand is the program
+# file, not the filter.
+_jq_settle() {
+    if (( ! jqown )); then
+        return 0
+    fi
+    if (( jqunk )); then
+        _p_void
+    elif (( jqf && spf )); then
+        _snx "$spfw"
+        spf=0
+    fi
+}
+
+# _gt_word <word>: give a word of a git log, show or diff that is its stage's first command word its role in wrole: the
+# value of a pickaxe, grep, author, date, count or format option is text (P); a revision, a pathspec, the file of -L and
+# every word after -- are possible files. Any other word gets role x: git runs none of them, so a revision named HEAD is
+# no head command.
+_gt_word() {
+    local w="$1"
+    wrole=x
+    if (( gtdd )); then
+        return 0
+    fi
+    if [[ -n "$gtq" ]]; then
+        if [[ "$gtq" == P ]]; then
+            wrole=P
+        fi
+        gtq=""
+        return 0
+    fi
+    case "$w" in
+        --)
+            gtdd=1 ;;
+        -S|-G|-n|--grep|--author|--committer|--since|--until|--skip)
+            gtq=P ;;
+        -L)
+            gtq=S ;;
+        -S?*|-G?*|-n?*|--grep=*|--author=*|--committer=*|--format=*|--pretty=*|--since=*|--until=*|--skip=*)
+            wrole=P ;;
+        --*=*)
+            : ;;
+        --*)
+            if [[ "$_GT_FLAGS" != *" ${w#--} "* ]]; then
+                gtunk=1
+            fi ;;
+        -[0-9]*|-[MCBUl]*|-[pusRwbaiEFPzWmctr])
+            : ;;
+        -*|\\[xuU0-7]*)
+            # A $'...' escape stays as written in the word (\x2d for -), so a leading one may be an option or --.
+            gtunk=1 ;;
+    esac
+    if [[ "$gts" == diff ]]; then
+        if [[ "$w" == -* && "$w" != -- ]]; then
+            _gt_diff_opt "$w"
+        elif [[ "$w" == *\\* ]]; then
+            # shell_words decodes a backslash outside $'...' but leaves a $'...' escape (\x2d, \055, -) as
+            # written, so such a word may decode to an option the walk cannot read.
+            gdp=1
+        fi
+    fi
+}
+
+# _gt_diff_opt <option>: classify an option of a git diff. One that makes the output names and counts only (gdn) is no
+# reader on its own; one that is neutral to that changes nothing; any other, an unknown one included, may print contents
+# (gdp).
+_gt_diff_opt() {
+    case "$1" in
+        --stat|--stat=*|--numstat|--shortstat|--name-only|--name-status|--summary|--dirstat|--dirstat=*|-s|\
+        --no-patch|--quiet)
+            gdn=1 ;;
+        --cached|--staged|--merge-base|-M*|--find-renames|--find-renames=*|-C*|--find-copies|--find-copies=*|-B*|\
+        --relative|--relative=*|--no-renames|--color|--color=*|--no-color|--no-ext-diff|--no-textconv|-R|\
+        --diff-filter=*|--ignore-submodules|--ignore-submodules=*|-w|--ignore-all-space|--ignore-space-change|\
+        --exit-code)
+            : ;;
+        *)
+            gdp=1 ;;
+    esac
+}
+
+# _gt_settle: in a git log, show or diff stage that owns its roles, an unknown option voids them. A diff that owns its
+# roles is a reader unless a names-only option stands, no option may print contents, and nothing may reshape the words:
+# a variable that holds a secret (V) is printed by git's own error for a word that names no revision or path.
+_gt_settle() {
+    if (( gtunk )); then
+        _p_void
+    fi
+    if (( gdf )) && { (( ! gdn || gdp || gtunk )) || [[ "$sf" == *V* || -n "$vmq" ]]; }; then
+        ngr=1
+        if [[ "$sf" != *R* ]]; then
+            rdn="git diff"
+            sf+=R
+        fi
+        if [[ "$sf" == *X* && "$sf" != *Y* ]]; then sf+=Y; fi
+    fi
+}
+
+# _mk_vsettle: a marked secret-shaped $ word is a V after all in a stage that re-parses its words, runs awk or sed, or
+# feeds a pipe.
+_mk_vsettle() {
+    if [[ -z "$vmq" ]]; then
+        return 0
+    fi
+    if (( ! srp && ! spipe )) && [[ -z "$ssa" ]]; then
+        return 0
+    fi
+    if [[ "$sf" != *V* ]]; then
+        vrw="$vmq"
+        sf+=V
+        if [[ -n "$ssa" ]]; then
+            vsa=1
+        fi
+    fi
+}
+
+# _p_stage_reset: reset the per-stage quoted-word facts.
+_p_stage_reset() {
+    srp=0 ssa="" sgv=0 ssw=0 ssdd=0 ssn=0 ssl=1 sse=0 ssp="" ssix=-1 ssiv=0 ssvs=0 ssfv=0 awfv=0 awfw=0 ssunk=0
+    sso=()
+    wmq="" wmqn=0 vmq="" vsa=0 shd=0
+    snx=0 spn=0 spf=0 ngr=0 gown=0 ghown=0 rdx="" spfw="" rrasg=0
+    jqown=0 jqq="" jqf=0 jqa=0 jqn=0 jqdd=0 jqunk=0 jqfs=0 jqbad=0
+    gtq="" gtdd=0 gtunk=0 gts="" gdf=0 gdn=0 gdp=0 cmv=0
+    sin=0 sio=1 sfx=0 sfo=0
+}
+_p_stage_reset
 
 # _stage_end: run the stage-end checks, record the fetch facts of a pipeline's first two stages, reset the stage.
 _stage_end() {
-    local msg
+    local msg sinok
     if [[ -n "$kvp" ]]; then
         if (( si > 0 )) || [[ "$sf" == *F* ]]; then
             _deny_reader "$ipw $kvp fed by a pipe or redirection"
@@ -3203,6 +4512,9 @@ _stage_end() {
     if (( nw == 0 && nr == 0 )); then
         return 0
     fi
+    _gt_settle
+    _sed_settle
+    _mk_settle
     if [[ -n "$act" ]]; then
         if [[ "$act" == *r* ]]; then
             _rr_settle
@@ -3213,14 +4525,24 @@ _stage_end() {
         if [[ "$act" == *D* ]]; then
             _dump_check
         fi
-        if [[ "$act" == *H* ]] && (( shq )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
-            _deny_shell "$shn fed by a pipe or redirection"
+        # A shell or ssh read from one plain file on stdin runs that file, as it would given the file as a script.
+        sinok=0
+        if (( si == 0 && sin == 1 && sio && ! sfx && ! sfo )) && [[ "$sf" != *I* ]]; then
+            sinok=1
         fi
-        if [[ "$act" == *M* ]] && (( ! smc )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
-            _deny_shell "$smn fed by a pipe or redirection"
+        if [[ "$act" == *H* ]] && (( shq && ! sinok )) \
+                && { (( si > 0 || sin > 0 || sfx )) || [[ "$sf" == *F* ]]; }; then
+            if [[ "$act" == *M* ]]; then
+                _deny_fed "$shn fed by a pipe or redirection" "$SSH_REMEDY"
+            fi
+            _deny_fed "$shn fed by a pipe or redirection"
+        fi
+        if [[ "$act" == *M* ]] && (( ! smc && ! sinok )) \
+                && { (( si > 0 || sin > 0 || sfx )) || [[ "$sf" == *F* ]]; }; then
+            _deny_fed "$smn fed by a pipe or redirection" "$SSH_REMEDY"
         fi
         if [[ "$act" == *N* && "$wpn" == parallel ]] && (( wpc != 1 )) && { (( si > 0 )) || [[ "$sf" == *F* ]]; }; then
-            _deny_shell "parallel with no command, fed by a pipe or redirection"
+            _deny_fed "parallel with no command, fed by a pipe or redirection"
         fi
         if [[ "$act" == *[KL]* && "$sf" == *I* ]]; then
             _deny_reader "$ipw <$ins"
@@ -3265,9 +4587,11 @@ _stage_end() {
             _hold_cd "" "the command may set HOME"
         fi
     fi
+    _jq_settle
+    _mk_vsettle
     if [[ -n "$sf" ]]; then
-        if [[ "$sf" == *R* && "$sf" == *S* ]]; then
-            _deny_reader "$rdn $rds"
+        if [[ "$sf" == *R* && "$sf" == *S* ]] && ! _p_clear; then
+            _deny_reader "$rdn ${rdx:-$rds}"
         fi
         if [[ "$sf" == *T* && "$sf" == *I* ]]; then
             _deny_reader "$tdn <$ins"
@@ -3288,8 +4612,14 @@ _stage_end() {
             _deny_reader "<$ins"
         fi
         if [[ "$sf" == *V* ]] && [[ "$sf" == *P* || "$sf" == *R* ]]; then
-            msg="SECRET-ECHO BLOCK: printing a secret-shaped variable ('$vrw') into context is not allowed. Write"
-            msg+=" it to \$CLAUDE_TEMP_DIR from a script instead."
+            if (( vsa )); then
+                msg="SECRET-ECHO BLOCK: '$vrw' is quoted, but a sed or awk program can run a shell (awk's system(),"
+                msg+=" sed's e command), which would expand it into context. Write the program to a file and run"
+                msg+=" 'sed -f <file>' or 'awk -f <file>'."
+            else
+                msg="SECRET-ECHO BLOCK: printing a secret-shaped variable ('$vrw') into context is not allowed. Write"
+                msg+=" it to \$CLAUDE_TEMP_DIR from a script instead."
+            fi
             hook_deny "$msg"
         fi
         if [[ "$sf" == *s* ]] && (( nw == setw )); then
@@ -3384,17 +4714,393 @@ _stage_end() {
     GW_ACTIVE=0
     sgp=0
     gev=0
+    _p_stage_reset
 }
 
+# Brace expansion. The shell expands an unquoted brace before the command runs, so a word is also screened as each word
+# it expands to. The expander follows bash's brace scanner (3.2 to 5.3 agree) and refuses what bash, zsh and the
+# versions of bash differ on: BX_CAP words per word, BX_TOTAL per command, BX_DEPTH_MAX levels of nesting, BX_WORK_MAX
+# characters of work, unpaired braces, and any sequence but plain integers and single letters of one case. A word that
+# is longer than 256 characters has its quoting marker only when it holds a {.
+BX_US=$'\x1f'
+BX_CAP=64
+BX_TOTAL=256
+BX_DEPTH_MAX=8
+BX_WORK_MAX=16000
+BX_BAD_RE="[[:space:]'\"\`\\\\]|[\$][(]"
+BX_CMDSUB_RE="[\`\\\\]|[\$][(]"
+BX_PBRACE_RE='[$][{][^}]*[{]'
+BX_WORK=0
+BX_DEPTH=0
+BX_DQ=""
+
+# _bx_gob <text> <from> <stop>: scan <text> from <from> as bash's brace scanner does, with ${...} one nesting level
+# unless BX_DQ says every $ is quoted; set BX_I to the first <stop> at depth 0 (a {, a ,, or a } once a , or an x..y was
+# seen) or to the length. Returns 0 when one was found.
+_bx_gob() {
+    local t="$1" k="$2" stop="$3" n=${#1} lvl=0 commas=1 c
+    if [[ "$stop" == '}' ]]; then
+        commas=0
+    fi
+    while (( k < n )); do
+        c="${t:k:1}"
+        if [[ "$c" == '$' && "${t:k+1:1}" == '{' && -z "$BX_DQ" ]]; then
+            lvl=$(( lvl + 1 ))
+            k=$(( k + 2 ))
+            continue
+        fi
+        if [[ "$c" == "$stop" ]] && (( lvl == 0 && commas > 0 )); then
+            # An open brace that starts the text and is followed by a close brace stands for itself.
+            if [[ "$c" == '{' ]] && (( k == 0 )) && [[ "${t:k+1:1}" == '}' ]]; then
+                k=$(( k + 1 ))
+                continue
+            fi
+            BX_I=$k
+            return 0
+        fi
+        if [[ "$c" == '{' ]]; then
+            lvl=$(( lvl + 1 ))
+        elif [[ "$c" == '}' ]]; then
+            if (( lvl > 0 )); then
+                lvl=$(( lvl - 1 ))
+            fi
+        elif (( lvl == 0 )) && [[ "$stop" == '}' ]]; then
+            if [[ "$c" == ',' ]]; then
+                commas=$(( commas + 1 ))
+            elif [[ "$c" == . && "${t:k+1:1}" == . && "${t:k+2:1}" != '}' ]]; then
+                commas=$(( commas + 1 ))
+            fi
+        fi
+        k=$(( k + 1 ))
+    done
+    BX_I=$n
+    return 1
+}
+
+# _bx_seq <x..y>: set BX_R and BX_N to the items (each followed by BX_US) of a sequence bash 3.2, bash 5 and zsh expand
+# alike: plain decimal integers of at most nine digits, or two letters of one case, at most BX_CAP items. Returns 1
+# for any other text: a step, a plus sign, a leading zero, a mixed pair.
+_bx_seq() {
+    local x="${1%%..*}" y="${1#*..}" a b c step out="" alpha="" pa pb
+    local num_re='^(0|-?[1-9][0-9]{0,8})$'
+    BX_R=""
+    BX_N=0
+    if [[ "$1" != *..* || "$y" == *..* ]]; then
+        return 1
+    fi
+    if [[ "$x" =~ $num_re && "$y" =~ $num_re ]]; then
+        a=$x
+        b=$y
+    else
+        alpha=abcdefghijklmnopqrstuvwxyz
+        if [[ "$x" == [A-Z] && "$y" == [A-Z] ]]; then
+            alpha=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+        elif [[ "$x" != [a-z] || "$y" != [a-z] ]]; then
+            return 1
+        fi
+        pa="${alpha%%$x*}"
+        pb="${alpha%%$y*}"
+        a=${#pa}
+        b=${#pb}
+    fi
+    if (( b >= a )); then
+        step=1
+        BX_N=$(( b - a + 1 ))
+    else
+        step=-1
+        BX_N=$(( a - b + 1 ))
+    fi
+    if (( BX_N > BX_CAP )); then
+        return 1
+    fi
+    c=$a
+    while :; do
+        if [[ -n "$alpha" ]]; then
+            out+="${alpha:c:1}$BX_US"
+        else
+            out+="$c$BX_US"
+        fi
+        if (( c == b )); then
+            break
+        fi
+        c=$(( c + step ))
+    done
+    BX_R="$out"
+    return 0
+}
+
+# _bx_expand <text>: set BX_R to the brace expansions of <text> as bash makes them, each followed by BX_US, and BX_N to
+# their number. Returns 1 when they cannot be followed: over BX_CAP words, nesting or work past the bounds, or a brace
+# holding x..y that _bx_seq does not accept.
+_bx_expand() {
+    local t="$1" i=0 j pre amble post piece m p k e last mid="" mn=0 pr pn res="" rest r2
+    BX_WORK=$(( BX_WORK + ${#t} + 1 ))
+    if (( BX_WORK > BX_WORK_MAX )); then
+        return 1
+    fi
+    while :; do
+        if ! _bx_gob "$t" "$i" '{'; then
+            BX_R="$t$BX_US"
+            BX_N=1
+            return 0
+        fi
+        i=$BX_I
+        if _bx_gob "$t" "$(( i + 1 ))" '}'; then
+            break
+        fi
+        i=$(( i + 1 ))
+    done
+    j=$BX_I
+    pre="${t:0:i}"
+    amble="${t:i+1:j-i-1}"
+    post="${t:j+1}"
+    if _bx_gob "$amble" 0 ','; then
+        k=0
+        last=""
+        while [[ -z "$last" ]]; do
+            if _bx_gob "$amble" "$k" ','; then
+                e=$BX_I
+            else
+                e=${#amble}
+                last=1
+            fi
+            piece="${amble:k:e-k}"
+            BX_DEPTH=$(( BX_DEPTH + 1 ))
+            if (( BX_DEPTH > BX_DEPTH_MAX )) || ! _bx_expand "$piece"; then
+                return 1
+            fi
+            BX_DEPTH=$(( BX_DEPTH - 1 ))
+            mid+="$BX_R"
+            mn=$(( mn + BX_N ))
+            if (( mn > BX_CAP )); then
+                return 1
+            fi
+            k=$(( e + 1 ))
+        done
+    else
+        # A comma only inside a nested brace: bash versions differ on it.
+        if [[ "$amble" == *,* ]] || ! _bx_seq "$amble"; then
+            return 1
+        fi
+        mid="$BX_R"
+        mn=$BX_N
+    fi
+    if [[ -n "$post" ]]; then
+        if ! _bx_expand "$post"; then
+            return 1
+        fi
+        pr="$BX_R"
+        pn=$BX_N
+    else
+        pr="$BX_US"
+        pn=1
+    fi
+    if (( mn * pn > BX_CAP )); then
+        return 1
+    fi
+    rest="$mid"
+    while [[ -n "$rest" ]]; do
+        m="${rest%%$BX_US*}"
+        rest="${rest#*$BX_US}"
+        r2="$pr"
+        while [[ -n "$r2" ]]; do
+            p="${r2%%$BX_US*}"
+            r2="${r2#*$BX_US}"
+            res+="$pre$m$p$BX_US"
+        done
+    done
+    BX_R="$res"
+    BX_N=$(( mn * pn ))
+    return 0
+}
+
+# _bx_balanced <word>: 0 when the braces of <word> pair off and none holds an open integer sequence, which zsh reads
+# without its braces ({1..} is 1..).
+_bx_balanced() {
+    local open_re='[{]-?[0-9]+[.][.][}]|[{][.][.]-?[0-9]+[}]' n=${#1} k=0 depth=0 c
+    if [[ "$1" =~ $open_re ]]; then
+        return 1
+    fi
+    while (( k < n )); do
+        c="${1:k:1}"
+        if [[ "$c" == '{' ]]; then
+            depth=$(( depth + 1 ))
+        elif [[ "$c" == '}' ]]; then
+            depth=$(( depth - 1 ))
+            if (( depth < 0 )); then
+                return 1
+            fi
+        fi
+        k=$(( k + 1 ))
+    done
+    (( depth == 0 ))
+}
+
+# _bx_splice: replace each word of SW_WORDS that carries an expandable brace, and each target of an input redirection,
+# by the words it expands to, so the main loop screens the real argv: every expansion as the path it would be written
+# as, in the place the shell puts it. Each carries the marker b (n: the part before the first = held the brace), which
+# every check that holds a word holding a brace reads as one: a role walk voided by a brace, an assembled command word,
+# git option or subcommand. A word's own secret-name screens still run, on an h element after its expansions that
+# takes no place in a walk. A word the expander cannot follow stays as it was, with an ask held, as does a command
+# past BX_TOTAL expansions. A variable an expansion keeps is screened as the written-out word is, with an ask held
+# only when the marker says a quoted $ and a live one are mixed (q) or quoted text lies among the braces (x). Without
+# x, a space or quote in the word is quoted text outside the braces and the dequoted word expands as the shell does;
+# a backslash or a command substitution still holds an ask. A word whose marker says its glob characters are all
+# quoted is left. A redirect target has no marker, so its braces count as live.
+_bx_splice() {
+    local el pend="" cm="" wd acc="" item its vacc rest why held=0 total=0 found=0 restore_glob=1 msg kind op mf r1
+    for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
+        if [[ "$el" == [wpr]*\{* && "$el" == *\}* && ( "$el" == *,* || "$el" == *..* ) ]]; then
+            found=1
+            break
+        fi
+    done
+    if (( ! found )); then
+        return 0
+    fi
+    BX_WORK=0
+    for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
+        kind=""
+        case "$el" in
+            m*)
+                cm="${el:1}"
+                pend="$el$BX_US"
+                continue ;;
+            [wp]*)
+                kind=w
+                wd="${el:1}" ;;
+            r*)
+                rest="${el:1}"
+                op="${rest%% *}"
+                if [[ "$op" == *'<' || "$op" == *'<>' ]] && [[ "$op" != *'<<'* ]]; then
+                    kind=r
+                    wd="${rest#* }"
+                    cm=""
+                fi ;;
+        esac
+        if [[ -z "$kind" || "$cm" == *g* || "$wd" != *\{* || "$wd" != *\}* ]] \
+                || [[ "$wd" != *,* && "$wd" != *..* ]]; then
+            acc+="$pend$el$BX_US"
+            pend=""
+            cm=""
+            continue
+        fi
+        why=""
+        its=""
+        BX_WORK=$(( BX_WORK + ${#wd} ))
+        if (( held )); then
+            :
+        elif (( BX_WORK > BX_WORK_MAX )); then
+            why="the command's brace words are too long to expand"
+        elif [[ "$wd" =~ $BX_CMDSUB_RE ]] || { [[ "$kind" != w || "$cm" == *x* ]] && [[ "$wd" =~ $BX_BAD_RE ]]; }; then
+            why="it holds a quote, a space, a backquote or a backslash"
+        elif ! _bx_balanced "$wd"; then
+            why="its braces do not pair off, or open or close a sequence"
+        else
+            BX_DEPTH=0
+            BX_DQ=""
+            # With a quoted $ (d) or a quoted and a live one (q) the hook cannot tell which ${ opens a parameter
+            # expansion, so each $ is text and a brace beside it is expanded; the expansion keeps its $ and asks.
+            if [[ "$cm" == *[dq]* ]]; then
+                BX_DQ=1
+            fi
+            if ! _bx_expand "$wd"; then
+                why="it expands to more than $BX_CAP words, nests too deeply or holds a sequence the hook cannot expand"
+            else
+                r1="$BX_R"
+                if [[ "$r1" != "$wd$BX_US" ]]; then
+                    its="$r1"
+                fi
+            fi
+            BX_DQ=""
+            # An unquoted ${ is a parameter expansion, but one holding a brace of its own may be read as text.
+            if [[ -z "$why" && "$cm" != *[dq]* && "$wd" =~ $BX_PBRACE_RE ]]; then
+                why="a \${ holds a brace of its own, which may be read as text"
+            fi
+        fi
+        vacc=""
+        mf="b"
+        if [[ "${wd%%=*}" == *\{* ]]; then
+            mf+=n
+        fi
+        if [[ "$cm" == *d* ]]; then
+            mf+=d
+        fi
+        rest="$its"
+        while [[ -n "$rest" ]]; do
+            item="${rest%%$BX_US*}"
+            rest="${rest#*$BX_US}"
+            if [[ -z "$item" ]]; then
+                continue
+            fi
+            total=$(( total + 1 ))
+            if (( total > BX_TOTAL )); then
+                why="the command expands more than $BX_TOTAL words in all"
+                held=1
+                its=""
+                vacc=""
+                break
+            fi
+            if [[ "$kind" == w && "$item" == *'$'* && "$cm" == *[qx]* ]]; then
+                why="an expansion keeps a variable"
+            fi
+            if [[ "$kind" == w ]]; then
+                vacc+="m$mf$BX_US""w$item$BX_US"
+            else
+                vacc+="r$op $item$BX_US"
+            fi
+        done
+        if [[ -n "$its" ]]; then
+            acc+="$vacc"
+            if [[ "$kind" == w ]]; then
+                acc+="${pend}h$wd$BX_US"
+            fi
+        else
+            acc+="$pend$el$BX_US"
+        fi
+        pend=""
+        cm=""
+        if [[ -n "$why" ]]; then
+            msg="SECRET-SCAN ASK: '$wd' is a brace expansion the hook cannot follow ($why), so it cannot tell which"
+            msg+=" files it names. Approve it only if that reads no secret file."
+            hook_hold_ask "$msg"
+        fi
+    done
+    if [[ "$-" == *f* ]]; then
+        restore_glob=0
+    fi
+    set -f
+    local IFS=$'\x1f'
+    # shellcheck disable=SC2206  # split on \x1f with pathname expansion off
+    SW_WORDS=($acc)
+    if (( restore_glob )); then
+        set +f
+    fi
+}
+if [[ "$fetch_checked" == *\{* && "$fetch_checked" == *\}* ]] \
+        && [[ "$fetch_checked" == *,* || "$fetch_checked" == *..* ]]; then
+    _bx_splice
+fi
+
+sclean=0
+ho=0
 for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     case "$el" in
+        m*)
+            mk="${el:1}"
+            continue ;;
         w*) ;;
+        h*)
+            # A word a brace expanded: only its secret-name screens run (below), as its expansions, which follow it,
+            # take its place in every walk.
+            ho=1 ;;
         p*)
-            # A plain word changes nothing but the word count and command position, unless a word walk needs it, or
-            # the fetch shapes do: they read every word of a fetch's second stage (the login), or it may name a
-            # directory outside the cwd (/, ~, a .. segment) for a recursive reader after xargs, or hold an escape or
-            # a brace for the name-producer check.
-            if [[ -z "$act" && "$el" != p[/~]* && "$el" != p..* && "$el" != *'/..'* && "$el" != *[\\\{]* ]] \
+            # A plain word changes nothing but the word count and command position, unless a word walk needs it (an awk
+            # or sed stage walks them all: its program may be plain), or the fetch shapes do: they read every word of
+            # a fetch's second stage (the login), or it may name a directory outside the cwd (/, ~, a .. segment) for
+            # a recursive reader after xargs, or hold an escape or a brace for the name-producer check.
+            if [[ -z "$act" && -z "$ssa" && "$el" != p[/~]* && "$el" != p..* && "$el" != *'/..'* \
+                    && "$el" != *[\\\{]* ]] \
                     && (( si != 1 || ! ( fetch_hit || swf_stage >= 0 ) )); then
                 nw=$(( nw + 1 ))
                 cs=1
@@ -3402,10 +5108,24 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 continue
             fi ;;
         '|')
+            # sclean: the last stage end was the fast one below and only plain words have come since, which change
+            # nw, cs and pwrap alone. Every other value that fast end resets (and every condition it tests) is then
+            # unchanged, so only the stage counter and those three are left to do. The fetch clause repeats the fast
+            # end's own and is true whenever sclean is; it stays as a guard, so a change to that end cannot leave this
+            # one skipping a fetch record.
+            if (( sclean )) && (( si > 1 || ! ( fetch_hit || swf_stage >= 0 ) )); then
+                pnu=1
+                si=$(( si + 1 ))
+                nw=0
+                cs=0
+                pwrap=0
+                continue
+            fi
             # With no walk running, no directory glob queued and none of the facts a stage-end check reads (S, I, V, s,
             # Y, Q), a stage ends with nothing to check, or to record for a fetch; only an echo there names paths the
             # hook models (_np_end).
-            if [[ -z "$act" && -z "$wpend" && -z "$wpip" && -z "$wout" && "$sf" != *[SIVsYQ]* ]] \
+            if [[ -z "$act" && -z "$wpend" && -z "$wpip" && -z "$wout" && -z "$wmq$vmq$ssp" \
+                    && "$sf" != *[SIVsYQ]* ]] && (( ${#sso[@]} == 0 )) \
                     && (( si > 1 || ! ( fetch_hit || swf_stage >= 0 ) )); then
                 if (( ! snp || rgr )); then
                     pnu=1
@@ -3430,19 +5150,25 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 rgt=""
                 sgp=0
                 gev=0
+                _p_stage_reset
+                sclean=1
                 continue
             fi
+            sclean=0
             scan_words=$(( scan_words + 1 ))
             if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
                 hook_deny "$WORDS_MSG"
             fi
+            spipe=1
             _stage_end
             continue ;;
         ';')
+            sclean=0
             scan_words=$(( scan_words + 1 ))
             if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
                 hook_deny "$WORDS_MSG"
             fi
+            spipe=0
             _stage_end
             if (( si > 0 )); then nsep=$(( nsep + 1 )); fi
             cdsq=1
@@ -3455,6 +5181,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             pdd=0
             continue ;;
         r*)
+            sclean=0
             nr=$(( nr + 1 ))
             scan_words=$(( scan_words + 1 ))
             if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
@@ -3481,6 +5208,39 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     esac
                 fi
             fi
+            # What feeds the stage's stdin: each unprefixed <, a prefix of zeros, or one of two or more digits (zsh
+            # reads that as an argument plus the operator). The feed is one plain file when it is a single bare <
+            # whose target is no input-naming path (_names_input: /dev/tcp, /dev/stdin, /proc/self/fd/0) and holds no
+            # expansion.
+            if [[ "$op" == *'<'* ]]; then
+                sfd="${op%%[!0-9]*}"
+                if [[ -z "$sfd" || "$sfd" != *[!0]* || ${#sfd} -gt 1 ]]; then
+                    sin=$(( sin + 1 ))
+                    if [[ "${op:${#sfd}}" != '<' || -z "$tgt" || ${#tgt} -gt 4096 ]]; then
+                        sio=0
+                    elif [[ "$tgt" == =* || "$tgt" == *[\$\`\\\*\?\[\{\(\)\<\>\|\&\;\"\']* ]] \
+                            || _names_input "$tgt"; then
+                        sio=0
+                    elif [[ ${#sfd} -gt 1 && "$sfd" == *[!0]* ]]; then
+                        sio=0
+                    fi
+                else
+                    # Another fd's input (3</dev/tcp/h/80) may be duplicated onto fd 0 by a later redirection.
+                    sfo=1
+                fi
+            elif [[ "$op" == *'>'* ]]; then
+                # An output operator on fd 0 (0>/dev/tcp/h/80, 0>&3) or on a prefix zsh may read as fd 0 reaches the
+                # shell's stdin in a way the count above does not see. Any other dup (&>, N>&M) leaves the one-file
+                # allowance off, except a dup between fds 1 and 2 (2>&1), which touches no other fd.
+                sfd="${op%%[!0-9]*}"
+                if [[ -n "$sfd" ]] && [[ "$sfd" != *[!0]* || ${#sfd} -gt 1 ]]; then
+                    sfx=1
+                elif [[ "$op" == *'&'* ]]; then
+                    if [[ "${op:${#sfd}}" != '>&' || "$sfd" == [3-9] || "$tgt" != [12] ]]; then
+                        sfo=1
+                    fi
+                fi
+            fi
             case "$op" in
                 *'<<<')
                     if [[ "$sf" != *F* ]]; then sf+=F; fi
@@ -3490,6 +5250,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                         hook_deny "$msg"
                     fi ;;
                 *'<<'|*'<<-')
+                    shd=1
                     if [[ "$sf" != *F* ]]; then sf+=F; fi ;;
                 *'<&') ;;
                 *'<'|*'<>')
@@ -3499,6 +5260,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                             || { (( ${#tgt} <= 4096 )) && [[ "$tgt" == *[=:\*\?\[]* || "$tgt" == -[!-]?* ]] \
                                 && _secret_variant "$tgt"; }; then
                         if [[ "$sf" != *S* ]]; then rds="<$tgt"; sf+=S; fi
+                        _snx "<$tgt"
                         if [[ "$sf" != *I* ]]; then ins="$tgt"; sf+=I; fi
                     fi ;;
             esac
@@ -3535,7 +5297,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
             continue ;;
     esac
+    sclean=0
     w="${el:1}"
+    wmk="$mk"
+    mk=""
+    cw1=0 wrole="" wsx=0
     # A file system that folds case fully opens a name in a non-ASCII letter that folds to ASCII as its ASCII
     # spelling, so the word is screened as that spelling.
     # shellcheck disable=SC2053  # _NAME_FOLD_ANY is an intentional pattern
@@ -3547,6 +5313,12 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     scan_words=$(( scan_words + 1 ))
     if (( scan_words > SECRET_SCAN_WORD_BUDGET )); then
         hook_deny "$WORDS_MSG"
+    fi
+    if [[ "$w" == */* ]]; then
+        wlast="${w%/*}"
+        wlast="${w:${#wlast}+1}"
+    else
+        wlast="$w"
     fi
     # One case keeps the common word to a single test: a word holding = or : may set a command variable or name an
     # ext:: address (_cmd_var_word), and must be tested first (GIT_PAGER=/usr/bin/env is no env word); an env word
@@ -3565,24 +5337,34 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     # shellcheck disable=SC2053  # the alternations are intentional patterns
     if [[ -n "$GPW" ]]; then
         wsec=$GPW
+        wsx=1
     elif [[ "/$w" == $_SECRET_PATH_ANY && "/$w" != $_SECRET_ALLOW_ANY && "$w" != --exclude=* \
             && "$w" != --exclude-dir=* ]]; then
         wsec=1
-    elif (( ${#w} <= 4096 )) && [[ "$w" == *[=:\*\?\[]* || "$w" == -[!-]?* ]] && _secret_variant "$w"; then
+    elif (( ${#w} <= 4096 )) && [[ "$w" == *[=:\*\?\[]* || "$w" == -[!-]?* ]] \
+            && [[ "$w" == *[=:]* || "$w" == -[!-]?* || "$wlast" == *[!\*\?]* ]] && _secret_variant "$w"; then
         wsec=1
     fi
-    # A wildcard-only last component (cat *, cat ~/.aws/*) is expanded where the command will run, and a pattern in a
-    # directory part (cat */*) queues its directory for the stage end. The test that the word ends in a wildcard or
-    # holds a pattern before a / keeps the function call off the glob-heavy hot path (cat a1* a2* …).
-    if (( ! wsec )) && (( ${#w} <= 4096 )) && [[ "$w" == *[\*\?] || "$w" == *[\*\?\[\{]*/* ]]; then
-        if [[ "$w" == */* ]]; then
-            wc="${w%/*}"
-            wc="${w:${#wc}+1}"
-        else
-            wc="$w"
-        fi
-        if [[ "$w" == *[\*\?\[\{]*/* || "$wc" != *[!\*\?]* ]] && _wild_word "$w"; then
+    # An awk program that can run a shell (system, getline, a | pipe, gawk's @) expands the stage's marked globs after
+    # all. A sed stage is walked to its end, for its programs (_sed_settle) as well as for -f.
+    case "$ho$ssa" in
+        0s) _sed_word "$w" ;;
+        0a)
+            # Only an option word holding a letter the walk acts on, or the value one asked for, changes anything.
+            if [[ "$w" == -*[efilEW]* || "$awfv$awfw" != 00 ]]; then
+                _awk_file_word "$w"
+            fi
+            if (( ! sgv )); then
+                _awk_word "$w"
+            fi ;;
+    esac
+    if (( ! wsec )); then
+        if [[ "$wmk" == *g* ]] && (( ! srp && ! sgv && wmqn < 64 )); then
+            wmq+="$w"$'\x1e'
+            wmqn=$(( wmqn + 1 ))
+        elif _wild_check "$w"; then
             wsec=1
+            wsx=1
         fi
     fi
     # A word that may name a directory outside the cwd: absolute, ~, a .. segment, a variable, or a pattern that may
@@ -3594,19 +5376,22 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             wdd=1
         fi
     fi
-    if (( snp )) && [[ "$w" == *[\\\{]* ]]; then
+    if (( snp )) && [[ "$w" == *[\\\{]* || "$wmk" == *b* ]]; then
         snp=0
     fi
     if (( wsec )) && [[ "$sf" != *S* ]]; then
         rds="$w"
         sf+=S
     fi
-    if [[ "$w" == */* ]]; then
-        nm="${w%/*}"
-        nm="${w:${#nm}+1}"
-    else
-        nm="$w"
+    if (( ho )); then
+        ho=0
+        nw=$(( nw - 1 ))
+        if (( wsec )); then
+            _snx "$w"
+        fi
+        continue
     fi
+    nm="$wlast"
     # A case-insensitive file system runs CAT as cat, so a name is classified lower-cased. No class name is longer
     # than 16 characters.
     if (( ${#nm} <= 16 )) && [[ "$nm" == *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]* ]]; then
@@ -3646,7 +5431,17 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
         fi
         if [[ "$act" == *r* ]]; then
+            rrg=0
+            if [[ "$wmk" == *g* ]]; then rrg=1; elif [[ "$wmk" == *b* ]]; then rrg=2; fi
             _rr_word "$w"
+            if (( rrown )); then
+                wrole="$RR_ROLE"
+                # A word the shell may expand or split can add or reshape words, so no operand's role is known.
+                if [[ "$w" == *[\*\?\[\{\$\`]* || "$wmk" == *b* ]] && _w_expands; then
+                    rrunk=1
+                    wrole=""
+                fi
+            fi
         fi
         if [[ "$act" == *c* ]]; then
             _cd_word "$w"
@@ -3694,7 +5489,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         # The words heroku run and heroku local:run join for a shell (one holding whitespace or shell syntax is a
         # command string), doppler run's options up to --, and heroku local's start command (run by sh -c).
         if [[ "$act" == *y* ]]; then
-            if (( ryh )) && [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\{\}\*\?\[]* ]]; then
+            if (( ryh )) && [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\{\}\*\?\[]* || "$wmk" == *b* ]]; then
                 msg="SHELL-STRING BLOCK: $ryt passes '$w' to a shell, which parses it as a command"
                 msg+=" string this hook cannot screen. Pass the command as separate unquoted words, with no shell"
                 msg+=" syntax."
@@ -3787,10 +5582,26 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         if [[ "$act" == *I* ]]; then
             _git_cmd_word "$w"
         fi
+        if [[ "$act" == *t* ]]; then
+            _gt_word "$w"
+            # A word the shell may expand or split can add or reshape words, so no operand's role is known.
+            if [[ "$w" == *[\*\?\[\{\$\`]* || "$wmk" == *b* ]] && _w_expands; then
+                gtunk=1
+                wrole=""
+            fi
+        fi
         if [[ "$act" == *G* ]]; then
             # git -C DIR -C SUB runs in DIR/SUB; a --git-dir, --work-tree or -c core or submodule setting changes what
             # git grep reads. A -c value passes only as one plain word, as many keys hold a command (an ! alias, a
             # pager, an ssh command, a filter driver); --config-env takes its value from a variable the hook cannot see.
+            # A word the shell may assemble before the subcommand (an option's name, or the subcommand) may hide it.
+            if (( ! GW_SKIP )) && [[ "$w" == *[\\\$\`\{\*\?\[]* || "$wmk" == *b* ]]; then
+                if [[ "$w" == -* ]]; then
+                    _asm_hold "${w%%=*}" "a git option"
+                else
+                    _asm_hold "$w" "the git subcommand"
+                fi
+            fi
             case "$gwp" in
                 -C)
                     if [[ -n "$gcd" && "$w" != /* && "$w" != '~'* ]]; then gcd="$gcd/$w"; else gcd="$w"; fi ;;
@@ -3809,7 +5620,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             case "$w" in
                 --git-dir=*|--work-tree=*) gwt=1 ;;
                 --config-env|--config-env=*) _deny_shell "git --config-env" ;;
+                --*-pathspecs) rr_gitps=1 ;;
             esac
+            if [[ "$w" == *[\$\`\\\{\*\?\[]* || "$wmk" == *b* ]] && [[ "$gwp" != -C && "$gwp" != -c ]]; then
+                rr_gitps=1
+            fi
             gwp="$w"
             git_walk_word "$w"
             if (( ! GW_ACTIVE )); then
@@ -3819,15 +5634,41 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     npg="$GW_SUB"
                 fi
                 if git_sub_reader "$GW_SUB"; then
-                    if [[ "$sf" != *R* ]]; then
-                        rdn="git $GW_SUB"
-                        sf+=R
+                    if (( gown )) && [[ "$GW_SUB" == diff && "$act" != *t* ]]; then
+                        # Whether this diff reads is settled at the stage end (_gt_settle), once its options are known;
+                        # role x keeps the class lookup from counting the subcommand word as a reader meanwhile.
+                        gdf=1
+                        gdn=0
+                        gdp=0
+                        wrole=x
+                    else
+                        # grep and diff are class R names: the subcommand word is counted as a reader (nrd) in the
+                        # class lookup that follows.
+                        if [[ "$GW_SUB" != grep && "$GW_SUB" != diff ]]; then
+                            ngr=1
+                        fi
+                        if [[ "$sf" != *R* ]]; then
+                            rdn="git $GW_SUB"
+                            sf+=R
+                        fi
+                        if [[ "$sf" == *X* && "$sf" != *Y* ]]; then sf+=Y; fi
                     fi
-                    if [[ "$sf" == *X* && "$sf" != *Y* ]]; then sf+=Y; fi
                 fi
                 case "$GW_SUB" in
                     grep) _rr_start 'git grep' ;;
                     diff) _rr_start 'git diff' ;;
+                esac
+                # Roles for log, show and diff, only when git is the stage's first command word; a leading assignment
+                # may change how git reads its options.
+                case "$GW_SUB" in
+                    log|show|diff)
+                        if (( gown )) && [[ "$act" != *t* ]]; then
+                            act+=t
+                            gtq=""
+                            gtdd=0
+                            gtunk=$rrasg
+                            gts="$GW_SUB"
+                        fi ;;
                 esac
                 # A -c alias (gal, case-insensitive as git's config keys are) stands for the subcommand it names,
                 # through a chain of at most 8 aliases; a longer one is denied.
@@ -3876,8 +5717,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             elif [[ "$w" == --verbose ]]; then
                 _deny_shell "$shn $w"
             elif [[ "$w" == -[!-]* ]]; then
-                if [[ "$w" == *[csxv]* ]] || (( ${#w} > 64 )); then
+                if [[ "$w" == *[cxv]* ]] || (( ${#w} > 64 )); then
                     _deny_shell "$shn $w"
+                fi
+                if [[ "$w" == *s* ]]; then
+                    shs=1
                 fi
                 shv="${w//[!oO]/}"
             elif [[ "$w" == +?* ]]; then
@@ -3894,7 +5738,8 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if (( wsec )); then
                     _deny_reader "$shn $w"
                 fi
-                if ! _names_input "$w" fd; then
+                # With -s the words after it are arguments and stdin is still the script, so the walk goes on.
+                if (( ! shs )) && ! _names_input "$w" fd; then
                     act="${act//H/}"
                 fi
             fi
@@ -3924,7 +5769,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 # sequence separator, and no NODE_OPTIONS named. Anything else may run code that prints what node
                 # loaded. The stage end checks nothing feeds it.
                 if [[ -n "$kvf" ]]; then
-                    if (( kon || cdsq || ! kfst )) || [[ -z "$w" || "$w" == *[\$\`\\\*\?\[\{]* ]] \
+                    if (( kon || cdsq || ! kfst )) || [[ -z "$w" || "$w" == *[\$\`\\\*\?\[\{]* || "$wmk" == *b* ]] \
                             || _names_input "$w" fd \
                             || _cd_names NODE_OPTIONS || _k_env_sourced; then
                         _deny_reader "$ipw $kvf ... $w"
@@ -4046,6 +5891,14 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             if [[ "$w" == *env* && "$w" =~ (^|[^A-Za-z0-9_.$])env([^A-Za-z0-9_]|$) ]] || [[ "$w" == *'$ENV'* ]]; then
                 _deny_env "jq $w"
             fi
+            _jq_mod_check "$w"
+            if (( jqown )); then
+                _jq_word "$w"
+                if [[ "$w" == *[\*\?\[\{\$\`]* || "$wmk" == *b* ]] && _w_expands; then
+                    jqunk=1
+                    wrole=""
+                fi
+            fi
         fi
         if [[ "$act" == *W* && "$w" == *ENVIRON* ]]; then
             _deny_env "awk ENVIRON"
@@ -4060,7 +5913,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         if [[ "$act" == *N* ]]; then
             if [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\*\?\[]* || "$w" == =* ]]; then
                 _deny_shell "$wpn '$w'"
-            elif [[ "$w" == *[\{\}]* ]]; then
+            elif [[ "$w" == *[\{\}]* || "$wmk" == *b* ]]; then
                 if [[ "$wpn" != parallel ]] || ! _braces_are_replacements "$w"; then
                     _deny_shell "$wpn '$w'"
                 fi
@@ -4081,7 +5934,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 elif [[ -n "$w" ]]; then
                     wpc=1
                     # A command holding a replacement string is named by the input, and may be a shell.
-                    if [[ "$w" == *'{'* ]]; then
+                    if [[ "$w" == *'{'* || "$wmk" == *b* ]]; then
                         _deny_shell "parallel running the command its input names ('$w')"
                     fi
                 fi
@@ -4096,9 +5949,9 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         # value is the host, and the next such word (options are parsed after the host too) starts a remote command:
         # with none, ssh runs its input there. A letter that is not a known flag takes a value (fail closed).
         if [[ "$act" == *M* ]]; then
-            if [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\{\}\*\?\[]* || "$w" == =* \
+            if [[ "$w" == *[[:space:]\;\&\|\<\>\(\)\$\`\\\"\'\{\}\*\?\[]* || "$w" == =* || "$wmk" == *b* \
                     || "$w" == *[cC][oO][mM][mM][aA][nN][dD]=* ]]; then
-                _deny_shell "$smn '$w'"
+                _deny_shell "$smn '$w'" "$SSH_REMEDY"
             fi
             # An option value naming this command's own input (-F /dev/stdin, -oX=/dev/fd/3) reads what the command
             # line supplies, and so may a config file (-F) named by a bare fd number; an empty word is no command, as
@@ -4199,6 +6052,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             case "$w" in
                 -exec|-execdir|-ok|-okdir)
                     act="${act//f/}g"
+                    cmv=0   # a command -v covers one command: this exec starts another
                     fxa=0
                     fxp=""
                     fxd=0
@@ -4244,6 +6098,9 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                         ghp=1
                         if [[ "$w" == *=* ]]; then ghp=0; fi
                     else
+                        if [[ "$ghs" == 0 ]] && (( ghown )); then
+                            wrole=x
+                        fi
                         case "$ghs:$w" in
                             0:auth) ghs=1 ;;
                             0:alias) ghs=3 ;;
@@ -4269,6 +6126,33 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         fi
     fi
 
+    # An S word the walk gave a role (P, or F: the pattern unless an option gave one) is counted apart from the S words
+    # that are files; a word whose S came from a pathspec or a wildcard, or that holds a glob character the shell
+    # expands (not all quoted), is never a pattern.
+    if (( wsec )); then
+        if (( ! wsx )) && [[ "$w" == *[\*\?\[\{]* && "$wmk" != *g* ]]; then
+            wsx=1
+        fi
+        case "$wrole" in
+            P)
+                if (( wsx )); then
+                    _snx "$w"
+                else
+                    spn=$(( spn + 1 ))
+                fi ;;
+            F)
+                if (( wsx )); then
+                    _snx "$w"
+                else
+                    spf=1
+                    if [[ -z "$spfw" ]]; then
+                        spfw="$w"
+                    fi
+                fi ;;
+            *) _snx "$w" ;;
+        esac
+    fi
+
     # Command position: the first word after leading assignments, the command an env walk unwrapped, or any word of
     # a stage whose command word is ! or a known wrapper. hok marks where the source builtin can run: the first command
     # word, or the word right after command, builtin, time, !, noglob or nocorrect (pwrap), past the options the first
@@ -4279,15 +6163,35 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             cs=1
             atcmd=1
             hok=1
+            cw1=1
             _np_start
+        else
+            rrasg=1
         fi
     elif [[ "$sf" == *A* ]]; then
         atcmd=1
         hok=$pwrap
     fi
+    # A command word: the stage's first, the one env unwraps, or any word of a wrapper's stage, as the hook cannot tell
+    # a wrapper's option values and operands from the command it runs. The whole word is tested: a brace or glob in the
+    # directory part (/{bin/cat,x/.env}) changes which program runs and what it reads. A held ask keeps its first
+    # reason, so once one is held the test is skipped. A vault path is no exception: no scan proves the vault variable
+    # unchanged.
+    if (( atcmd && ! cmv )) && [[ -z "${_HOOK_HELD_ASK:-}" && ( "$w" == *[\\\$\`\{\*\?\[]* || "$wmk" == *b* ) \
+            && "$w" != '[' && "$w" != '[[' ]]; then
+        cwhat="the command word"
+        if (( ! hok )) && [[ "$sf" == *A* ]]; then cwhat="a word of this wrapper's command"; fi
+        if [[ "$w" == -* ]]; then
+            _asm_hold "${w%%=*}" "$cwhat"
+        else
+            _asm_hold "$w" "$cwhat"
+        fi
+    fi
     kn=""
     kc=""
-    if [[ "$nm" != *[!a-z0-9]* ]]; then
+    if [[ -n "$wrole" ]]; then
+        :
+    elif [[ "$nm" != *[!a-z0-9]* ]]; then
         v="_nm_$nm"
         kn="${!v:-}"
         if (( atcmd )); then
@@ -4308,7 +6212,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     # A versioned name with no class of its own (python3.12, node22, gpg2) is classed by its leading letters, which
     # then name it for its walk; nmw keeps the name as written for messages.
     nmw="$nm"
-    if [[ -z "$kn$kc" && "$nm" == [a-z]*[0-9.] && "$nm" =~ $VER_NAME_RE ]]; then
+    if [[ -z "$kn$kc$wrole" && "$nm" == [a-z]*[0-9.] && "$nm" =~ $VER_NAME_RE ]]; then
         vb="${BASH_REMATCH[1]}"
         v="_nm_$vb"
         kn="${!v:-}"
@@ -4320,17 +6224,46 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             nm="$vb"
         fi
     fi
+    if [[ "$kn" == [HNQUBK] || "$kc" == [vM] ]]; then
+        srp=1
+    fi
+    if (( atcmd )); then
+        ssk=""
+        case "$nm" in
+            awk|gawk|mawk|nawk|awk[0-9]*|gawk[0-9]*|mawk[0-9]*|nawk[0-9]*)
+                ssk=a ;;
+            sed|gsed|sed[0-9]*|gsed[0-9]*)
+                ssk=s ;;
+        esac
+        if [[ -z "$ssk" ]]; then
+            :
+        elif [[ -z "$ssa" ]]; then
+            ssa="$ssk"
+        elif [[ "$ssa" != "$ssk" ]]; then
+            _deny_shell "sed and awk both at command position"
+        elif [[ "$ssk" == s ]]; then
+            _sed_rename "$w"
+        fi
+    fi
     if [[ "$kc" == h ]] && (( ! hok )); then
         kc=""
     fi
-    if (( gh_soft && ! strun )) && [[ "$kn" == [BGHKNQUWX] || "$kc" == [Mhv] || "$nm" == sed ]]; then
+    if (( gh_soft && ! strun )) && [[ -z "$wrole" ]] \
+            && [[ "$kn" == [BGHKNQUWX] || "$kc" == [Mhv] || "$nm" == sed ]]; then
         strun=1
     fi
     np=0
     if (( atcmd )); then
         if (( pwrap )); then
             case "$pwk" in
-                command|builtin) if [[ "$w" == -* ]]; then np=1; fi ;;
+                command|builtin)
+                    if [[ "$w" == -* ]]; then
+                        np=1
+                        # command -v and -V only name a command: the words after them run nothing.
+                        if [[ "$pwk" == command && "$w" == -[pvV]* && "$w" != -*[!pvV]* && "$w" == *[vV]* ]]; then
+                            cmv=1
+                        fi
+                    fi ;;
                 time) if [[ "$w" == -* || "$w" == [A-Za-z_]*=* ]]; then np=1; fi ;;
                 '!') if [[ "$w" == [A-Za-z_]*=* ]]; then np=1; fi ;;
             esac
@@ -4439,6 +6372,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     act+=H
                     shn="$nm"
                     shv=""
+                    shs=0
                     shq=0
                 fi ;;
         esac
@@ -4453,6 +6387,15 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 case "$nm" in
                     grep|egrep|fgrep|ggrep|ugrep|ug|rg|diff) _rr_start "$nm" ;;
                 esac
+                if [[ "$kn" == J && "$act" != *J* ]]; then
+                    jqown=$cw1
+                    jqq=""
+                    jqf=0
+                    jqa=0
+                    jqn=0
+                    jqdd=0
+                    jqunk=$rrasg
+                fi
                 if [[ "$kn" != R && "$act" != *"$kn"* ]]; then act+=$kn; fi ;;
             G)
                 if [[ "$act" != *G* ]]; then act+=G; fi
@@ -4461,12 +6404,17 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 gwt=0
                 gcore=0
                 gal=""
+                gown=$cw1
                 git_walk_start ;;
             H)
-                if [[ "$act" != *H* ]]; then act+=H; fi
+                # A shell name given as an argument (bash -s sh) must not reset what the first shell set.
+                if [[ "$act" != *H* ]]; then
+                    act+=H
+                    shs=0
+                    shq=$atcmd
+                fi
                 shn="$nmw"
-                shv=""
-                shq=$atcmd ;;
+                shv="" ;;
             K)
                 # A later interpreter name is a word of bun's or deno's program, whose walk never ends: it goes on.
                 if [[ "$act" != *K* ]] || [[ "$ipn" != bun && "$ipn" != deno ]]; then
@@ -4529,7 +6477,8 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             a)
                 if [[ "$act" != *a* ]]; then act+=a; fi
                 ghs=0
-                ghp=0 ;;
+                ghp=0
+                ghown=$cw1 ;;
             L)
                 if (( atcmd )) && [[ "$act" != *l* ]]; then
                     act+=l
@@ -4554,8 +6503,14 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     fi
     # shellcheck disable=SC2053  # secret_var_glob is an intentional pattern
     if [[ "$w" == *'$'* && "$sf" != *V* && "$w" == $secret_var_glob && "$w" =~ $secret_var_re ]]; then
-        vrw="$w"
-        sf+=V
+        # A marked word (every $ in it quoted) is text, so only the first is kept as vmq: _mk_vsettle makes it a V when
+        # the stage re-parses its words, runs awk or sed, or feeds a pipe. An unmarked one is a V at once.
+        if [[ "$wmk" == *d* ]]; then
+            if [[ -z "$vmq" ]]; then vmq="$w"; fi
+        else
+            vrw="$w"
+            sf+=V
+        fi
     fi
     # An assignment of a variable that moves a registry login's credentials; += appends to a value it cannot see.
     if [[ "$w" == [DRHX]*=* ]]; then
@@ -4598,6 +6553,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
         esac
     fi
 done
+spipe=0
 _stage_end
 
 if (( gh_soft && strun )); then

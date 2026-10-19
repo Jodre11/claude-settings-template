@@ -53,7 +53,7 @@ for p in a/.ssh/id_ecdsa a/.ssh/work_ed25519 a/.docker/config.json a/.kube/confi
     [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == DENY ]] \
         && ok "Read of $p denied" || bad "Read of $p allowed"
 done
-for p in a/.ssh/config a/.ssh/known_hosts a/.ssh/id_ed25519.pub; do
+for p in a/.ssh/config a/.ssh/known_hosts a/.ssh/id_ed25519.pub a/Secrets/Keys.cs lib/certifi/cacert.pem; do
     [[ "$(verdict Read "{\"tool_input\":{\"file_path\":\"$p\"}}")" == ALLOW ]] \
         && ok "Read of $p allowed" || bad "Read of $p denied"
 done

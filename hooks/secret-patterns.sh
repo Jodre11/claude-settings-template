@@ -99,6 +99,10 @@ SECRET_PATH_ALLOW=(
     '*/.ssh/known_hosts.old'
     '*/.ssh/config'
     '*/.ssh/authorized_keys'
+    # C# namespace folders named Secrets, and the CA bundles certifi and botocore ship.
+    '*/secrets/*.cs'
+    '*/certifi/cacert.pem'
+    '*/botocore/cacert.pem'
 )
 
 # Self-referential paths whose CONTENTS legitimately embed secret-shaped example vectors: the pattern library itself,

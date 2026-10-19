@@ -128,9 +128,12 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
 - Prefer dedicated tools or separate Bash calls over redirection (`>`, `>>`) where possible; `2>&1` is acceptable when capturing stderr
 - **Carve-out:** the `git commit -m "$(cat <<'EOF' … EOF\n)"` HEREDOC is permitted — it
   carries a literal multi-line commit message that the rules above would otherwise force
-  into a clumsy temp-file handoff. This is the ONLY exemption `bash-guard.sh` recognises.
-  The carve-out applies only when the words before `-m` are plain (no quotes, `$` or other
-  shell syntax) and the message holds no backquote, `$'` or stray closing parenthesis (a
+  into a clumsy temp-file handoff. A second carve-out writes a file from a heredoc: one
+  stage, `cat > <file> <<'EOF'` (or `>>`) or `tee [-a] <file> <<'EOF'`, with a quoted
+  delimiter and nothing after the closing `EOF` line; its body is text and never runs.
+  These are the only two exemptions `bash-guard.sh` recognises. The commit carve-out
+  applies only when the words before `-m` are plain (no quotes, `$` or other shell
+  syntax) and the message holds no backquote, `$'` or stray closing parenthesis (a
   `1)` list marker); otherwise use `git commit -F <file>`. For PR bodies always use
   `gh ... --body-file <path>` (write the body to `${CLAUDE_TEMP_DIR}/pr-body.md` first).
 - These Bash rules are load-bearing, not stylistic: `hooks/secret-bash-guard.sh` and

