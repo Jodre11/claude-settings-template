@@ -387,21 +387,25 @@ _text_heredoc_word() {
     return 1
 }
 
-# strip_text_heredoc <cmd>: print the first line alone when <cmd> is a quoted-delimiter cat or tee heredoc that writes a
-# file, else <cmd> unchanged. The body is inert only for that exact shape, a closing line that ends the command and
-# write-only first-line words.
-strip_text_heredoc() {
+# text_heredoc_parse <cmd>: set TEXT_HEREDOC_OUT to the first line alone when <cmd> is a quoted-delimiter cat or tee
+# heredoc that writes a file, else to <cmd> unchanged, and TEXT_HEREDOC_TARGETS to its plain-word write targets (empty
+# unless the carve-out applied; $CLAUDE_TEMP_DIR targets are not recorded). The body is inert only for that exact
+# shape, a closing line that ends the command and write-only first-line words. Runs in the caller's shell.
+# shellcheck disable=SC2034  # TEXT_HEREDOC_TARGETS is read by the calling hook
+text_heredoc_parse() {
     local cmd="$1" fl q="'" tok_re redir_re='^>>?(.+)$' t rc pend=0 nred=0 nfile=0 nheredoc=0 ntmp=0 occ
-    local -a toks
+    local -a toks targets=()
     local dash=0 w="" first="" closing
+    TEXT_HEREDOC_OUT="$cmd"
+    TEXT_HEREDOC_TARGETS=()
     tok_re="^<<(-?)(${q}([A-Za-z_][A-Za-z0-9_]*)${q}|\"([A-Za-z_][A-Za-z0-9_]*)\"|\\\\([A-Za-z_][A-Za-z0-9_]*))\$"
-    if (( ${#cmd} > COMMIT_HEREDOC_MAX_CHARS )) || [[ "$cmd" != *$'\n'* ]]; then printf '%s' "$cmd"; return 0; fi
+    if (( ${#cmd} > COMMIT_HEREDOC_MAX_CHARS )) || [[ "$cmd" != *$'\n'* ]]; then return 0; fi
     fl="${cmd%%$'\n'*}"
-    IFS=$' \t' read -ra toks <<<"$fl" || { printf '%s' "$cmd"; return 0; }
-    if (( ${#toks[@]} > 64 )); then printf '%s' "$cmd"; return 0; fi
+    IFS=$' \t' read -ra toks <<<"$fl" || return 0
+    if (( ${#toks[@]} > 64 )); then return 0; fi
     for t in ${toks[@]+"${toks[@]}"}; do
         if [[ "$t" =~ $tok_re ]]; then
-            if (( pend )); then printf '%s' "$cmd"; return 0; fi
+            if (( pend )); then return 0; fi
             (( ++nheredoc ))
             if [[ -n "${BASH_REMATCH[1]}" ]]; then dash=1; fi
             w="${BASH_REMATCH[3]}${BASH_REMATCH[4]}${BASH_REMATCH[5]}"
@@ -409,51 +413,116 @@ strip_text_heredoc() {
         fi
         if [[ -z "$first" ]]; then
             if [[ "$t" == cat || "$t" == tee ]]; then first="$t"; continue; fi
-            printf '%s' "$cmd"
             return 0
         fi
         if [[ "$first" == cat ]]; then
             if (( pend )); then
                 rc=0; _text_heredoc_word "$t" || rc=$?
-                if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
-                if (( rc == 2 )); then (( ++ntmp )); fi
+                if (( rc == 1 )); then return 0; fi
+                if (( rc == 2 )); then (( ++ntmp )); else targets+=("$t"); fi
                 pend=0
                 (( ++nred ))
             elif [[ "$t" == '>' || "$t" == '>>' ]]; then
                 pend=1
             elif [[ "$t" =~ $redir_re ]]; then
-                rc=0; _text_heredoc_word "${BASH_REMATCH[1]}" || rc=$?
-                if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
-                if (( rc == 2 )); then (( ++ntmp )); fi
+                t="${BASH_REMATCH[1]}"
+                rc=0; _text_heredoc_word "$t" || rc=$?
+                if (( rc == 1 )); then return 0; fi
+                if (( rc == 2 )); then (( ++ntmp )); else targets+=("$t"); fi
                 (( ++nred ))
             else
-                printf '%s' "$cmd"
                 return 0
             fi
         elif [[ "$t" == -a || "$t" == --append ]]; then
             :
         elif [[ "$t" != -* ]]; then
             rc=0; _text_heredoc_word "$t" || rc=$?
-            if (( rc == 1 )); then printf '%s' "$cmd"; return 0; fi
-            if (( rc == 2 )); then (( ++ntmp )); fi
+            if (( rc == 1 )); then return 0; fi
+            if (( rc == 2 )); then (( ++ntmp )); else targets+=("$t"); fi
             (( ++nfile ))
         else
-            printf '%s' "$cmd"
             return 0
         fi
     done
     # Every CLAUDE_TEMP_DIR in the line must be an accepted target: no reassignment or other use of it.
     occ="${fl//CLAUDE_TEMP_DIR/}"
-    if (( (${#fl} - ${#occ}) != ntmp * 15 )); then printf '%s' "$cmd"; return 0; fi
+    if (( (${#fl} - ${#occ}) != ntmp * 15 )); then return 0; fi
     if (( nheredoc != 1 || pend )) || [[ -z "$first" ]] || { [[ "$first" == cat ]] && (( nred < 1 )); } \
             || { [[ "$first" == tee ]] && (( nfile < 1 )); }; then
-        printf '%s' "$cmd"
         return 0
     fi
     closing=$(printf '%s' "$cmd" | LC_ALL=C awk -v w="$w" -v dash="$dash" "$_TEXT_HEREDOC_AWK") || closing=""
-    if [[ -z "$closing" ]]; then printf '%s' "$cmd"; return 0; fi
-    printf '%s' "$fl"
+    if [[ -z "$closing" ]]; then return 0; fi
+    TEXT_HEREDOC_OUT="$fl"
+    TEXT_HEREDOC_TARGETS=(${targets[@]+"${targets[@]}"})
     return 0
+}
+
+# strip_text_heredoc <cmd>: print what text_heredoc_parse sets TEXT_HEREDOC_OUT to.
+strip_text_heredoc() {
+    text_heredoc_parse "$1"
+    printf '%s' "$TEXT_HEREDOC_OUT"
+}
+
+# resolve_path <abs-path>: print <abs-path> with every symlink resolved, parent directories included (Stow
+# folds whole directories into one link). A missing leaf resolves through its parent; a missing parent is
+# left as given. Bounded, so a symlink cycle cannot hang the hook.
+resolve_path() {
+    local p="$1" dir base target hops=0
+    while (( hops++ < 40 )); do
+        dir=$(dirname -- "$p")
+        base=$(basename -- "$p")
+        if [[ -d "$dir" ]]; then
+            dir=$(cd -P -- "$dir" && pwd -P)
+        fi
+        p="$dir/$base"
+        [[ -L "$p" ]] || break
+        target=$(readlink -- "$p")
+        if [[ "$target" == /* ]]; then p="$target"; else p="$dir/$target"; fi
+    done
+    printf '%s\n' "$p"
+}
+
+# normalise_path <abs-path>: print <abs-path> with empty and "." segments dropped and each ".." applied lexically,
+# the way an edit tool resolves the path it writes; a ".." at the root stays at the root. resolve_path cannot see
+# through a missing directory, so <dir>/missing/../<file> needs this form.
+normalise_path() {
+    local seg
+    local -a parts kept
+    kept=()
+    IFS=/ read -r -d '' -a parts < <(printf '%s' "$1") || true
+    for seg in ${parts[@]+"${parts[@]}"}; do
+        case "$seg" in
+            ''|.) ;;
+            ..) if (( ${#kept[@]} > 0 )); then unset "kept[$(( ${#kept[@]} - 1 ))]"; fi ;;
+            *) kept+=("$seg") ;;
+        esac
+    done
+    if (( ${#kept[@]} == 0 )); then
+        printf '/\n'
+    else
+        local IFS=/
+        printf '/%s\n' "${kept[*]}"
+    fi
+}
+
+# hydrated_output_tmpl <abs-path>: return 0 and set HYDRATED_TMPL when <abs-path> is a hydrated output: its resolved,
+# given or normalised form (not named settings.json) has a sibling <file>.tmpl. Else return 1.
+# shellcheck disable=SC2034  # HYDRATED_TMPL is read by the calling hook
+hydrated_output_tmpl() {
+    local candidate resolved normalised
+    resolved=$(resolve_path "$1")
+    normalised=$(normalise_path "$1")
+    for candidate in "$resolved" "$1" "$(resolve_path "$normalised")" "$normalised"; do
+        if [[ "$(basename -- "$candidate")" == settings.json ]]; then
+            continue
+        fi
+        if [[ -f "$candidate.tmpl" ]]; then
+            HYDRATED_TMPL="$candidate.tmpl"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Byte-wise quote state machine for shell_scan (N unquoted, S '…', A $'…', D "…"). A first pass sets
@@ -993,10 +1062,10 @@ probe_reset
 
 # probe_add <kind> <root> <form> [<include> <exclude> <exclude-dir>]: add the absolute directory <root>, listed by
 # <kind>: git (git ls-files -co --exclude-standard in a work tree, with nested repositories and submodules listed in
-# full, else find), tracked (git ls-files in a work tree, else find), find, findL (find -L), or a rev kind (a
-# revision's tree, listed by git ls-tree; see _dhs_rev). <form> names the reader in a decision. The glob lists
-# (\x1f-separated bash patterns) narrow the hits; a glob holding { is ignored. A repeated entry is ignored; returns 1
-# once PROBE_MAX_ROOTS are held.
+# full, else find), tracked (git ls-files in a work tree, else find), find, findL (find -L), one (one level, as ls
+# lists it), or a rev kind (a revision's tree, listed by git ls-tree; see _dhs_rev). <form> names the reader in a
+# decision. The glob lists (\x1f-separated bash patterns) narrow the hits; a glob holding { is ignored. A repeated
+# entry is ignored; returns 1 once PROBE_MAX_ROOTS are held.
 # shellcheck disable=SC2034  # PROBE_FORM is read by the calling hook
 probe_add() {
     local key="$1"$'\x1f'"$2"$'\x1f'"${4:-}"$'\x1f'"${5:-}"$'\x1f'"${6:-}"
@@ -1021,6 +1090,12 @@ probe_add() {
 _dhs_find() {
     cd "$1" || return 1
     command find ${2:+"$2"} . \( -name .git -o -name node_modules \) -prune -o \( -type d -iname secrets \) -o -print
+}
+
+# _dhs_one <root>: list the entries one level under <root>, as _dhs_find does for the whole tree.
+_dhs_one() {
+    cd "$1" || return 1
+    command find . -maxdepth 1 \( -name .git -o -name node_modules \) -prune -o \( -type d -iname secrets \) -o -print
 }
 
 # _dhs_git <root> <ls-files option>...: list the work tree's files under <root>, one per line, and return git's status,
@@ -1111,6 +1186,7 @@ _dhs_list() {
                     _dhs_git "$r" --cached || rc=$?
                 fi ;;
             findL) _dhs_find "$r" -L || rc=$? ;;
+            one) _dhs_one "$r" || rc=$? ;;
             rev$'\x1d'*) _dhs_rev "$k" || rc=$? ;;
             *) _dhs_find "$r" || rc=$? ;;
         esac

@@ -10,7 +10,8 @@
 #
 # The documented git-commit heredoc message is removed first (strip_commit_heredoc), and so is the body of a
 # quoted-delimiter cat or tee heredoc that writes a file (strip_text_heredoc): the two sanctioned exemptions. A cat
-# heredoc is not a read-only cat for the temp-write rule below. The syntax checks then run on a quote-aware skeleton
+# heredoc is not a read-only cat for the temp-write rule below, and the carve-out excludes a generated file (a hydrated
+# output or a Claude Code settings.json) as its target. The syntax checks then run on a quote-aware skeleton
 # of the command (shell_scan): operators inside string literals are ignored, but nothing outside them is hidden.
 # A backslash-newline continuation, a newline inside quotes and an escaped ; & or | read as text, but only in
 # a command with no unquoted, unescaped # (a comment can hide what bash reads as a separator).
@@ -26,12 +27,43 @@ if [[ -z "$cmd" ]]; then
 fi
 
 checked=$(strip_commit_heredoc "$cmd")
-text_checked=$(strip_text_heredoc "$checked")
+text_heredoc_parse "$checked"
+text_checked="$TEXT_HEREDOC_OUT"
 text_heredoc=0
 if [[ "$text_checked" != "$checked" ]]; then
     text_heredoc=1
 fi
 checked="$text_checked"
+
+# A text heredoc that writes a generated file goes through Edit or Write, where the edit guards decide.
+if (( text_heredoc )); then
+    hd_cwd=$(hook_field '.cwd')
+    for hd_tgt in ${TEXT_HEREDOC_TARGETS[@]+"${TEXT_HEREDOC_TARGETS[@]}"}; do
+        # shellcheck disable=SC2088  # matching a literal, unexpanded ~ as the command carries it
+        if [[ "$hd_tgt" == "~" ]]; then
+            hd_abs="$HOME"
+        elif [[ "$hd_tgt" == "~/"* ]]; then
+            hd_abs="$HOME/${hd_tgt#"~/"}"
+        elif [[ "$hd_tgt" == /* ]]; then
+            hd_abs="$hd_tgt"
+        else
+            hd_abs="${hd_cwd:-$PWD}/$hd_tgt"
+        fi
+        hd_norm=$(normalise_path "$hd_abs")
+        hd_res=$(resolve_path "$hd_norm")
+        if [[ "$hd_norm" == */.claude/settings.json || "$hd_res" == */.claude/settings.json ]]; then
+            msg="GENERATED FILE: '$hd_tgt' is a Claude Code settings.json, generated from settings.json.tmpl; a Bash"
+            msg+=" heredoc write skips its edit check. Write it with Edit or Write, which ask, or edit"
+            msg+=" settings.json.tmpl and run scripts/apply-settings.sh."
+            hook_deny "$msg"
+        fi
+        if hydrated_output_tmpl "$hd_abs"; then
+            msg="HYDRATED OUTPUT: '$hd_tgt' is generated from '$HYDRATED_TMPL' by hydrate.sh, so a heredoc write is"
+            msg+=" lost or reverted. Edit '$HYDRATED_TMPL' with Edit or Write instead, then run that repo's hydrate.sh."
+            hook_deny "$msg"
+        fi
+    done
+fi
 shell_scan "$checked"
 stripped="$SHELL_SKELETON"
 

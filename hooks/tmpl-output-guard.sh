@@ -9,48 +9,6 @@ set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 hook_read_input
 
-# resolve_path <abs-path>: print <abs-path> with every symlink resolved, parent directories included (Stow
-# folds whole directories into one link). A missing leaf resolves through its parent; a missing parent is
-# left as given. Bounded, so a symlink cycle cannot hang the hook.
-resolve_path() {
-    local p="$1" dir base target hops=0
-    while (( hops++ < 40 )); do
-        dir=$(dirname -- "$p")
-        base=$(basename -- "$p")
-        if [[ -d "$dir" ]]; then
-            dir=$(cd -P -- "$dir" && pwd -P)
-        fi
-        p="$dir/$base"
-        [[ -L "$p" ]] || break
-        target=$(readlink -- "$p")
-        if [[ "$target" == /* ]]; then p="$target"; else p="$dir/$target"; fi
-    done
-    printf '%s\n' "$p"
-}
-
-# normalise_path <abs-path>: print <abs-path> with empty and "." segments dropped and each ".." applied lexically,
-# the way an edit tool resolves the path it writes; a ".." at the root stays at the root. resolve_path cannot see
-# through a missing directory, so <dir>/missing/../<file> needs this form.
-normalise_path() {
-    local seg
-    local -a parts out
-    out=()
-    IFS=/ read -r -d '' -a parts < <(printf '%s' "$1") || true
-    for seg in ${parts[@]+"${parts[@]}"}; do
-        case "$seg" in
-            ''|.) ;;
-            ..) if (( ${#out[@]} > 0 )); then unset "out[$(( ${#out[@]} - 1 ))]"; fi ;;
-            *) out+=("$seg") ;;
-        esac
-    done
-    if (( ${#out[@]} == 0 )); then
-        printf '/\n'
-    else
-        local IFS=/
-        printf '/%s\n' "${out[*]}"
-    fi
-}
-
 path=$(hook_field '.tool_input.file_path // .tool_input.notebook_path')
 if [[ -z "$path" ]]; then
     exit 0
@@ -62,17 +20,10 @@ elif [[ "$path" != /* ]]; then
     path="$(hook_field '.cwd')/$path"
 fi
 
-resolved=$(resolve_path "$path")
-normalised=$(normalise_path "$path")
-for candidate in "$resolved" "$path" "$(resolve_path "$normalised")" "$normalised"; do
-    if [[ "$(basename -- "$candidate")" == settings.json ]]; then
-        continue
-    fi
-    if [[ -f "$candidate.tmpl" ]]; then
-        msg="HYDRATED OUTPUT: '$path' is generated from '$candidate.tmpl' by hydrate.sh, so a direct edit is lost or"
-        msg+=" reverted. Edit '$candidate.tmpl' instead, then run that repo's hydrate.sh."
-        hook_deny "$msg"
-    fi
-done
+if hydrated_output_tmpl "$path"; then
+    msg="HYDRATED OUTPUT: '$path' is generated from '$HYDRATED_TMPL' by hydrate.sh, so a direct edit is lost or"
+    msg+=" reverted. Edit '$HYDRATED_TMPL' instead, then run that repo's hydrate.sh."
+    hook_deny "$msg"
+fi
 
 exit 0
