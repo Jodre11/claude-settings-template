@@ -2453,6 +2453,21 @@ expect_in "$GS" ASK   "a glob under a recased directory asks" "git grep -n x HEA
 expect_in "$GS" ALLOW "a pathspec with no case variant in the revision allowed" 'git grep -n x HEAD~0 -- clean.md'
 expect_in "$GS" ALLOW "a blob under a directory, spelled as it is, allowed" 'git grep -n x HEAD~0 -- sub/ok.md'
 expect_in "$GS" ALLOW "a pathspec absent in every case allowed" 'git grep -n x HEAD~0 -- nothere'
+# A word holding = is read as a variable or env name the shell may assemble only from live syntax: a quoted backslash,
+# glob or $ before the = is text, as in a grep pattern, while a live $ or a $'…' escape still asks.
+expect_in "$GS" ALLOW "a single-quoted pattern with a backslash before = allowed" \
+    "git grep -n -E 'x\\(\\) =>' HEAD~1"
+expect_in "$GS" ALLOW "a double-quoted pattern with a backslash before = allowed" \
+    'git grep -n -E "x\(\) =>" HEAD~1'
+expect_in "$GS" ALLOW "a quoted pattern with a bracket before = allowed" "git grep -n 'a[b]=c' HEAD~1"
+expect_in "$GS" ALLOW "a single-quoted pattern with a dollar before = allowed" "git grep -n '\$x=1' HEAD~1"
+expect_in "$GS" ASK   "a pattern with a live dollar before = asks" 'git grep -n a$v=1 HEAD~1'
+expect_in "$GS" ASK   "a pattern with a dollar-quote escape before = asks" "git grep -n \$'a\\x41=1' HEAD~1"
+# A stage that re-parses its words would make a quoted backslash live again; such a word is a command string there.
+expect_in "$GS" DENY  "a quoted assignment re-parsed by watch denied" \
+    "watch 'GIT_ICASE_PATH\\SPECS=1' git grep -n x HEAD~1"
+expect_in "$GS" DENY  "a quoted assignment re-parsed by ssh denied" \
+    "ssh h 'GIT_ICASE_PATH\\SPECS=1' git grep -n x HEAD~1"
 expect_in "$GS" ASK   "an option built with a quoted escape asks" \
     "git --icase-pathspec\$'\\x73' grep -n x HEAD~0 -- SUB/deep"
 expect_in "$GS" ASK   "an option built with an octal escape asks" \
