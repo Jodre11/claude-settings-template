@@ -22,7 +22,6 @@ sensitive values out of version control.
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |
 | `secret-breach-alarm.sh` | Called by the scrubber on a detected leak: records the secret's class and source, never its value |
 | `secret-patterns.sh` | Sourced, not registered: the secret value shapes and path names every `secret-*` hook matches |
-| `allow-permissions.sh`, `allow-write-permissions.sh`, `agent-mode-guard.sh` | Shims for an older `settings.json`; see [upgrading](#5-re-applying-template-changes-later) |
 | `session-init.sh` | Creates the session-scoped temp dir and, beside it, the secret vault; renames the tmux session, injects context, exports `CLAUDE_TEMP_DIR`/`CLAUDE_SESSION_ID`/`CLAUDE_SECRET_DIR` to Bash |
 | `session-topic-provisional.sh` | UserPromptSubmit: sets a quick heuristic tmux `@topic` (the window title) on the first prompt |
 | `session-topic.sh` | Stop: once per session, replaces the provisional `@topic` with a better guess from the first prompt and the cwd |
@@ -173,10 +172,12 @@ This runs `hydrate.sh --force`, then re-runs `setup-platform.sh` to re-inject th
 
 **After pulling hook or permission changes**, run `bash scripts/apply-settings.sh` so `settings.json` picks up
 the new hook registrations and permission rules; hooks are template-wins, so the old registrations are replaced.
-Until you do, `allow-permissions.sh` and `allow-write-permissions.sh` forward to their replacements, the retired
-`agent-mode-guard.sh` does nothing, and a failed tool call's output is not scanned for secrets (the old
-registration there now does nothing); the forwarders go in a later release. Subagents inherit the allow rules on
-Claude Code 2.1.283 or later, so no hook re-implements them for subagents.
+Until you do, a failed tool call's output is not scanned for secrets (the old registration there now does nothing).
+The compatibility shims `allow-permissions.sh`, `allow-write-permissions.sh` and `agent-mode-guard.sh` are gone: a
+`settings.json` hydrated before they were retired still registers them, so their guards (the reviewer git deny and
+the `settings.json` edit ask) are lost and each call reports a hook error until you run
+`bash scripts/apply-settings.sh`. Subagents inherit the allow rules on Claude Code 2.1.283 or later, so no hook
+re-implements them for subagents.
 
 ### 6. Install tools
 
@@ -279,7 +280,7 @@ are `.gitignore`d in the template repo.
 |---|---|---|
 | `settings.json.tmpl` | `settings.json` | `__AWS_SSO_REFRESH_PATH__`, `__SEARXNG_URL__` |
 | `settings.work.json.tmpl` | `settings.work.json` | `__AWS_PROFILE__`, `__MODEL_OVERRIDE_OPUS_5_5__` |
-| `CLAUDE.md.tmpl` | `CLAUDE.md` | `__DOTFILES_REPO_URL__`, `__CLAUDE_SETTINGS_REPO_URL__` |
+| `CLAUDE.md.tmpl` | `CLAUDE.md` | `__DOTFILES_REPO_URL__` |
 | `scripts/_aws-sso-common.sh.tmpl` | `scripts/_aws-sso-common.sh` | `__AWS_PROFILE__`, `__SSO_START_URL__` |
 | `skills/datadog-log-link/SKILL.md.tmpl` | `skills/datadog-log-link/SKILL.md` | `__DATADOG_SITE__`, `__DATADOG_EXAMPLE_SERVICE__` |
 
@@ -316,9 +317,9 @@ dotnet tool install --global roslyn-language-server --prerelease
 dotnet tool install --global ClaudeCodeRoslynLspProxy
 ```
 
-The plugin lives in [`Jodre11/claude-code-plugins`](https://github.com/Jodre11/claude-code-plugins);
-register that marketplace via `extraKnownMarketplaces` in your personal `settings.json` (or
-fork to your own marketplace and edit accordingly).
+The plugin lives in the public [`Jodre11/claude-code-plugins`](https://github.com/Jodre11/claude-code-plugins)
+marketplace, which the template declares as `jodre11-plugins` in `extraKnownMarketplaces` (with `autoUpdate`). To
+use your own marketplace instead, change that entry and the plugin's `@marketplace` suffix in `settings.json.tmpl`.
 
 ## Secret Scanning
 

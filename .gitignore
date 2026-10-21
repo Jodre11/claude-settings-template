@@ -75,6 +75,11 @@ image-cache/
 # Agent team runtime state
 teams/
 
+# Runtime state the CLI writes (MCP discovery verdicts, synced and trashed skills); not authored config
+/state/
+/skills/synced/
+/skills/.trash/
+
 # OS
 .DS_Store
 Thumbs.db

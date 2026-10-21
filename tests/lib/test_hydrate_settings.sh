@@ -11,7 +11,7 @@ _hy_fixture() {
     cp "$REPO_ROOT/hydrate.sh" "$1/hydrate.sh"
     printf '%s\n' 'AWS_SSO_REFRESH_PATH=/fx/refresh.sh' 'AWS_PROFILE=' 'SEARXNG_URL=https://searx.test' \
         'SSO_START_URL=https://sso.test/start' 'DATADOG_SITE=datadoghq.test' 'DATADOG_EXAMPLE_SERVICE=svc' \
-        'DOTFILES_REPO_URL=https://dotfiles.test' 'CLAUDE_SETTINGS_REPO_URL=https://settings.test' >"$1/config.env"
+        'DOTFILES_REPO_URL=https://dotfiles.test' >"$1/config.env"
 }
 
 # _hy_run <dir> <flag> [VAR=value...]: run the scratch hydrate.sh with the given environment; sets HY_OUT (stdout

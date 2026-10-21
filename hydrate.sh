@@ -83,7 +83,6 @@ substitute_placeholders() {
 
     # CLAUDE.md
     content="${content//__DOTFILES_REPO_URL__/${DOTFILES_REPO_URL:-}}"
-    content="${content//__CLAUDE_SETTINGS_REPO_URL__/${CLAUDE_SETTINGS_REPO_URL:-}}"
 
     printf '%s\n' "$content"
 }

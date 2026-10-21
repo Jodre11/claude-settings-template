@@ -25,55 +25,15 @@ test_hook_registrations_no_agent_guard() {
     assert_equals "" "$(_hr_commands | grep -F agent-mode-guard.sh || true)" "agent-mode-guard.sh is not registered"
 }
 
-# test_hook_compat_shims: a settings.json hydrated before reviewer-guard.sh and settings-edit-ask.sh replaced the old
-# hooks still names these three scripts until it is re-hydrated; each must exist, stay unregistered here, and behave.
-test_hook_compat_shims() {
-    local shim out
-    for shim in allow-permissions.sh allow-write-permissions.sh agent-mode-guard.sh; do
-        if [[ -x "$REPO_ROOT/hooks/$shim" ]]; then
-            pass "$shim exists and is executable"
+# test_hook_retired_names_gone: the three retired hook names are neither shipped nor registered.
+test_hook_retired_names_gone() {
+    local name
+    for name in allow-permissions.sh allow-write-permissions.sh agent-mode-guard.sh; do
+        if [[ -e "$REPO_ROOT/hooks/$name" ]]; then
+            fail "$name is no longer shipped" "still present: hooks/$name"
         else
-            fail "$shim exists and is executable" "not found or not executable: hooks/$shim"
+            pass "$name is no longer shipped"
         fi
-        assert_equals "" "$(_hr_commands | grep -F "$shim" || true)" "$shim is not registered in settings.json.tmpl"
+        assert_equals "" "$(_hr_commands | grep -F "$name" || true)" "$name is not registered in settings.json.tmpl"
     done
-
-    if out=$(jq -nc '{tool_input:{command:"git commit -m x"}, agent_type:"code-review-suite:correctness-reviewer"}' \
-            | "$REPO_ROOT/hooks/allow-permissions.sh" 2>/dev/null); then
-        assert_equals deny "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out" 2>/dev/null)" \
-            "allow-permissions.sh shim denies a reviewer git commit"
-    else
-        fail "allow-permissions.sh shim denies a reviewer git commit" "hook exited non-zero or is missing"
-    fi
-
-    if out=$(jq -nc '{tool_input:{command:"rm -rf /tmp/claude-x /home/me"}, agent_type:"general-purpose",
-            agent_id:"agent-1"}' | "$REPO_ROOT/hooks/allow-permissions.sh" 2>/dev/null); then
-        assert_equals "" "$out" "allow-permissions.sh shim no longer allows a subagent command by its first word"
-    else
-        fail "allow-permissions.sh shim no longer allows a subagent command by its first word" \
-            "hook exited non-zero or is missing"
-    fi
-
-    if out=$(jq -nc '{tool_input:{file_path:"/x/.claude/settings.json"}}' \
-            | "$REPO_ROOT/hooks/allow-write-permissions.sh" 2>/dev/null); then
-        assert_equals ask "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out" 2>/dev/null)" \
-            "allow-write-permissions.sh shim asks on a settings.json write"
-    else
-        fail "allow-write-permissions.sh shim asks on a settings.json write" "hook exited non-zero or is missing"
-    fi
-
-    if out=$(jq -nc '{tool_input:{file_path:"/tmp/claude-x/../../etc/passwd"}}' \
-            | "$REPO_ROOT/hooks/allow-write-permissions.sh" 2>/dev/null); then
-        assert_equals "" "$out" "allow-write-permissions.sh shim no longer allows a write that escapes the temp dir"
-    else
-        fail "allow-write-permissions.sh shim no longer allows a write that escapes the temp dir" \
-            "hook exited non-zero or is missing"
-    fi
-
-    if out=$(jq -nc '{tool_name:"Agent", tool_input:{subagent_type:"general-purpose", prompt:"x"},
-            permission_mode:"default"}' | "$REPO_ROOT/hooks/agent-mode-guard.sh" 2>/dev/null); then
-        assert_equals "" "$out" "agent-mode-guard.sh shim makes no decision on an Agent call"
-    else
-        fail "agent-mode-guard.sh shim makes no decision on an Agent call" "hook exited non-zero or is missing"
-    fi
 }
