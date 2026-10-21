@@ -1414,11 +1414,17 @@ expect_in "$T" DENY  "git grep --open-files-in-pager -l shows whole files, denie
 expect_in "$T" DENY  "an abbreviated --open-files-in-pager shows whole files, denied" 'git grep --open=cat -l KEY'
 expect_in "$I" DENY  "rg searches a root it is named although .gitignore ignores it, denied" 'rg KEY ign'
 expect_in "$I" ALLOW "rg with no root skips the ignored directory, allowed"       'rg KEY'
+# A revision confined to a literal blob spends the git budget with no directory probe, so the run-wide deadline
+# cannot turn this row into an ask under load.
 mkdir -p "$pt/many"
+git -C "$pt/many" init -q
+printf 'a\n' >"$pt/many/a.md"
+git -C "$pt/many" add a.md
+git -C "$pt/many" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
 many=""
 for i in {1..32}; do
-    mkdir "$pt/many/d$i"
-    many+="git -C $pt/many/d$i grep a | "
+    many+="git -C $pt/many grep a HEAD -- a.md | "
 done
 : >"$pt/repo/src/.env"
 expect_in "$R" ALLOW "rg of a root .gitignore does not ignore keeps git's listing, allowed" 'rg KEY src'

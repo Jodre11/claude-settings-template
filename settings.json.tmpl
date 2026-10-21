@@ -34,6 +34,8 @@
       "Edit(//tmp/claude-**)",
       "Read",
       "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:code.claude.com)",
+      "WebFetch(domain:platform.claude.com)",
       "Bash(brew info *)",
       "Bash(whisper-cli *)",
       "Bash(dotnet build *)",
@@ -372,6 +374,19 @@
     "command": "~/.claude/scripts/statusline.sh",
     "refreshInterval": 10
   },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "extraKnownMarketplaces": {
+    "jodre11-plugins": {
+      "autoUpdate": true,
+      "source": {
+        "repo": "Jodre11/claude-code-plugins",
+        "source": "github"
+      }
+    }
+  },
   "enabledPlugins": {
     "csharp-lsp@claude-plugins-official": false,
     "roslyn-lsp@jodre11-plugins": true,
@@ -384,7 +399,6 @@
   },
   "effortLevel": "xhigh",
   "showThinkingSummaries": true,
-  "teammateMode": "in-process",
   "__remove__": {
     "keys": [
       ["sandbox", "allowedDomains"],
