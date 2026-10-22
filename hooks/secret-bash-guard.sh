@@ -723,8 +723,15 @@ _cmd_var_word() {
     if [[ "$w" == */[Ee][Nn][Vv] ]]; then
         gev=1
     fi
-    if [[ "$w" == *=* && ( "${w%%=*}" == *[\$\`\\\{\*\?\[]* || "$wmk" == *n* ) ]]; then
-        rr_gitps=1
+    # The name before = is assembled only by live syntax: a $ not all quoted (no d mark), a backquote, a $'…' escape (a),
+    # a glob or brace not all quoted (no g) or a brace expansion (n). A quoted backslash, glob or $ is text, as in a
+    # grep pattern, and shell_words has already removed every live backslash.
+    if [[ "$w" == *=* ]]; then
+        v="${w%%=*}"
+        if [[ "$wmk" == *n* || "$v" == *\`* ]] || [[ "$v" == *\$* && "$wmk" != *d* ]] \
+                || [[ "$v" == *\\* && "$wmk" == *a* ]] || [[ "$v" == *[\{\*\?\[]* && "$wmk" != *g* ]]; then
+            rr_gitps=1
+        fi
     fi
     if [[ "$w" == [A-Z]*=* ]]; then
         v="${w%%=*}"
