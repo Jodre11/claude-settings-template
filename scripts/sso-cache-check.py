@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """sso-cache-check.py — AWS SSO cache walker for token validity checks.
 
-Two modes:
   --mode expiry  Prints "valid" (token not expired within grace) or "expired".
-  --mode age     Prints seconds since newest matching token was written, or 999999.
 
 Usage:
-  sso-cache-check.py --cache-dir DIR --start-url URL --mode {expiry|age} [--grace-seconds N]
+  sso-cache-check.py --cache-dir DIR --start-url URL --mode expiry [--grace-seconds N]
 """
 
 import argparse
 import glob
 import json
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 
@@ -51,35 +48,17 @@ def check_expiry(cache_dir, start_url, grace_seconds):
     print("expired")
 
 
-def check_age(cache_dir, start_url):
-    """Print seconds since newest matching token was written, or 999999."""
-    newest = None
-
-    for path, _data in find_tokens(cache_dir, start_url):
-        mtime = os.path.getmtime(path)
-        if newest is None or mtime > newest:
-            newest = mtime
-
-    if newest is not None:
-        print(int(time.time() - newest))
-    else:
-        print(999999)
-
-
 def main():
     parser = argparse.ArgumentParser(description="AWS SSO cache walker")
     parser.add_argument("--cache-dir", required=True, help="Path to SSO cache directory")
     parser.add_argument("--start-url", required=True, help="SSO start URL to match")
-    parser.add_argument("--mode", required=True, choices=["expiry", "age"], help="Check mode")
+    parser.add_argument("--mode", required=True, choices=["expiry"], help="Check mode")
     parser.add_argument("--grace-seconds", type=int, default=300, help="Grace period for expiry check")
     args = parser.parse_args()
 
     cache_dir = os.path.expanduser(args.cache_dir)
 
-    if args.mode == "expiry":
-        check_expiry(cache_dir, args.start_url, args.grace_seconds)
-    else:
-        check_age(cache_dir, args.start_url)
+    check_expiry(cache_dir, args.start_url, args.grace_seconds)
 
 
 if __name__ == "__main__":
