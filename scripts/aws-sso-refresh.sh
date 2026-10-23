@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # aws-sso-refresh.sh — Smart AWS SSO login for Claude Code's awsAuthRefresh.
 #
-# Guards against the auth refresh loop (anthropics/claude-code#12421):
-# 1. Skip if SSO token was refreshed recently (propagation delay)
-# 2. After login, poll until credentials are confirmed working
+# After login, polls until the credentials work, so Claude Code does not retry before they propagate.
 #
 # Local:  opens browser automatically (zero interaction).
 # Remote: uses --no-browser, strips box art, emits clean OSC 8 hyperlinks.
@@ -11,21 +9,9 @@ set -euo pipefail
 
 source "$(dirname "$0")/_aws-sso-common.sh"
 
-SKIP_IF_NEWER_THAN=120  # seconds
-POLL_TIMEOUT=30          # seconds
+POLL_TIMEOUT=30  # seconds
 
 remove_stale_credentials
-
-# Skip if SSO token was written recently (avoids re-trigger during propagation)
-newest_age=$(python3 "$SSO_CACHE_CHECK" \
-    --cache-dir "$CACHE_DIR" \
-    --start-url "$SSO_START_URL" \
-    --mode age 2>/dev/null || echo "999999")
-
-if [[ "$newest_age" -lt "$SKIP_IF_NEWER_THAN" ]]; then
-    echo "SSO token refreshed ${newest_age}s ago, skipping re-login"
-    exit 0
-fi
 
 # Retry wrapper: try normal auth code flow first; if the localhost redirect
 # doesn't complete (cold browser session loses the callback URL), the browser
