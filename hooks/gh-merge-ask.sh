@@ -20,15 +20,56 @@ cmd=$(hook_field '.tool_input.command' 2>/dev/null || true)
 
 # Quotes and backslashes are removed as the shell would splice them out, and flags (with an optional value) may sit
 # between gh, pr and merge, so neither hides a merge. A flag value that is itself a subcommand word still stops it.
-# Glob and brace characters are also tried removed, so g[h] or {merge,} is caught; the word split below then prompts.
+# zsh expands =gh to gh's path, so = also leads gh.
 unquoted=${cmd//\"/}
 unquoted=${unquoted//\'/}
 unquoted=${unquoted//\\/}
-loose=${unquoted//[][\{\}*?,]/}
 flags='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
-merge_re='(^|[[:space:];&|(`/])gh'"$flags"'[[:space:]]+pr'"$flags"'[[:space:]]+merge([[:space:]]|$)'
-if ! [[ "$unquoted" =~ $merge_re || "$loose" =~ $merge_re ]]; then
-    exit 0
+merge_re='(^|[[:space:];&|(`/=])gh'"$flags"'[[:space:]]+pr'"$flags"'[[:space:]]+merge([[:space:]]|$)'
+pr_word_re='(^|[[:space:];&|(`/=])pr([[:space:]]|$)'
+
+# glob_scan <cmd>: set spaced to <cmd> with its quotes removed and every unquoted glob, brace or comma made a space,
+# and glob_seen to 1 when an unquoted glob or brace was found. Quoted and escaped characters stay literal.
+glob_scan() {
+    local s="$1" q="" c i
+    spaced=""
+    glob_seen=0
+    for (( i = 0; i < ${#s}; i++ )); do
+        c=${s:i:1}
+        if [[ -n "$q" ]]; then
+            if [[ "$c" == "$q" ]]; then
+                q=""
+            elif [[ "$q" == \" && "$c" == \\ ]]; then
+                i=$((i + 1))
+                spaced+=${s:i:1}
+            else
+                spaced+=$c
+            fi
+        elif [[ "$c" == \" || "$c" == \' ]]; then
+            q=$c
+        elif [[ "$c" == \\ ]]; then
+            i=$((i + 1))
+            spaced+=${s:i:1}
+        else
+            case "$c" in
+                '*'|'?'|'['|']'|'{'|'}') glob_seen=1; spaced+=' ' ;;
+                ',') spaced+=' ' ;;
+                *) spaced+=$c ;;
+            esac
+        fi
+    done
+}
+
+# A glob or brace can assemble gh or merge from pieces ({gh,pr} merge, gh pr {m,7}erge, /bin/?h), but gh still needs
+# pr as a word of its own, and no brace yields exactly pr without spelling it ({p,}r gives pr r). So an unquoted glob
+# or brace beside a bare pr word is judged a possible merge, and the word split below prompts on it.
+if ! [[ "$unquoted" =~ $merge_re ]]; then
+    uspaced=${unquoted//[][\{\}*?,]/ }
+    [[ "$unquoted" == *[][\{\}*?]* && "$uspaced" =~ $pr_word_re ]] || exit 0
+    if (( ${#cmd} <= 4096 )); then
+        glob_scan "$cmd"
+        (( glob_seen )) && [[ "$spaced" =~ $pr_word_re ]] || exit 0
+    fi
 fi
 
 hook_backstop ask "gh pr merge: the merge guard could not finish, so this merge needs your approval."
