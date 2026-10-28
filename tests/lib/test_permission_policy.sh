@@ -112,8 +112,7 @@ test_permission_policy_old_signing_ask_rules_go() {
 }
 
 test_permission_policy_ask_gh() {
-    _pp_expect_ask "merges prompt, by command, REST and GraphQL" \
-        'gh pr merge' 'gh pr merge 12 --squash' 'gh pr merge 12 --auto --repo o/r' \
+    _pp_expect_ask "merges prompt, by REST and GraphQL" \
         'gh api -X PUT repos/o/r/pulls/1/merge' 'gh api graphql -f query=mutation{mergePullRequest}' \
         'gh api graphql -f query=mutation{enablePullRequestAutoMerge}'
     _pp_expect_ask "repo delete and edit prompt, by command and REST" \
@@ -141,6 +140,18 @@ test_permission_policy_ask_gh() {
     _pp_expect_ask "closing a PR with branch deletion prompts" \
         'gh pr close 12 --delete-branch' 'gh pr close --delete-branch 12' 'gh pr close -d 12' 'gh pr close 12 -d' \
         'gh pr close 12 -dc done'
+}
+
+# An ask rule outranks every allow rule and PreToolUse hook at any scope, so a native merge ask would stop a
+# repository opting out of the prompt. gh-merge-ask.sh asks instead and skips the prompt only for the repositories in
+# the untracked gh-merge-ask.local (hooks/gh-merge-ask.test.sh covers its judgement).
+test_permission_policy_pr_merge_asked_by_hook() {
+    assert_equals false "$(_pp_in .permissions.ask 'Bash(gh pr merge*)')" "the tmpl no longer asks on gh pr merge"
+    assert_equals true "$(_pp_in '.__remove__.entries["permissions.ask"]' 'Bash(gh pr merge*)')" \
+        "__remove__ drops the live gh pr merge ask"
+    assert_equals 1 "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[]
+        | select(.command == "~/.claude/hooks/gh-merge-ask.sh")] | length' "$REPO_ROOT/settings.json.tmpl")" \
+        "gh-merge-ask.sh is registered once on Bash"
 }
 
 test_permission_policy_ask_other() {
