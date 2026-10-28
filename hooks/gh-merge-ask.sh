@@ -6,9 +6,9 @@
 # repository could never opt out of it. The targets are each --repo/-R value and each URL or host/owner/repo
 # reference, which must name github.com itself; unless a --repo or positional PR URL names the target, also every
 # URL git remote -v lists, since gh may pick any of them (upstream, a set-default). Anything the hook cannot judge
-# prompts: shell metacharacters (a cd, a
-# variable, a second command), GH_REPO or GH_HOST in the command or the environment, a malformed reference, a
-# directory with no GitHub remote. A merge it judges unprompted, and every other command, gets no decision, so the
+# prompts: shell metacharacters (a cd, a variable, a second command), an unquoted glob or brace, any word before gh
+# (an assignment such as GIT_DIR=, a path to gh), GH_REPO or GH_HOST in the command or the environment, a malformed
+# reference, a directory with no GitHub remote. A merge it judges unprompted, and every other command, gets no decision, so the
 # native rules and mode decide them.
 
 set -euo pipefail
@@ -20,12 +20,14 @@ cmd=$(hook_field '.tool_input.command' 2>/dev/null || true)
 
 # Quotes and backslashes are removed as the shell would splice them out, and flags (with an optional value) may sit
 # between gh, pr and merge, so neither hides a merge. A flag value that is itself a subcommand word still stops it.
+# Glob and brace characters are also tried removed, so g[h] or {merge,} is caught; the word split below then prompts.
 unquoted=${cmd//\"/}
 unquoted=${unquoted//\'/}
 unquoted=${unquoted//\\/}
+loose=${unquoted//[][\{\}*?,]/}
 flags='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
 merge_re='(^|[[:space:];&|(`/])gh'"$flags"'[[:space:]]+pr'"$flags"'[[:space:]]+merge([[:space:]]|$)'
-if ! [[ "$unquoted" =~ $merge_re ]]; then
+if ! [[ "$unquoted" =~ $merge_re || "$loose" =~ $merge_re ]]; then
     exit 0
 fi
 
@@ -122,6 +124,9 @@ for (( i = 0; i < ${#cmd}; i++ )); do
     elif [[ "$c" == '#' ]] && (( ! in_word )); then
         break
     else
+        case "$c" in
+            '*'|'?'|'['|']'|'{'|'}') ask_merge "the command holds a glob or brace the guard does not expand" ;;
+        esac
         word+=$c
         in_word=1
     fi
@@ -131,6 +136,10 @@ if [[ -n "$quote" ]]; then
 fi
 if (( in_word )); then
     words+=("$word")
+fi
+# A word before gh (GIT_DIR=, GIT_CONFIG_*=, env, a path) can change the repository gh resolves or the binary run.
+if [[ "${words[0]:-}" != gh ]]; then
+    ask_merge "the command does not start with gh"
 fi
 
 # Only a --repo/-R value or a positional full PR URL names the target outright; gh reads any other positional as a

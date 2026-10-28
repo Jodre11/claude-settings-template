@@ -120,6 +120,16 @@ long=$(printf 'x%.0s' {1..5000})
 expect ask "$x" "gh pr merge 7 -R $OURS --body $long"
 expect none "$o" "gh pr merge github.com/$OURS --merge"
 expect none "$x" "gh pr merge https://github.com/$OURS/pull/214/files --merge"
+
+# The shell expands an unquoted glob or brace, and a word before gh can redirect it, so neither is judged.
+expect ask "$o" "gh pr merge 7 {-R,Acme/widgets}"
+expect ask "$o" "gh pr merge 7 -R$OURS ?"
+expect ask "$o" "g[h] pr merge 7"
+expect ask "$o" "gh pr {merge,} 7"
+expect ask "$o" "GIT_DIR=elsewhere gh pr merge 7"
+expect ask "$o" "/opt/homebrew/bin/gh pr merge 7"
+expect none "$o" "gh pr merge 7 --subject \"a [b] {c} *\""
+expect none "$o" "ls *.json {a,b}"
 GH_REPO=Acme/widgets expect ask "$o" "gh pr merge 7 --merge"
 GH_HOST=evil.example expect ask "$o" "gh pr merge 7 --repo $OURS"
 
