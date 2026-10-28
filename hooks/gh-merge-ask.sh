@@ -63,11 +63,12 @@ glob_scan() {
 # A glob or brace can assemble gh or merge from pieces ({gh,pr} merge, gh pr {m,7}erge, /bin/?h), but gh still needs
 # pr as a word of its own. A list brace cannot yield exactly pr without spelling it ({p,}r gives pr r), so an unquoted
 # glob or brace beside a bare pr word is judged a possible merge, and the word split below prompts on it. A range
-# brace ({p..p}r) and ANSI-C quoting ($'pr') can yield any single word, so either is judged a possible merge outright.
-# Not judged, so left to the native rules: parameter expansion (${X:-pr}) and a pathname glob that needs a matching
-# file in the working directory (p? with a file named pr), since a pattern guard cannot evaluate either.
+# brace ({p..p}r) and ANSI-C or locale quoting ($'pr', $"pr") can yield any single word, so each is judged a possible
+# merge outright. Not judged, so left to the native rules: parameter expansion (${X:-pr}) and a pathname glob that
+# needs a matching file in the working directory (p? with a file named pr), since a pattern guard cannot evaluate
+# either. Command substitution never reaches here: bash-guard.sh denies $( and backticks first.
 range_re='\{[^[:space:]{}]*\.\.[^[:space:]{}]*\}'
-if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re || "$cmd" == *"\$'"* ]]; then
+if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re || "$cmd" == *"\$'"* || "$cmd" == *'$"'* ]]; then
     uspaced=${unquoted//[][\{\}*?,]/ }
     [[ "$unquoted" == *[][\{\}*?]* && "$uspaced" =~ $pr_word_re ]] || exit 0
     if (( ${#cmd} <= 4096 )); then
