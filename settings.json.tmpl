@@ -107,7 +107,6 @@
       "Bash(git *gpgSign * *)",
       "Bash(git *unset*gpgsign*)",
       "Bash(git *unset*gpgSign*)",
-      "Bash(gh pr merge*)",
       "Bash(gh pr close *--delete-branch*)",
       "Bash(gh pr close -d*)",
       "Bash(gh pr close * -d*)",
@@ -291,6 +290,12 @@
             "command": "~/.claude/hooks/git-signing-ask.sh",
             "timeout": 5,
             "statusMessage": "Checking git signing..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/gh-merge-ask.sh",
+            "timeout": 5,
+            "statusMessage": "Checking gh pr merge target..."
           }
         ]
       },
@@ -442,6 +447,7 @@
         "Write(//tmp/claude-**)"
       ],
       "permissions.ask": [
+        "Bash(gh pr merge*)",
         "Bash(git *gpgsign*)",
         "Bash(git *gpgSign*)"
       ]
