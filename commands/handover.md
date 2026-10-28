@@ -2,7 +2,7 @@
 description: Write a phase-handover artifact so a fresh session can resume this work
 ---
 
-You are at a phase seam (end of brainstorming, planning, or an implementation
+You are at a phase seam (end of design, planning, or an implementation
 phase) and the user wants to reset context and continue in a clean session.
 Your job is to write a **handover artifact** that a fresh session will read via
 `/rehydrate` to regain context — and to do it accurately, because the handover
@@ -56,7 +56,7 @@ dirty: |
 # Handover: <one-line what-this-work-is>
 
 ## Phase just completed
-<which superpowers phase, and the key decisions/outcomes of it>
+<which phase, and the key decisions/outcomes of it>
 
 ## Done
 <concrete, checkable bullets — what is actually finished and verified>
