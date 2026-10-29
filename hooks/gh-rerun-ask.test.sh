@@ -91,6 +91,13 @@ expect ask 'gh run {re,}run 100' 'glob or brace'
 expect ask 'gh run r?run 100' 'glob or brace'
 expect ask "gh run \$'rerun' 100" 'shell syntax'
 expect ask 'gh run ${X:-rerun} 100' 'shell syntax'
+# Double quotes leave $ and backquote live, so an expansion in them is judged like a bare one.
+expect ask 'gh run "${X:-rerun}" 100' 'shell syntax'
+expect ask 'gh run "`printf rerun`" 100' 'shell syntax'
+# A command too long to scan for an expansion prompts when it has both words.
+long=$(printf 'x%.0s' {1..4100})
+expect ask "gh run \"\${X:-rerun}\" 100 # $long" 'shell syntax'
+expect ask "gh run view 1 --log # $long" 'too long'
 expect ask "gh run rerun 100 'unterminated" 'unterminated quote'
 
 # Other commands get no decision, including a run word beside quoted globs.
@@ -101,6 +108,9 @@ expect none 'gh pr checks 12'
 # Quote removal makes a quoted mention read as a rerun; the guard fails closed on it, as gh-merge-ask.sh does.
 expect ask 'echo "gh run rerun 200"' 'does not start with gh'
 expect none 'npm run build'
+# Without a gh word no expansion can make a rerun, so a run word beside one gets no decision.
+expect none 'npm run test -- $FOO'
+expect none 'docker run -v "$PWD:/w" img'
 expect none 'ls -la'
 expect none ''
 
@@ -111,6 +121,13 @@ if grep -qx "$r|run view 100 --repo ExampleOrg/ours --json event --jq .event" "$
     ok "the lookup runs in the working directory with the --repo given"
 else
     bad "the lookup call drifted: $(cat "$GRA_LOG")"
+fi
+: > "$GRA_LOG"
+run "$r" 'gh run rerun 100 --repo host/ExampleOrg/ours' >/dev/null
+if grep -qx "$r|run view 100 --repo host/ExampleOrg/ours --json event --jq .event" "$GRA_LOG"; then
+    ok "the lookup gets --repo as written, so gh resolves the same repository for both"
+else
+    bad "the lookup rewrote --repo: $(cat "$GRA_LOG")"
 fi
 : > "$GRA_LOG"
 run "$r" 'gh run view 200' >/dev/null

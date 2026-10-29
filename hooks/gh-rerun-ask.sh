@@ -29,15 +29,16 @@ flags='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
 rerun_re='(^|[[:space:];&|(`/=])gh'"$flags"'[[:space:]]+run'"$flags"'[[:space:]]+rerun([[:space:]]|$)'
 run_word_re='(^|[[:space:];&|(`/=])run([[:space:]]|$)'
 
-# outside_quotes <cmd>: print <cmd> with every quoted span removed.
-outside_quotes() {
-    local s="$1" q="" c i out=""
+# outside_single_quotes <cmd>: print <cmd> with every single-quoted span removed, the only text the shell never
+# expands; a double-quoted span keeps its $ and backquote.
+outside_single_quotes() {
+    local s="$1" dq=0 c i out=""
     for (( i = 0; i < ${#s}; i++ )); do
         c=${s:i:1}
-        if [[ -n "$q" ]]; then
-            [[ "$c" == "$q" ]] && q=""
-        elif [[ "$c" == \" || "$c" == \' ]]; then
-            q=$c
+        if [[ "$c" == \' ]] && (( ! dq )); then
+            while (( ++i < ${#s} )) && [[ "${s:i:1}" != \' ]]; do :; done
+        elif [[ "$c" == \" ]]; then
+            dq=$(( ! dq ))
         elif [[ "$c" == \\ ]]; then
             i=$((i + 1))
         else
@@ -47,13 +48,15 @@ outside_quotes() {
     printf '%s' "$out"
 }
 
-# A glob, brace or expansion can assemble rerun from pieces (r?run, {re,}run, $'rerun', ${X:-rerun}), so beside a run
-# word one is judged a possible rerun and the word split below prompts on it.
+# A glob, brace or expansion can assemble rerun from pieces (r?run, {re,}run, $'rerun', "${X:-rerun}"), so beside a run
+# word and a gh one is judged a possible rerun and the word split below prompts on it. A command too long to scan
+# with both words goes to the split too, which prompts on its length.
 if ! [[ "$unquoted" =~ $rerun_re ]]; then
-    [[ "$unquoted" =~ $run_word_re ]] || exit 0
-    (( ${#cmd} <= 4096 )) || exit 0
-    bare=$(outside_quotes "$cmd")
-    [[ "$bare" == *[][\{\}*?\$]* ]] || exit 0
+    [[ "$unquoted" =~ $run_word_re && "$unquoted" == *gh* ]] || exit 0
+    if (( ${#cmd} <= 4096 )); then
+        bare=$(outside_single_quotes "$cmd")
+        [[ "$bare" == *[][\{\}*?\$\`]* ]] || exit 0
+    fi
 fi
 
 hook_backstop ask "gh run rerun: the rerun guard could not finish, so this rerun needs your approval."
@@ -173,11 +176,12 @@ for w in "${words[@]:3}"; do
                 ;;
         esac
     fi
-    repo=$(normalise_repo "$value")
-    if [[ -z "$repo" ]]; then
+    if [[ -z "$(normalise_repo "$value")" ]]; then
         ask_rerun "'$value' is not a GitHub owner/name"
     fi
-    repo_args=(--repo "$repo")
+    # The lookup gets the value as written, so gh resolves the same repository for both (a bare a/b/c, say, is
+    # HOST/OWNER/REPO to gh).
+    repo_args=(--repo "$value")
 done
 if (( expect_repo )); then
     ask_rerun "--repo has no value"
