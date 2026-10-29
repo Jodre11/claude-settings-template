@@ -129,8 +129,7 @@ test_permission_policy_ask_gh() {
         'gh gist create --public notes.md' 'gh gist create notes.md'
     _pp_expect_ask "releases, workflow dispatch, forced syncs, secret writes and deploy keys prompt" \
         'gh release create v1' 'gh release upload v1 a.zip' 'gh release edit v1 --draft=false' \
-        'gh workflow run deploy.yml' 'gh run rerun 1' 'gh repo sync o/r --force' 'gh secret set X --body y' \
-        'gh repo deploy-key add k.pub'
+        'gh workflow run deploy.yml' 'gh repo sync o/r --force' 'gh secret set X --body y' 'gh repo deploy-key add k.pub'
     _pp_expect_ask "a REST merge prompts with trailing fields, a query or a fragment, and with the endpoint quoted" \
         'gh api -X PUT repos/o/r/pulls/1/merge -f merge_method=squash' 'gh api repos/o/r/pulls/1/merge -X PUT' \
         'gh api -X PUT "repos/o/r/pulls/1/merge"' "gh api -X PUT 'repos/o/r/pulls/1/merge'" \
@@ -152,6 +151,31 @@ test_permission_policy_pr_merge_asked_by_hook() {
     assert_equals 1 "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[]
         | select(.command == "~/.claude/hooks/gh-merge-ask.sh")] | length' "$REPO_ROOT/settings.json.tmpl")" \
         "gh-merge-ask.sh is registered once on Bash"
+}
+
+# The same precedence would stop a flaky PR check being rerun unattended, so gh-rerun-ask.sh asks instead and skips
+# the prompt only for a run a pull request triggered (hooks/gh-rerun-ask.test.sh covers its judgement).
+test_permission_policy_run_rerun_asked_by_hook() {
+    assert_equals false "$(_pp_in .permissions.ask 'Bash(gh run rerun*)')" "the tmpl no longer asks on gh run rerun"
+    assert_equals true "$(_pp_in '.__remove__.entries["permissions.ask"]' 'Bash(gh run rerun*)')" \
+        "__remove__ drops the live gh run rerun ask"
+    local hits=""
+    _pp_hit ask 'gh run rerun 1 --failed' && hits=" [rerun]"
+    assert_equals "" "$hits" "a rerun hits no native ask rule"
+    assert_equals 1 "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[]
+        | select(.command == "~/.claude/hooks/gh-rerun-ask.sh")] | length' "$REPO_ROOT/settings.json.tmpl")" \
+        "gh-rerun-ask.sh is registered once on Bash"
+}
+
+# A forced branch delete, hard reset, forced clean or force push keeps its native ask rule as the backstop, and
+# git-safer-route.sh denies the common forms first with the safe equivalent, so an unattended run is not parked
+# (hooks/git-safer-route.test.sh covers its judgement).
+test_permission_policy_git_destructive_routed_by_hook() {
+    _pp_expect_ask "the destructive git forms keep their native ask" \
+        'git branch -D feat' 'git reset --hard HEAD~1' 'git clean -fd' 'git push --force origin main'
+    assert_equals 1 "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[]
+        | select(.command == "~/.claude/hooks/git-safer-route.sh")] | length' "$REPO_ROOT/settings.json.tmpl")" \
+        "git-safer-route.sh is registered once on Bash"
 }
 
 test_permission_policy_ask_other() {

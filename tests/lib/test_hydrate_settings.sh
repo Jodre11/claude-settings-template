@@ -126,6 +126,30 @@ test_hydrate_settings_unions_lists() {
     rm -rf "$tmp"
 }
 
+# autoMode merges like permissions: allow is a union, existing entries first; environment and every other key stay as
+# the existing file has them, the template filling gaps; __remove__ can drop an allow entry.
+# shellcheck disable=SC2016 # $defaults is the literal autoMode token
+test_hydrate_settings_unions_automode() {
+    local tmp
+    tmp=$(mktemp -d)
+    _hy_fixture "$tmp"
+    printf '%s\n' '{"autoMode":{"allow":["$defaults","T"],"soft_deny":["S"]},
+        "__remove__":{"entries":{"autoMode.allow":["OLD"]}}}' >"$tmp/settings.json.tmpl"
+    printf '%s\n' '{"autoMode":{"environment":["E"],"allow":["$defaults","L","OLD"]}}' >"$tmp/settings.json"
+    _hy_run "$tmp" --force
+    assert_equals 0 "$HY_RC" "hydrate --force succeeds with an autoMode block on both sides"
+    assert_equals '["$defaults","L","T"]' "$(_hy_q "$tmp" '.autoMode.allow')" \
+        "autoMode.allow: existing first, then new tmpl entries, less __remove__"
+    assert_equals '["E"]' "$(_hy_q "$tmp" '.autoMode.environment')" "autoMode.environment: the existing file's"
+    assert_equals '["S"]' "$(_hy_q "$tmp" '.autoMode.soft_deny')" "autoMode.soft_deny: the tmpl fills the gap"
+
+    printf '%s\n' '{"permissions":{"allow":["A"]}}' >"$tmp/settings.json.tmpl"
+    printf '%s\n' '{"permissions":{"allow":["A"]}}' >"$tmp/settings.json"
+    _hy_run "$tmp" --force
+    assert_equals 'false' "$(_hy_q "$tmp" 'has("autoMode")')" "no autoMode on either side: none is written"
+    rm -rf "$tmp"
+}
+
 test_hydrate_settings_remove_channel() {
     local tmp
     tmp=$(mktemp -d)
@@ -489,11 +513,21 @@ test_hydrate_settings_real_tmpl() {
         "a fresh clone gets no sandbox block and no __remove__"
     assert_equals 'false' "$(_hy_q "$tmp" '.env | has("AWS_PROFILE")')" "settings.json carries no AWS_PROFILE"
     assert_equals '"https://searx.test"' "$(_hy_q "$tmp" '.env.SEARXNG_URL')" "SEARXNG_URL is substituted"
-    assert_equals '{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB":"1","ENABLE_PROMPT_CACHING_1H":"1","ENABLE_TOOL_SEARCH":"true"}' \
-        "$(_hy_q "$tmp" '.env | {CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, ENABLE_PROMPT_CACHING_1H, ENABLE_TOOL_SEARCH}')" \
+    assert_equals '{"ENABLE_PROMPT_CACHING_1H":"1","ENABLE_TOOL_SEARCH":"true"}' \
+        "$(_hy_q "$tmp" '.env | {ENABLE_PROMPT_CACHING_1H, ENABLE_TOOL_SEARCH}')" \
         "the provider-neutral flags are set in settings env"
+    assert_equals 'false' "$(_hy_q "$tmp" '.env | has("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")')" \
+        "the subprocess env scrub is off: it forces the startup mode to default (#79813)"
+    assert_equals '"1800000"' "$(_hy_q "$tmp" '.env.BASH_MAX_TIMEOUT_MS')" "a Bash call may run for 30 minutes"
+    # shellcheck disable=SC2016 # $defaults is the literal autoMode token
+    assert_equals '"$defaults"' "$(_hy_q "$tmp" '.autoMode.allow[0]')" "autoMode.allow keeps the built-in rules"
+    assert_equals 'false' "$(_hy_q "$tmp" '.autoMode | has("environment")')" \
+        "the tmpl carries no autoMode.environment: it stays machine-local"
 
-    printf '%s\n' '{"env":{"API_TIMEOUT_MS":"1200000","AWS_PROFILE":"live-profile"},
+    # shellcheck disable=SC2016 # $defaults is the literal autoMode token
+    printf '%s\n' '{"env":{"API_TIMEOUT_MS":"1200000","AWS_PROFILE":"live-profile",
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB":"1"},
+        "autoMode":{"environment":["$defaults","Live trusted infrastructure"]},
         "modelOverrides":{"m":"v"},
         "permissions":{"allow":["Bash(git *)","Bash(local-only *)"]},
         "sandbox":{"enabled":true,"allowedDomains":["pypi.org"]},"enabledPlugins":{"x@live-mkt":true},"model":"sonnet",
@@ -505,6 +539,14 @@ test_hydrate_settings_real_tmpl() {
         "the dead sandbox.allowedDomains key is removed, and a fork's own sandbox setting is kept"
     assert_equals 'false' "$(_hy_q "$tmp" 'has("modelOverrides")')" "the live modelOverrides leave"
     assert_equals 'false' "$(_hy_q "$tmp" '.env | has("AWS_PROFILE")')" "the live env.AWS_PROFILE leaves"
+    assert_equals 'false' "$(_hy_q "$tmp" '.env | has("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")')" \
+        "the live subprocess env scrub leaves"
+    # shellcheck disable=SC2016 # $defaults is the literal autoMode token
+    assert_equals '["$defaults","Live trusted infrastructure"]' "$(_hy_q "$tmp" '.autoMode.environment')" \
+        "the live autoMode.environment is kept"
+    # shellcheck disable=SC2016 # $defaults is the literal autoMode token
+    assert_equals 'true' "$(_hy_q "$tmp" '.autoMode.allow | length > 1 and .[0] == "$defaults"')" \
+        "the tmpl's autoMode.allow reaches a live file that already has an autoMode block"
     assert_equals '"/fx/refresh.sh"' "$(_hy_q "$tmp" '.awsAuthRefresh')" "awsAuthRefresh stays shared"
     assert_equals 'true' "$(_hy_q "$tmp" '.permissions.allow | index("Bash(local-only *)") != null')" \
         "a local-only allow rule is kept"

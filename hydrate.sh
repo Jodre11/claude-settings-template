@@ -2,11 +2,12 @@
 # hydrate.sh — Generate config files from .tmpl templates using config.env values.
 #
 # settings.json.tmpl is merged into the existing settings.json (or into {} on a fresh clone):
-#   - permissions.allow / ask / deny, enabledMcpjsonServers: union, existing entries first
+#   - permissions.allow / ask / deny, autoMode.allow, enabledMcpjsonServers: union, existing entries first
 #   - env: union, existing wins; null and empty-string values are dropped from both sides first, and an env left
 #     empty is not written
-#   - permissions' other keys and every other top-level key: existing wins, the template fills gaps. A null
-#     top-level value in the existing file counts as a gap: delete a key through __remove__, not by nulling it
+#   - permissions' and autoMode's other keys (autoMode.environment stays machine-local) and every other top-level
+#     key: existing wins, the template fills gaps. A null top-level value in the existing file counts as a gap:
+#     delete a key through __remove__, not by nulling it
 #   - hooks: template wins (infrastructure, edited only via the template)
 #   - __remove__ (template only) is applied after the unions and never written out:
 #       "keys":    jq paths to delete, e.g. ["sandbox"] or ["env", "X"]
@@ -206,6 +207,10 @@ def checked_remove:
 | union_at(["permissions", "allow"]; $tmpl; $existing)
 | union_at(["permissions", "ask"]; $tmpl; $existing)
 | union_at(["permissions", "deny"]; $tmpl; $existing)
+| if $tmpl.autoMode == null and $existing.autoMode == null then .
+  else .autoMode = (($tmpl.autoMode // {}) + ($existing.autoMode // {}))
+  end
+| union_at(["autoMode", "allow"]; $tmpl; $existing)
 | union_at(["enabledMcpjsonServers"]; $tmpl; $existing)
 | .hooks = ($tmpl.hooks // $existing.hooks)
 | delpaths($rm.keys // [])
