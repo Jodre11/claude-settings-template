@@ -44,7 +44,7 @@ fi
 expect deny "a namespaced reviewer is denied git commit"       'git commit -m x'         "$REVIEWER"
 expect deny "a bare reviewer type is denied git commit"        'git commit -m x'         correctness-reviewer
 expect deny "code-analysis is denied git push"                 'git -C /repo push'       code-analysis
-expect deny "review-synthesiser is denied git reset"           'git reset --hard HEAD'   review-synthesiser
+expect deny "a panel-reviewer seat is denied git reset"        'git reset --hard HEAD'   code-review-suite:panel-reviewer
 expect deny "a reviewer run as the main agent is bound too"    'git commit -m x'         "$REVIEWER" ''
 expect deny "a reviewer is denied inside a pipeline"           'git commit -m x | cat'   "$REVIEWER"
 expect deny "git worktree add is denied"                'git worktree add ../wt'  "$REVIEWER"
