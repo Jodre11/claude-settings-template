@@ -29,11 +29,13 @@ merge_re='(^|[[:space:];&|(`/=])gh'"$flags"'[[:space:]]+pr'"$flags"'[[:space:]]+
 pr_word_re='(^|[[:space:];&|(`/=])pr([[:space:]]|$)'
 
 # glob_scan <cmd>: set spaced to <cmd> with its quotes removed and every unquoted glob, brace or comma made a space,
-# and glob_seen to 1 when an unquoted glob or brace was found. Quoted and escaped characters stay literal.
+# glob_seen to 1 when an unquoted glob or brace was found, and ansi_seen to 1 when an unquoted $ opens ANSI-C or
+# locale quoting ($' or $"). Quoted and escaped characters stay literal.
 glob_scan() {
     local s="$1" q="" c i
     spaced=""
     glob_seen=0
+    ansi_seen=0
     for (( i = 0; i < ${#s}; i++ )); do
         c=${s:i:1}
         if [[ -n "$q" ]]; then
@@ -54,6 +56,12 @@ glob_scan() {
             case "$c" in
                 '*'|'?'|'['|']'|'{'|'}') glob_seen=1; spaced+=' ' ;;
                 ',') spaced+=' ' ;;
+                '$')
+                    if [[ "${s:i+1:1}" == \' || "${s:i+1:1}" == \" ]]; then
+                        ansi_seen=1
+                    fi
+                    spaced+=$c
+                    ;;
                 *) spaced+=$c ;;
             esac
         fi
@@ -63,17 +71,31 @@ glob_scan() {
 # A glob or brace can assemble gh or merge from pieces ({gh,pr} merge, gh pr {m,7}erge, /bin/?h), but gh still needs
 # pr as a word of its own. A list brace cannot yield exactly pr without spelling it ({p,}r gives pr r), so an unquoted
 # glob or brace beside a bare pr word is judged a possible merge, and the word split below prompts on it. A range
-# brace ({p..p}r) and ANSI-C or locale quoting ($'pr', $"pr") can yield any single word, so each is judged a possible
-# merge outright. Not judged, so left to the native rules: parameter expansion (${X:-pr}) and a pathname glob that
-# needs a matching file in the working directory (p? with a file named pr), since a pattern guard cannot evaluate
-# either. Command substitution never reaches here: bash-guard.sh denies $( and backticks first.
+# brace ({p..p}r) can yield any single word, so it is judged a possible merge outright, as is ANSI-C or locale quoting
+# ($'pr', $"pr") when its $ is unquoted; a $ inside quotes before a quote ("x$", 'x$') is literal, as in a grep anchor.
+# Not judged, so left to the native rules: parameter expansion (${X:-pr}) and a pathname glob that needs a matching
+# file in the working directory (p? with a file named pr), since a pattern guard cannot evaluate either. Command
+# substitution never reaches here: bash-guard.sh denies $( and backticks first.
 range_re='\{[^[:space:]{}]*\.\.[^[:space:]{}]*\}'
-if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re || "$cmd" == *"\$'"* || "$cmd" == *'$"'* ]]; then
+if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re ]]; then
     uspaced=${unquoted//[][\{\}*?,]/ }
-    [[ "$unquoted" == *[][\{\}*?]* && "$uspaced" =~ $pr_word_re ]] || exit 0
+    ansi_hint=0
+    if [[ "$cmd" == *"\$'"* || "$cmd" == *'$"'* ]]; then
+        ansi_hint=1
+    fi
+    if (( ! ansi_hint )) && ! [[ "$unquoted" == *[][\{\}*?]* && "$uspaced" =~ $pr_word_re ]]; then
+        exit 0
+    fi
     if (( ${#cmd} <= 4096 )); then
         glob_scan "$cmd"
-        (( glob_seen )) && [[ "$spaced" =~ $pr_word_re ]] || exit 0
+        # glob_scan does not model comments or heredocs, where a quote character is literal, so a newline or # could
+        # leave its quote state out of step with the shell's (true # it's, a newline, then gh $'pr' merge); fail closed.
+        if (( ansi_hint )) && [[ "$cmd" == *$'\n'* || "$cmd" == *'#'* ]]; then
+            ansi_seen=1
+        fi
+        if (( ! ansi_seen )) && ! [[ "$glob_seen" == 1 && "$spaced" =~ $pr_word_re ]]; then
+            exit 0
+        fi
     fi
 fi
 
