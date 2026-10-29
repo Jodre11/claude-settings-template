@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -u
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secret-bash-guard.sh"
+# The rows screen with the guard itself, as hook_deadline's child; the wiring rows below run it through the deadline.
+export HOOK_DEADLINE_CHILD=1
 pass=0; fail=0
 ok()  { printf 'PASS: %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf 'FAIL: %s\n' "$1"; fail=$((fail + 1)); }
@@ -3939,8 +3941,10 @@ if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 
     unset HOOK_BASH
 fi
 
-# Timing. A PreToolUse hook that overruns its 5 s timeout does not block, so a command this hook cannot screen in
-# time passes unscreened. bash-guard denies anything over 64 KiB, so each case is at most 65536 characters, and each
+# Timing. A PreToolUse hook that overruns its 5 s timeout does not block, but the guard runs under hook_deadline,
+# which asks once a screen passes 4 s, so a slow command can cost a prompt, never a screen (the wiring rows at the end
+# and _lib.test.sh pin that). The timing rows are a speed check, run with SECRET_GUARD_TIMING=1: they keep the worst
+# cases out of that prompt. bash-guard denies anything over 64 KiB, so each case is at most 65536 characters, and each
 # must be decided within TIME_LIMIT_MS, half the timeout, in one of TIME_RUNS runs: a CI runner is two to three times
 # slower per core than a current Mac, so a row that passes there leaves the hook at least twice its worst case inside
 # the timeout. The budget is a speed target on the hook's CPU time, as load on a busy machine stretches wall time
@@ -3949,6 +3953,7 @@ fi
 TIME_LIMIT_MS=2500
 TIME_HARD_MS=4000
 TIME_RUNS=3
+timing=${SECRET_GUARD_TIMING:-0}
 cpu_dir=$(mktemp -d)
 
 # _ms: print the time in milliseconds. bash 5 has EPOCHREALTIME; an older bash falls back to whole seconds, which
@@ -4011,6 +4016,7 @@ expect_fast() {
 # the limits scaled down (the budget furthest, so a burn over it stays far from the hard limit under load): a run
 # over the budget is retried, up to three runs; a wrong verdict, or a run at the hard limit, fails at once; a run slow
 # only in wall time, as under load, passes.
+if [[ "$timing" == 1 ]]; then
 sdir=$(mktemp -d)
 printf '#!%s\n' "$BASH" > "$sdir/hook"
 cat >> "$sdir/hook" <<'EOF'
@@ -4057,6 +4063,7 @@ _stub_case DENY  's2.2 0'      FAIL 1 "a run at the hard limit in wall time only
 _stub_case ALLOW '0 0'         FAIL 1 "a wrong verdict fails without a retry"
 rm -rf "$sdir"
 unset STUB_DIR
+fi
 
 # Over the bound, the hook denies without screening, whatever the content.
 expect DENY "a command over the scan bound denied" "true $(printf 'a%.0s' {1..70000})"
@@ -4305,6 +4312,9 @@ expect_fast "DENY|ASK" "a recursive grep of a deep directory wildcard" 'grep -rn
 expect_fast "DENY|ASK" "a deep wildcard piped into xargs grep -r" 'echo */*/*/* | xargs grep -rn KEY'
 }
 
+tdir=""
+bigt=""
+if [[ "$timing" == 1 ]]; then
 # Desktops and CI runners usually run a UTF-8 locale, and glibc's regex engine is many times slower in a multibyte
 # locale than in C: time the rows under one whenever the system has one, whatever locale this suite was started in.
 utf8_locale=""
@@ -4336,6 +4346,26 @@ if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 
     timing_rows
     unset HOOK_BASH
 fi
+else
+    echo "NOTE: the timing rows are skipped; run with SECRET_GUARD_TIMING=1 to time the worst cases"
+fi
 
-rm -rf "$pt" "$tdir" "$bigt" "$RUN_CWD" "$cpu_dir"
+# Wiring: the guard runs its screen under hook_deadline before it reads the payload, and its decisions pass through.
+unset HOOK_DEADLINE_CHILD
+expect DENY  "through the deadline, a reader of a secret is denied" 'cat .env'
+expect ALLOW "through the deadline, a benign command is allowed" 'ls -la'
+if awk '/^hook_deadline [0-9]/ { d = NR } /^hook_read_input/ { r = NR } END { exit !(d && r && d < r) }' "$HOOK"
+then
+    ok "the guard calls hook_deadline before hook_read_input"
+else
+    bad "the guard does not call hook_deadline before hook_read_input"
+fi
+deadline_s=$(awk '/^hook_deadline [0-9]/ { print $2; exit }' "$HOOK")
+if [[ -n "$deadline_s" ]] && (( deadline_s < 5 )); then
+    ok "the guard's deadline (${deadline_s} s) is inside the 5 s hook timeout"
+else
+    bad "the guard's deadline '${deadline_s}' is not inside the 5 s hook timeout"
+fi
+
+rm -rf "$pt" ${tdir:+"$tdir"} ${bigt:+"$bigt"} "$RUN_CWD" "$cpu_dir"
 echo "-----"; echo "passed: $pass  failed: $fail"; [ "$fail" -eq 0 ]

@@ -69,6 +69,51 @@ hook_bounded() {
     return 0
 }
 
+# hook_deadline <seconds> <reason> [<arg>...]: run this hook again as a child, given <arg>s and the payload on stdin,
+# and relay the child's stdout, stderr and exit status. A child still running after <seconds> is stopped and killed
+# with its children, and the hook asks instead, with <reason>; so does a child that dies by a signal. A PreToolUse hook
+# that overruns its timeout does not block, so a deadline kept below the timeout makes a slow screen fail closed
+# whatever its input. Bash runs a trap only between commands, so one slow command (a long regex match) would hold an
+# in-process deadline past the timeout: the child is a separate process. In the child (HOOK_DEADLINE_CHILD=1) it
+# returns at once, so it must run before hook_read_input and hook_backstop.
+hook_deadline() {
+    if [[ "${HOOK_DEADLINE_CHILD:-}" == 1 ]]; then
+        return 0
+    fi
+    local secs="$1" reason="$2" dir p w status=0
+    shift 2
+    if ! dir=$(mktemp -d "${TMPDIR:-/tmp}/claude-deadline.XXXXXX" 2>/dev/null); then
+        hook_ask "$reason"
+    fi
+    # A background job's stdin is /dev/null, so the payload goes through a file.
+    cat >"$dir/in"
+    HOOK_DEADLINE_CHILD=1 "$BASH" "$0" "$@" <"$dir/in" >"$dir/out" 2>"$dir/err" &
+    p=$!
+    # Stopped first, the child cannot fork past the kill of its children.
+    (
+        sleep "$secs"
+        : >"$dir/late"
+        kill -STOP "$p" 2>/dev/null
+        pkill -KILL -P "$p" 2>/dev/null
+        kill -KILL "$p" 2>/dev/null
+    ) >/dev/null 2>&1 </dev/null &
+    w=$!
+    wait "$p" 2>/dev/null || status=$?
+    # Its sleep is killed too, or every call would leave one running for the length of the deadline.
+    kill -STOP "$w" 2>/dev/null || :
+    pkill -KILL -P "$w" 2>/dev/null || :
+    kill -KILL "$w" 2>/dev/null || :
+    wait "$w" 2>/dev/null || :
+    if [[ -e "$dir/late" ]] || (( status > 128 )); then
+        rm -rf "$dir"
+        hook_ask "$reason"
+    fi
+    cat "$dir/out"
+    cat "$dir/err" >&2
+    rm -rf "$dir"
+    exit "$status"
+}
+
 # Extract a field from HOOK_INPUT via jq. Returns empty string if missing.
 hook_field() {
     jq -r "$1 // empty" <<< "$HOOK_INPUT"

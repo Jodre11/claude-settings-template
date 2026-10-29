@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for hooks/_lib.sh: the shell_words tokeniser and its plain-word classifier, the crash backstop, the git walk
-# and shell_scan's P flag. This suite holds no secret-shaped values, so it may run through the Bash tool.
+# Tests for hooks/_lib.sh: the shell_words tokeniser and its plain-word classifier, the crash backstop, the hook
+# deadline, the git walk and shell_scan's P flag. This suite holds no secret-shaped values, so it may run through the Bash tool.
 #
 # Usage: _lib.test.sh   Exit 0 iff every case passes.
 set -u
@@ -686,6 +686,73 @@ for b in "$BASH" /bin/bash; do
     done
 done
 rm -f "$pfix"
+
+# hook_deadline, under every bash the hooks run on: the hook runs again as a child, given its arguments and payload,
+# and the child's stdout, stderr and exit status are relayed once. A child past the deadline is killed with its
+# children, and one that dies by a signal asks too; no watchdog outlives a call. The 1.25 s deadline sits far from the
+# 31 s sleep and the 10 s bound.
+hfix=$(mktemp "${CLAUDE_TEMP_DIR:-/tmp}/lib-hfix.XXXXXX")
+cat > "$hfix" <<'FIXTURE'
+set -uo pipefail
+source "$1"
+hook_deadline 1.25 "fixture ran out of time" "$@"
+case "$2" in
+    deny) hook_deny "denied" ;;
+    echo) printf '%s:' "${HOOK_DEADLINE_CHILD:-}"; cat ;;
+    status) printf 'to stderr' >&2; exit 2 ;;
+    slow) sleep 31.4159 ;;
+    signal) kill -KILL $$ ;;
+esac
+FIXTURE
+herr=$(mktemp "${CLAUDE_TEMP_DIR:-/tmp}/lib-herr.XXXXXX")
+# deadline_run <bash> <mode>: set out, rc, err and el (ms) for the fixture given the payload "payload".
+deadline_run() {
+    local start
+    start=$(_ms)
+    out=$(printf 'payload' | "$1" "$hfix" "$DIR/_lib.sh" "$2" 2>"$herr")
+    rc=$?
+    el=$(( $(_ms) - start ))
+    err=$(cat "$herr")
+}
+for b in "$BASH" /bin/bash; do
+    [[ -x "$b" ]] || continue
+    deadline_run "$b" deny
+    if [[ $rc -eq 0 && "$(jq -sc 'map(.hookSpecificOutput.permissionDecision)' <<< "$out")" == '["deny"]' ]]; then
+        ok "hook_deadline relays a child's decision once under $b"
+    else
+        bad "hook_deadline relayed under $b: rc=$rc out=$out"
+    fi
+    pgrep -f 'sleep 1.25' >/dev/null && bad "a call under $b left its watchdog's sleep running" \
+        || ok "a call under $b leaves no watchdog running"
+    deadline_run "$b" echo
+    [[ "$out" == "1:payload" ]] && ok "the child gets the payload and HOOK_DEADLINE_CHILD under $b" \
+        || bad "the child under $b printed: $out"
+    deadline_run "$b" status
+    [[ $rc -eq 2 && "$err" == "to stderr" && -z "$out" ]] \
+        && ok "a child's exit status and stderr are relayed under $b" \
+        || bad "a child's status under $b: rc=$rc err=$err out=$out"
+    deadline_run "$b" slow
+    if [[ $rc -eq 0 && "$(jq -r '.hookSpecificOutput.permissionDecision + ":" +
+            .hookSpecificOutput.permissionDecisionReason' <<< "$out" 2>/dev/null)" == "ask:fixture ran out of time" ]] \
+            && (( el < 10000 )); then
+        ok "a child past the deadline asks in ${el} ms under $b"
+    else
+        bad "a child past the deadline under $b: rc=$rc out=$out in ${el} ms"
+    fi
+    left=1
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if ! pgrep -f 'sleep 31.4159' >/dev/null; then left=0; break; fi
+        sleep 0.1
+    done
+    (( left == 0 )) && ok "a child past the deadline is killed with its children under $b" \
+        || bad "a child past the deadline left its sleep running under $b"
+    pkill -f 'sleep 31.4159' 2>/dev/null
+    deadline_run "$b" signal
+    [[ $rc -eq 0 && "$(jq -r '.hookSpecificOutput.permissionDecision' <<< "$out" 2>/dev/null)" == ask ]] \
+        && ok "a child that dies by a signal asks under $b" \
+        || bad "a child killed by a signal under $b: rc=$rc out=$out"
+done
+rm -f "$hfix" "$herr"
 
 # The run-wide deadline, under every bash the hooks run on: a slow expansion is cut and reads as unfinished, within
 # the 2 500 ms budget; once the deadline has passed, no expansion or listing starts.

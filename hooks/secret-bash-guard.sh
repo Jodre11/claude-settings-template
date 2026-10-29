@@ -14,6 +14,8 @@ set -uo pipefail
 export LC_ALL=C
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
+# A screen still running at 4 s asks rather than overrun the 5 s timeout, past which the command would run unscreened.
+hook_deadline 4 "secret-bash-guard ran out of time to screen this command; approve manually." "$@"
 source "$DIR/secret-patterns.sh"
 hook_backstop ask "secret-bash-guard failed to evaluate; approve manually."
 trap 'hook_ask "secret-bash-guard failed to evaluate; approve manually."' ERR
