@@ -101,6 +101,16 @@ expect deny 'gh run "`printf rerun`" 100' 'could assemble gh run rerun'
 expect deny '${G:-g}h run rerun 100' 'could assemble gh run rerun'
 expect deny 'npm run test -- $FOO' 'written out literally'
 expect deny 'docker run -v "$PWD:/w" img' 'written out literally'
+# A run word inside an expansion, or any rerun, beside an expansion counts too.
+expect deny 'gh ${X:-run} rerun 100' 'could assemble gh run rerun'
+expect deny 'gh ${X:-run rerun} 100' 'could assemble gh run rerun'
+expect deny 'gh $X rerun 100' 'could assemble gh run rerun'
+expect deny '${G:-g}h ${R:-run} ${S:-rerun} 100' 'could assemble gh run rerun'
+# A redirection ends a word, so it hides neither a rerun nor a run word.
+expect ask 'gh run rerun>/dev/null 1' 'shell syntax'
+expect ask 'gh run rerun<x 1' 'shell syntax'
+expect deny 'gh $X rerun>/dev/null 1' 'could assemble gh run rerun'
+expect deny 'npm run>$F' 'written out literally'
 # A command with a run word too long to scan is denied too.
 long=$(printf 'x%.0s' {1..4100})
 expect deny "gh run \"\${X:-rerun}\" 100 # $long" 'too long'
@@ -116,6 +126,25 @@ expect ask 'echo "gh run rerun 200"' 'does not start with gh'
 expect none 'npm run build'
 expect none "npm run lint -- '*.ts'"
 expect none 'echo $HOME'
+expect none 'kubectl apply --dry-run=client -f $F'
+expect none 'bash tests/run.sh 2>&1 | grep -E "^(FAIL|ok)"'
+expect none 'npm run-script build -- $X'
+expect none 'grep -n -E "R-[0-9]+" hooks/gh-rerun-ask.sh'
+expect none 'ls scripts/run/*.sh'
+# The bodies of the sanctioned commit-message and file-writing heredocs are text, so a run word there is not beside an
+# expansion.
+expect none $'git commit -m "$(cat <<\'EOF\'\nfix: run the tests on ${X:-run}\nEOF\n)"'
+expect none $'cat > notes.txt <<\'EOF\'\nnpm run $X\nEOF'
+# Any other heredoc is read: one a shell runs, one with no file target, an opener inside a string, an unquoted
+# delimiter, text after the terminator, a here-string. A literal rerun in a sanctioned body asks.
+expect deny $'bash <<\'EOF\'\nnpm run $X\nEOF' 'written out literally'
+expect deny $'cat <<\'EOF\'\nnpm run $X\nEOF' 'written out literally'
+expect deny $'echo "<<\'EOF\'"\ngh ${X:-run} rerun 1\nEOF' 'could assemble gh run rerun'
+expect deny $'cat > notes.txt <<EOF\nnpm run $X\nEOF' 'written out literally'
+expect deny $'cat > notes.txt <<\'EOF\'\nx\nEOF\nnpm run $X' 'written out literally'
+expect deny $'cat <<<\'E\'\nnpm run $X\nE' 'written out literally'
+expect ask $'git commit -m "$(cat <<\'EOF\'\ngh run rerun 1\nEOF\n)"' 'shell syntax'
+expect none 'gh pr create --body-file $CLAUDE_TEMP_DIR/pr-body.md'
 expect none 'ls -la'
 expect none ''
 

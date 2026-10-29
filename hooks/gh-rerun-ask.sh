@@ -8,7 +8,8 @@
 # rerun, GH_REPO or GH_HOST, --job, an unknown flag, a missing or non-numeric run id, a failed or slow lookup. A
 # command with no literal rerun but a run word beside an expansion, glob or brace (which could assemble one), or too
 # long to check, is denied with a way to rewrite it. A rerun it judges unprompted, and every other command, gets no
-# decision, so the native rules and mode decide them.
+# decision, so the native rules and mode decide them. A rerun spelt through split fragments (r${A:-u}n) or words
+# taken from the environment is deliberate evasion and out of scope, as for the other guards.
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -28,8 +29,12 @@ unquoted=${cmd//\"/}
 unquoted=${unquoted//\'/}
 unquoted=${unquoted//\\/}
 flags='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
-rerun_re='(^|[[:space:];&|(`/=])gh'"$flags"'[[:space:]]+run'"$flags"'[[:space:]]+rerun([[:space:]]|$)'
-run_word_re='(^|[[:space:];&|(`/=])run([[:space:]]|$)'
+# Only a name character (letter, digit, _ . / -) continues a word, so a redirection (rerun>/dev/null) ends one.
+rerun_re='(^|[[:space:];&|(`/=])gh'"$flags"'[[:space:]]+run'"$flags"'[[:space:]]+rerun([^[:alnum:]_./-]|$)'
+# A run word may sit inside an expansion's default (${X:-run}); a hyphenated -run (--dry-run) does not count unless
+# the hyphen is an expansion operator, nor does a file name (run.sh, gh-rerun-ask.sh). A rerun word counts as one
+# (gh $X rerun).
+run_word_re='(^|[^[:alnum:]_-]|[:{}]-)(re)?run([^[:alnum:]_./-]|$)'
 
 # outside_single_quotes <cmd>: print <cmd> with every single-quoted span removed, the only text the shell never
 # expands; a double-quoted span keeps its $ and backquote.
@@ -53,14 +58,21 @@ outside_single_quotes() {
 # A glob, brace or expansion can assemble gh run rerun from pieces (r?run, {re,}run, $'rerun', "${X:-rerun}",
 # ${G:-g}h), so beside a run word one is judged a possible rerun, as is a command too long to scan. Neither can be
 # checked, and neither is likely a rerun, so it is denied with a way to write it that can be (an ask would park an
-# unattended session on a command that is almost always npm run or docker run).
+# unattended session on a command that is almost always npm run or docker run). The bodies of bash-guard's two
+# sanctioned heredocs (the commit message, and a quoted cat or tee heredoc that writes a file) are text no shell
+# runs, so they are left out; a literal rerun anywhere, one of those bodies included, still goes to the full check.
 if ! [[ "$unquoted" =~ $rerun_re ]]; then
-    [[ "$unquoted" =~ $run_word_re ]] || exit 0
-    if (( ${#cmd} > 4096 )); then
+    text=$(strip_commit_heredoc "$cmd")
+    text=$(strip_text_heredoc "$text")
+    text_unquoted=${text//\"/}
+    text_unquoted=${text_unquoted//\'/}
+    text_unquoted=${text_unquoted//\\/}
+    [[ "$text_unquoted" =~ $run_word_re ]] || exit 0
+    if (( ${#text} > 4096 )); then
         hook_deny "RERUN UNVERIFIED: the command has a run word and is too long for gh-rerun-ask to check that it is \
 not a gh run rerun. Split it into shorter commands."
     fi
-    bare=$(outside_single_quotes "$cmd")
+    bare=$(outside_single_quotes "$text")
     if [[ "$bare" == *[][\{\}*?\$\`]* ]]; then
         hook_deny "RERUN UNVERIFIED: beside a run word, a \$, backquote, glob or brace could assemble gh run rerun, \
 which gh-rerun-ask cannot check. Retry with the values written out literally, or the glob in single quotes if the \
