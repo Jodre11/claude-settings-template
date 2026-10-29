@@ -23,7 +23,7 @@ fi
 agent_type=$(hook_field '.agent_type')
 reviewer_type="${agent_type##*:}"
 case "$reviewer_type" in
-    *-reviewer|code-analysis|review-synthesiser) ;;
+    *-reviewer|code-analysis) ;;
     *) exit 0 ;;
 esac
 
