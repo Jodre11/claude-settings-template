@@ -37,13 +37,14 @@ run() {
         | "$HOOK" 2>&1
 }
 
-# expect <ask|none> <command> [<reason fragment>]
+# expect <ask|deny|none> <command> [<reason fragment>]
 expect() {
     local out decision reason
     out=$(run "$r" "$2")
     decision=$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<< "$out" 2>/dev/null)
     reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<< "$out" 2>/dev/null)
-    if [[ "$1" == none && -z "$out" ]] || [[ "$1" == ask && "$decision" == ask && "$reason" == *"${3:-}"* ]]; then
+    if [[ "$1" == none && -z "$out" ]] \
+            || [[ "$1" != none && "$decision" == "$1" && "$reason" == *"${3:-}"* ]]; then
         ok "$1: $2"
     else
         bad "$1: $2 -> ${out:-<no output>}"
@@ -87,18 +88,23 @@ expect ask $'gh run rerun 100\necho x' 'shell syntax'
 expect ask 'GH_REPO=a/b gh run rerun 100' 'GH_REPO'
 expect ask 'env gh run rerun 100' 'does not start with gh'
 expect ask '/usr/local/bin/gh run rerun 100' 'does not start with gh'
-expect ask 'gh run {re,}run 100' 'glob or brace'
-expect ask 'gh run r?run 100' 'glob or brace'
-expect ask "gh run \$'rerun' 100" 'shell syntax'
-expect ask 'gh run ${X:-rerun} 100' 'shell syntax'
-# Double quotes leave $ and backquote live, so an expansion in them is judged like a bare one.
-expect ask 'gh run "${X:-rerun}" 100' 'shell syntax'
-expect ask 'gh run "`printf rerun`" 100' 'shell syntax'
-# A command too long to scan for an expansion prompts when it has both words.
-long=$(printf 'x%.0s' {1..4100})
-expect ask "gh run \"\${X:-rerun}\" 100 # $long" 'shell syntax'
-expect ask "gh run view 1 --log # $long" 'too long'
 expect ask "gh run rerun 100 'unterminated" 'unterminated quote'
+
+# With no literal rerun, a glob, brace or expansion beside a run word could assemble one: denied with a way to rewrite
+# it. Double quotes leave $ and backquote live, so an expansion in them counts; so does one that assembles gh.
+expect deny 'gh run {re,}run 100' 'could assemble gh run rerun'
+expect deny 'gh run r?run 100' 'could assemble gh run rerun'
+expect deny "gh run \$'rerun' 100" 'could assemble gh run rerun'
+expect deny 'gh run ${X:-rerun} 100' 'could assemble gh run rerun'
+expect deny 'gh run "${X:-rerun}" 100' 'could assemble gh run rerun'
+expect deny 'gh run "`printf rerun`" 100' 'could assemble gh run rerun'
+expect deny '${G:-g}h run rerun 100' 'could assemble gh run rerun'
+expect deny 'npm run test -- $FOO' 'written out literally'
+expect deny 'docker run -v "$PWD:/w" img' 'written out literally'
+# A command with a run word too long to scan is denied too.
+long=$(printf 'x%.0s' {1..4100})
+expect deny "gh run \"\${X:-rerun}\" 100 # $long" 'too long'
+expect deny "npm run build # $long" 'too long'
 
 # Other commands get no decision, including a run word beside quoted globs.
 expect none 'gh run view 200 --log'
@@ -108,9 +114,8 @@ expect none 'gh pr checks 12'
 # Quote removal makes a quoted mention read as a rerun; the guard fails closed on it, as gh-merge-ask.sh does.
 expect ask 'echo "gh run rerun 200"' 'does not start with gh'
 expect none 'npm run build'
-# Without a gh word no expansion can make a rerun, so a run word beside one gets no decision.
-expect none 'npm run test -- $FOO'
-expect none 'docker run -v "$PWD:/w" img'
+expect none "npm run lint -- '*.ts'"
+expect none 'echo $HOME'
 expect none 'ls -la'
 expect none ''
 

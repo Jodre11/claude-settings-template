@@ -5,8 +5,10 @@
 # replaces a native ask rule, because a native ask rule beats every hook "allow", so no run could skip it. The run's
 # trigger comes from gh run view in the payload's working directory, or the --repo given. Anything the hook cannot
 # judge prompts: shell syntax (a cd, a variable, a second command), a glob or brace, any word before gh, flags before
-# rerun, GH_REPO or GH_HOST, --job, an unknown flag, a missing or non-numeric run id, a failed or slow lookup. A rerun
-# it judges unprompted, and every other command, gets no decision, so the native rules and mode decide them.
+# rerun, GH_REPO or GH_HOST, --job, an unknown flag, a missing or non-numeric run id, a failed or slow lookup. A
+# command with no literal rerun but a run word beside an expansion, glob or brace (which could assemble one), or too
+# long to check, is denied with a way to rewrite it. A rerun it judges unprompted, and every other command, gets no
+# decision, so the native rules and mode decide them.
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -48,15 +50,23 @@ outside_single_quotes() {
     printf '%s' "$out"
 }
 
-# A glob, brace or expansion can assemble rerun from pieces (r?run, {re,}run, $'rerun', "${X:-rerun}"), so beside a run
-# word and a gh one is judged a possible rerun and the word split below prompts on it. A command too long to scan
-# with both words goes to the split too, which prompts on its length.
+# A glob, brace or expansion can assemble gh run rerun from pieces (r?run, {re,}run, $'rerun', "${X:-rerun}",
+# ${G:-g}h), so beside a run word one is judged a possible rerun, as is a command too long to scan. Neither can be
+# checked, and neither is likely a rerun, so it is denied with a way to write it that can be (an ask would park an
+# unattended session on a command that is almost always npm run or docker run).
 if ! [[ "$unquoted" =~ $rerun_re ]]; then
-    [[ "$unquoted" =~ $run_word_re && "$unquoted" == *gh* ]] || exit 0
-    if (( ${#cmd} <= 4096 )); then
-        bare=$(outside_single_quotes "$cmd")
-        [[ "$bare" == *[][\{\}*?\$\`]* ]] || exit 0
+    [[ "$unquoted" =~ $run_word_re ]] || exit 0
+    if (( ${#cmd} > 4096 )); then
+        hook_deny "RERUN UNVERIFIED: the command has a run word and is too long for gh-rerun-ask to check that it is \
+not a gh run rerun. Split it into shorter commands."
     fi
+    bare=$(outside_single_quotes "$cmd")
+    if [[ "$bare" == *[][\{\}*?\$\`]* ]]; then
+        hook_deny "RERUN UNVERIFIED: beside a run word, a \$, backquote, glob or brace could assemble gh run rerun, \
+which gh-rerun-ask cannot check. Retry with the values written out literally, or the glob in single quotes if the \
+program expands it; a gh run rerun must be written out in full."
+    fi
+    exit 0
 fi
 
 hook_backstop ask "gh run rerun: the rerun guard could not finish, so this rerun needs your approval."
@@ -143,11 +153,7 @@ if [[ "${words[0]:-}" != gh ]]; then
     ask_rerun "the command does not start with gh"
 fi
 if [[ "${words[1]:-}" != run || "${words[2]:-}" != rerun ]]; then
-    # Flagged here only for an expansion beside a run word: a plain gh run command that is not a rerun passes.
-    if [[ "$unquoted" =~ $rerun_re ]]; then
-        ask_rerun "the guard judges only gh run rerun with its flags after rerun"
-    fi
-    hook_pass
+    ask_rerun "the guard judges only gh run rerun with its flags after rerun"
 fi
 
 run_id=""
