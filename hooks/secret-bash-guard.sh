@@ -325,6 +325,14 @@ if [[ "$fetch_checked" == "$cmd" && "$cmd" == *$'-m "$(cat <<\'EOF\'\n'* ]]; the
     hook_deny "$HEREDOC_MSG"
 fi
 fetch_checked=$(strip_text_heredoc "$fetch_checked")
+# A quoted-delimiter Python heredoc's body is Python, not shell: the words screened (sw_input) end at its first line,
+# and the body is spliced back in as the stage's -c code word after tokenising. The fetch forms still match it whole.
+script_heredoc_parse "$fetch_checked"
+sw_input="$SCRIPT_HEREDOC_OUT"
+sw_body=0
+if [[ "$sw_input" != "$fetch_checked" ]]; then
+    sw_body=1
+fi
 fetch_masked=""
 # The forms match the command as written and with every backslash-newline removed, as bash removes it before it splits
 # words; a comment does not continue across one, so the joined copy alone would hide a form after it (inside '…' it
@@ -396,6 +404,8 @@ if (( ${#cmd} > SHELL_SCAN_MAX_CHARS )); then
     msg+=" file."
     hook_deny "$msg"
 fi
+
+LIST_PARTS=1
 
 # The elements (words, redirections and separators) the main loop screens before it denies the command. An element
 # that leaves the fast paths costs up to about 0.1 ms on bash 3.2 behind a stack of walks, so this bounds the screening
@@ -483,11 +493,92 @@ done
 
 # Tokenise the command with the commit-message heredoc removed, as bash-guard screens it: the body is inert text, and
 # a quote in it would otherwise desync the quote tracking (hiding a later stage, or denying a balanced message).
-shell_words "$fetch_checked" "$plain_names" "$SECRET_PATH_FRAGMENT_RE"
+shell_words "$sw_input" "$plain_names" "$SECRET_PATH_FRAGMENT_RE"
 if (( ! SW_OK )); then
     msg="SECRET-SCAN BLOCK: this command could not be tokenised (it holds a \\x1e or \\x1f character, or the"
     msg+=" tokeniser failed), so it is not screened. Put unusual content in a file."
     hook_deny "$msg"
+fi
+
+# The list contract bash-guard applies (list_check, _lib.sh), applied here too so neither guard relaxes it alone. It
+# runs when the words hold a separator, or the command holds a # beside a ; & | or newline (a comment is where the
+# tokeniser and the scanner can split a command differently); any other command is a single one, and pays no scan.
+# list_check tokenises again (rule 2a), so the words are kept. A heredoc the strips left whole is screened as before,
+# its body as commands: bash-guard denies it, and this hook's own reason names the safe form.
+sw_oifs="$IFS"
+IFS=$'\x1f'
+sw_joined=$'\x1f'"${SW_WORDS[*]-}"$'\x1f'
+IFS="$sw_oifs"
+if [[ "$sw_joined" == *$'\x1f;\x1f'* ]] || [[ "$sw_input" == *'#'* && "$sw_input" == *[\;\&\|$'\n']* ]]; then
+    sw_saved=(${SW_WORDS[@]+"${SW_WORDS[@]}"})
+    shell_scan "$sw_input"
+    if [[ "${SHELL_SKELETON//<<</}" != *'<<'* || "$SHELL_SKELETON" != *$'\n'* || "$SHELL_SCAN_FLAGS" == *[EU]* ]]
+    then
+        list_check "$sw_input"
+        if [[ -n "$LIST_REASON" ]]; then
+            hook_deny "CLAUDE.md VIOLATION (Bash rules): $LIST_REASON"
+        fi
+    fi
+    SW_WORDS=(${sw_saved[@]+"${sw_saved[@]}"})
+fi
+sw_joined=""
+
+# _sw_splice_body: put the stripped Python heredoc's body back as the code word python3 -c '<body>' would give: the
+# last << or <<- redirection becomes -c and the body, with the mark shell_words gives a quoted word (g: a glob
+# character or {, d: a $; a word over 256 characters is marked only when it holds a {), and a - just before it is
+# dropped. One forward pass: bash 3.2 indexes an array in O(index).
+_sw_splice_body() {
+    local el acc="" prev="" have=0 last=0 n=0 mk="" restore_glob=1 b="$SCRIPT_HEREDOC_BODY" us=$'\x1f'
+    for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
+        n=$(( n + 1 ))
+        if [[ "$el" == 'r<< '* || "$el" == 'r<<- '* ]]; then
+            last=$n
+        fi
+    done
+    if (( last == 0 )); then
+        return 0
+    fi
+    if (( ${#b} <= 256 )) || [[ "$b" == *\{* ]]; then
+        if [[ "$b" == *[\*\?\[\{]* ]]; then mk=g; fi
+        if [[ "$b" == *'$'* ]]; then mk+=d; fi
+    fi
+    n=0
+    for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
+        n=$(( n + 1 ))
+        if (( n == last )); then
+            if (( have )) && [[ "$prev" != [wp]- ]]; then
+                acc+="$prev$us"
+            fi
+            have=0
+            acc+="w-c$us"
+            if [[ -n "$mk" ]]; then
+                acc+="m$mk$us"
+            fi
+            acc+="w$b$us"
+            continue
+        fi
+        if (( have )); then
+            acc+="$prev$us"
+        fi
+        prev="$el"
+        have=1
+    done
+    if (( have )); then
+        acc+="$prev$us"
+    fi
+    if [[ "$-" == *f* ]]; then
+        restore_glob=0
+    fi
+    set -f
+    local IFS=$'\x1f'
+    # shellcheck disable=SC2206  # split on \x1f with pathname expansion off
+    SW_WORDS=($acc)
+    if (( restore_glob )); then
+        set +f
+    fi
+}
+if (( sw_body )); then
+    _sw_splice_body
 fi
 
 # _secret_variant <word>: 0 if a form inside <word> names a secret path: the value after its first = (--opt=V, NAME=V,
@@ -920,11 +1011,49 @@ _pcwd() {
     fi
 }
 
+# _ew_cd <dir>: record env's -C or --chdir directory in ewcv, a relative one against an earlier env's.
+_ew_cd() {
+    if [[ -n "$ewcv" && "$1" != /* && "$1" != '~'* ]]; then
+        ewcv="$ewcv/$1"
+    else
+        ewcv="$1"
+    fi
+}
+
+# _sh_cd_word <form> <word>: after env -C, judge a shell's relative script or rc-file word in the directory env named
+# (ewcv), where the shell resolves it: a secret path there is a reader deny, and a directory the hook cannot resolve
+# (a variable, a pattern, none given) holds one, as does a word holding a pattern or escape, which the outer shell
+# expands in the working directory before the shell opens what it names in env's.
+_sh_cd_word() {
+    local msg
+    if [[ "$2" == /* || "$2" == '~'* ]]; then
+        return 0
+    fi
+    _pcwd
+    if [[ -z "$ewcv" || "$ewcv" == *[\$\`\\\*\?\[\{]* || "$2" == *[\$\`\\\*\?\[\{]* || "$wmk" == *b* ]] \
+            || ! norm_path "$ewcv" "$PCWD" \
+            || ! norm_path "$2" "$NORM_PATH"; then
+        msg="SECRET-SCAN UNVERIFIED: '$1 $2' runs a file from the directory env -C names, which the hook could not"
+        msg+=" resolve. It is denied because the hook cannot confirm that the file is not secret-bearing."
+        hook_hold_deny "$msg"
+        return 0
+    fi
+    name_fold "$NORM_PATH"
+    if path_is_secret "$NAME_FOLD"; then
+        _deny_reader "$1 $2"
+    fi
+}
+
 # _deny_probe <form> <hits>: deny a recursive reader whose root holds a secret file.
 _deny_probe() {
     local msg="SECRET-PROBE BLOCK: '$1' prints the contents of files under a directory that holds secret-bearing files"
-    msg+=" ($2). Search a narrower directory, leave them out with --include or --exclude, or list names only (-l);"
-    msg+=" ${VAULT_HINT}."
+    if [[ "$1" == 'git grep'* ]]; then
+        msg+=" ($2). Search a narrower pathspec, leave the file out with an exclusion pathspec (-- . ':!<file>'), or"
+        msg+=" list names only (-l); ${VAULT_HINT}."
+    else
+        msg+=" ($2). Search a narrower directory, leave them out with --include or --exclude, or list names only (-l);"
+        msg+=" ${VAULT_HINT}."
+    fi
     hook_deny "$msg"
 }
 
@@ -966,6 +1095,23 @@ _rr_glob_dir() {
     fi
 }
 
+# List rule 5 (fresh probes): a probe reads the tree as it is when the hook runs, before any part of the list does, so
+# it is sound only for a part after read-only parts. lpi is the part the main loop is in, lnro the first part that is
+# not read-only (_lf_scan; past every part for a single command).
+lpi=0
+lnro=1000000
+
+# _lf_gate <form>: deny a probe-dependent <form> in a part after one that may change the tree. Callers test
+# lpi > lnro first: a function call per wildcard word costs on bash 3.2's hot path.
+_lf_gate() {
+    local msg
+    if (( lpi > lnro )); then
+        msg="SECRET-SCAN BLOCK: '$1' reads the tree as it is before the list runs, and an earlier command in the list"
+        msg+=" may change it; run '$1' as its own Bash call."
+        hook_deny "$msg"
+    fi
+}
+
 # _rr_hold <form> <why>: hold a deny for a probe walk; in a names-only walk, queue it for the reader after xargs.
 _rr_hold() {
     if (( RR_LIST )); then
@@ -979,6 +1125,7 @@ _rr_hold() {
 # or above $HOME or the vault (a one-level listing excepted: what it names is no deeper); in a names-only walk, queue it
 # for the reader after xargs.
 _rr_dir() {
+    (( lpi <= lnro )) || _lf_gate "$1"
     if (( RR_LIST )); then
         if [[ "$2" == findL ]]; then
             pipe_find+="r1"$'\x1f'"$1"$'\x1f'"$3"$'\x1e'
@@ -1011,6 +1158,10 @@ _rr_root() {
     local o="$3" m c sub=0 k="$2" grc
     if (( ${#o} > 4096 )); then
         return 1
+    fi
+    # A recursive reader's root that is no directory yet may be one by the time an earlier part has run.
+    if (( RR_DEEP && lpi > lnro )); then
+        _lf_gate "$1"
     fi
     _pcwd
     if (( ! RR_LIT )) && _rr_has_glob "$o"; then
@@ -1115,6 +1266,7 @@ _rr_cand() {
     if (( ecd )) && [[ "$3" != /* && "$3" != '~'* ]]; then
         return 0
     fi
+    (( lpi <= lnro )) || _lf_gate "$1"
     _pcwd
     if norm_path "$3" "$PCWD" && [[ -d "$NORM_PATH" ]]; then
         _rr_dir "$1" "$2" "$NORM_PATH" "${4:-}"
@@ -1300,6 +1452,7 @@ _xd_word() {
 # _rr_exists <path>: 0 if <path> names an existing path, or cannot be resolved here because the command changes
 # directory first.
 _rr_exists() {
+    (( lpi <= lnro )) || _lf_gate "git grep"
     _pcwd
     if (( ecd )) && [[ "$1" != /* && "$1" != '~'* ]]; then
         return 0
@@ -1840,6 +1993,7 @@ _rr_cat() {
 # would match it.
 _rr_rev_ok() {
     local rest="$rrops" o t dir p np=0 whole=0 n cl="" s us=$'\x1f' sub="$rrsub"
+    (( lpi <= lnro )) || _lf_gate "git grep"
     if (( gcore || rr_gitcfg || rr_gitps || cdc || ecd || rrunk || rrdyn )); then
         return 1
     fi
@@ -1999,7 +2153,7 @@ _rr_case_clear() {
 # has the directory before it probed, following links (xk), as grep -r follows a link it is given.
 _rr_settle_walk() {
     local rest="$rrops" o ro t g first=1 any=0 kind=find form="$rrd" inc="" exc="" xd="" pslot=1 n deep="$rrec" xk
-    local rrrv=0
+    local rrrv=0 psx="" psp="" psok=1 pn0="$PROBE_N"
     act="${act//r/}"
     case "$rrn" in
         grep)
@@ -2096,6 +2250,7 @@ _rr_settle_walk() {
             o="$rrcd/$o"
         fi
         if [[ "$t" == m ]]; then
+            psok=0
             if (( deep )) && _rr_xrep "$o"; then
                 if [[ "$RR_XDIR" == '!' ]]; then
                     _rr_hold "$form" "'$o' is filled in from its input and may reach past the directory it names"
@@ -2110,6 +2265,8 @@ _rr_settle_walk() {
         if (( pslot && first && ! rre )); then
             first=0
             if (( rrmv )); then
+                # Under one reading this word is a path, whose probe a pathspec listing would drop.
+                psok=0
                 _rr_cand "$form" "$kind" "$o"
             fi
             continue
@@ -2135,6 +2292,10 @@ _rr_settle_walk() {
                 if ! _rr_ps_exclude "$o" "$g"; then
                     _rr_hold "$form" "the pathspec '$o' holds magic the hook does not resolve"
                     any=1
+                elif [[ "$o" == *[$'\n\x1e\x1f']* ]] || { [[ "$g" != 1 ]] && _rr_has_glob "$o"; }; then
+                    psok=0
+                else
+                    psx+="${psx:+$'\x1f'}$o"
                 fi
                 continue
             fi
@@ -2162,6 +2323,16 @@ _rr_settle_walk() {
         # A marked operand is a literal name, unless the stage re-parses its words or runs a shell from awk or sed.
         if [[ "$g" == 1 ]] && (( ! srp && ! sgv )); then
             RR_LIT=1
+        fi
+        if [[ "$rrn" == 'git grep' ]]; then
+            # A pathspec git may read as the shell passes it (no expansion, unquoted pattern or separator character)
+            # that stays inside the command's directory, where _dhs_nested lists nested repositories and submodules.
+            if [[ -z "$ro" || "$ro" == *[\$\`\\\{$'\n\x1e\x1f']* || "$ro" == [/~]* || "/$ro/" == */../* \
+                    || "$g" == 2 ]] || { [[ "$g" != 1 ]] && _rr_has_glob "$ro"; }; then
+                psok=0
+            else
+                psp+="${psp:+$'\x1f'}$ro"
+            fi
         fi
         if _rr_root "$form" "$kind" "$o" "$inc" "$exc" "$xd"; then
             any=1
@@ -2200,12 +2371,35 @@ _rr_settle_walk() {
     fi
     # Under -execdir the working directory is each found file's, inside find's roots.
     if (( any || ! rrec || rrex == 2 )); then
+        _rr_gps
         return 0
     fi
     if [[ "$rrn" == rg && "$sf" != *X* ]] && _rr_stdin_ok; then
         return 0
     fi
     _rr_root "$form" "$kind" "${rrcd:-.}" "$inc" "$exc" "$xd" || :
+    _rr_gps
+}
+
+# _rr_gps: in _rr_settle_walk, for a work-tree git grep with an exclude pathspec, replace the roots the walk probed with
+# one listing of the command's directory (git -C's, or the payload's cwd) limited by the command's own pathspecs, which
+# git resolves as git grep does. Only a walk that held nothing, read no revision and kept every pathspec as the shell
+# passes it and inside that directory qualifies, with no pathspec setting, cd, env -C or option word the hook cannot
+# read, and no word that may be a path under another reading.
+_rr_gps() {
+    if [[ "$rrn" != 'git grep' || -z "$psx" || -n "${_HOOK_HELD_DENY:-}" ]]; then
+        return 0
+    fi
+    if [[ "$kind" != git && "$kind" != tracked ]] \
+            || (( ! psok || rrrv || RR_LIST || rrex || cdc || ecd || rr_gitps || rrunk || rrdyn || PROBE_N == pn0 )); then
+        return 0
+    fi
+    _pcwd
+    if ! norm_path "${rrcd:-.}" "$PCWD" || [[ ! -d "$NORM_PATH" ]] || probe_root_too_wide "$NORM_PATH"; then
+        return 0
+    fi
+    probe_truncate "$pn0"
+    probe_add "gps$kind" "$NORM_PATH" "$form" "" "" "" "$psp${psp:+$'\x1f'}$psx" || :
 }
 
 # _find_root_add <word>: record a find root.
@@ -2333,6 +2527,9 @@ _find_collect() {
 # entry listed under a root may be one.
 _find_roots() {
     local rest="$1" e t k l r form inc exc
+    if (( lpi > lnro )) && [[ -n "$rest" ]]; then
+        _lf_gate "${2:-find}"
+    fi
     while [[ -n "$rest" ]]; do
         e="${rest%%$'\x1e'*}"
         rest="${rest#*$'\x1e'}"
@@ -2382,6 +2579,7 @@ _find_roots() {
 # such word records the directory it expands in (wpip) for a reader after xargs.
 _wild_word() {
     local w="$1" d c pat msg wrc=0 rest wd dg=0
+    (( lpi <= lnro )) || _lf_gate "$1"
     if [[ "$w" == */* ]]; then
         d="${w%/*}"
         c="${w:${#d}+1}"
@@ -3671,6 +3869,14 @@ _cu_end() {
 # a letter is read only while the letter is set, so a stage resets in a few assignments.
 sf=""
 act=""
+# The env walk (E) across a stage: ewk marks that every env so far took only -C DIR, --chdir=DIR, -- and assignments,
+# and ewd counts the envs an env wraps; ewsh classes the command an env runs. ewcv holds the directory env -C names
+# (_ew_cd), ewcs marks its value due next.
+ewk=1
+ewd=0
+ewsh=0
+ewcv=""
+ewcs=0
 # The interpreter walk (K): kpv marks an option value due next, kvf holds a vault env file option held for the stage
 # end, kon marks another option (kvw: this one is the vault env file), kfst marks the interpreter as the stage's first
 # word, and kvp holds a vault env file whose script was seen, for the stage end's check that nothing feeds the stage;
@@ -5070,6 +5276,10 @@ _stage_end() {
     si=$(( si + 1 ))
     sf=""
     act=""
+    ewk=1
+    ewd=0
+    ewcv=""
+    ewcs=0
     nw=0
     nr=0
     cs=0
@@ -5474,6 +5684,83 @@ if [[ "$fetch_checked" == *\{* && "$fetch_checked" == *\}* ]] \
     _bx_splice
 fi
 
+# _lf_scan: set lnro to the first part of the list that may change the tree. A read-only part's every stage starts with
+# an unmarked command word from the read-only list (git only with -C DIR, --no-pager or -P before a read-only
+# subcommand, and branch only with no operand), holds no assignment, no rg --pre or --hostname-bin, no git --output
+# or git grep -O, and redirects only to /dev/null or by duplicating a descriptor.
+_lf_scan() {
+    local el w part=0 ro=1 cw=0 mk=0 gst=0 kind="" null_re='^r([0-9]*|&)(>|>>) /dev/null$' dup_re='^r[0-9]*>& [0-9]$'
+    for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
+        case "$el" in
+            ';')
+                if (( ! ro )); then
+                    lnro=$part
+                    return 0
+                fi
+                part=$(( part + 1 ))
+                cw=0
+                mk=0
+                continue ;;
+            '|')
+                cw=0
+                mk=0
+                continue ;;
+            m*)
+                mk=1
+                continue ;;
+            h*)
+                continue ;;
+            r*)
+                if [[ ! "$el" =~ $null_re && ! "$el" =~ $dup_re ]]; then
+                    ro=0
+                fi
+                continue ;;
+        esac
+        w="${el:1}"
+        if (( ! cw )); then
+            cw=1
+            gst=0
+            kind="$w"
+            if (( mk )) || [[ "$w" =~ $_LIST_ASG_RE ]]; then
+                ro=0
+            fi
+            case "$w" in
+                cat|ls|head|tail|wc|grep|rg|jq|stat|file|diff|echo|printf|true|pwd|which|type|git) ;;
+                *) ro=0 ;;
+            esac
+            mk=0
+            continue
+        fi
+        mk=0
+        case "$kind" in
+            rg)
+                if [[ "$w" == --pre* || "$w" == --hostname-bin* ]]; then ro=0; fi ;;
+            git)
+                if [[ "$w" == --output* ]]; then
+                    ro=0
+                elif (( gst == 1 )); then
+                    gst=0
+                elif (( gst == 0 )); then
+                    case "$w" in
+                        -C) gst=1 ;;
+                        --no-pager|-P) ;;
+                        status|log|diff|show|ls-files|rev-parse|blame) gst=2 ;;
+                        grep) gst=4 ;;
+                        branch) gst=3 ;;
+                        *) ro=0 ;;
+                    esac
+                elif (( gst == 3 )) && [[ "$w" != -* ]]; then
+                    ro=0
+                elif (( gst == 4 )) && [[ "$w" == -O* || "$w" == --open-files-in-pager* ]]; then
+                    ro=0
+                fi ;;
+        esac
+    done
+}
+if (( LIST_PARTS > 1 )); then
+    _lf_scan
+fi
+
 sclean=0
 ho=0
 for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
@@ -5566,6 +5853,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
             spipe=0
             _stage_end
+            lpi=$(( lpi + 1 ))
             if (( si > 0 )); then nsep=$(( nsep + 1 )); fi
             cdsq=1
             si=0
@@ -5938,25 +6226,35 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             fi
             if (( ews )); then
                 ews=0
+                if (( ewcs )); then
+                    ewcs=0
+                    _ew_cd "$w"
+                fi
             else
                 case "$w" in
-                    env) ;;
-                    -C|--chdir) ewo=1; ews=1; ecd=1 ;;
-                    -u|-P|--unset) ewo=1; ews=1 ;;
-                    -i|-0|-v) ewo=1 ;;
+                    env)
+                        ewd=$(( ewd + 1 ))
+                        if (( ewd > 1 )); then ewk=0; fi ;;
+                    -C|--chdir) ewo=1; ews=1; ecd=1; ewcs=1 ;;
+                    -u|-P|--unset) ewo=1; ews=1; ewk=0 ;;
+                    -i|-0|-v) ewo=1; ewk=0 ;;
                     --split-string|--split-string=*) hook_deny "$S_MSG" ;;
-                    --chdir=*) ewo=1; ecd=1 ;;
-                    -|--|--ignore-environment|--null|--debug|--unset=*) ewo=1 ;;
+                    --chdir=*) ewo=1; ecd=1; _ew_cd "${w#--chdir=}" ;;
+                    --) ewo=1 ;;
+                    -|--ignore-environment|--null|--debug|--unset=*) ewo=1; ewk=0 ;;
                     -*)
+                        ewk=0
                         if [[ "$w" =~ ^-[0iv]*([uCPS])(.*)$ ]]; then
                             ewo=1
-                            if [[ "${BASH_REMATCH[1]}" == C ]]; then
-                                ecd=1
-                            fi
+                            v="${BASH_REMATCH[2]}"
                             if [[ "${BASH_REMATCH[1]}" == S ]]; then
                                 hook_deny "$S_MSG"
-                            elif [[ -z "${BASH_REMATCH[2]}" ]]; then
+                            elif [[ -z "$v" ]]; then
                                 ews=1
+                            fi
+                            if [[ "${BASH_REMATCH[1]}" == C ]]; then
+                                ecd=1
+                                if [[ -n "$v" ]]; then _ew_cd "$v"; else ewcs=1; fi
                             fi
                         elif [[ "$w" =~ ^-[0iv]+$ ]]; then
                             ewo=1
@@ -5965,11 +6263,28 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                         fi ;;
                     [A-Za-z_]*=*) ;;
                     *)
-                        # The unwrapped command. Unless env's first word was an assignment, a bare env, an
-                        # unrecognised option or a runner after env runs a command this walk cannot account for.
-                        act="${act//E/}"
-                        atcmd=1
-                        if [[ "$ewf" != *=* ]]; then
+                        # The unwrapped command. An env of only -C DIR, --chdir=DIR, -- and assignments (ewk) runs a
+                        # shell as the bare shell, which the shell walk screens, and may wrap one more such env (ewd).
+                        # Otherwise, unless env's first word was an assignment, a bare env, an unrecognised option or a
+                        # runner after env runs a command this walk cannot account for.
+                        ewsh=0
+                        case "$nm" in
+                            sh|bash|zsh|dash|ksh) ewsh=$ewk ;;
+                            env) if (( ewk && ewd < 1 )); then ewsh=2; else ewk=0; fi ;;
+                        esac
+                        if (( ewsh == 2 )); then
+                            # The E walk goes on into the wrapped env's words.
+                            ewd=1
+                            ews=0
+                            ewn=0
+                            ewf=""
+                            ewu=0
+                            ewo=0
+                        else
+                            act="${act//E/}"
+                            atcmd=1
+                        fi
+                        if (( ! ewsh )) && [[ "$ewf" != *=* ]]; then
                             case "$nm" in
                                 command|builtin|exec|nice|nohup|time|timeout|xargs|sudo|doas|stdbuf|ionice|sh|bash|\
                                 zsh|dash|ksh)
@@ -6108,8 +6423,11 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
             if [[ -n "$shv" ]]; then
                 if [[ "$shv" == o* ]] && [[ "$w" == xtrace || "$w" == verbose ]]; then
                     _deny_shell "$shn -o $w"
-                elif [[ "$shv" == S* ]] && (( wsec )); then
-                    _deny_reader "$shn $w"
+                elif [[ "$shv" == S* ]]; then
+                    if (( wsec )); then
+                        _deny_reader "$shn $w"
+                    fi
+                    (( ! ecd )) || _sh_cd_word "$shn" "$w"
                 fi
                 shv="${shv:1}"
             elif [[ "$w" == --rcfile || "$w" == --init-file ]]; then
@@ -6118,6 +6436,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if (( wsec )); then
                     _deny_reader "$shn $w"
                 fi
+                (( ! ecd )) || _sh_cd_word "$shn" "${w#*=}"
             elif [[ "$w" == --verbose ]]; then
                 _deny_shell "$shn $w"
             elif [[ "$w" == -[!-]* ]]; then
@@ -6142,6 +6461,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                 if (( wsec )); then
                     _deny_reader "$shn $w"
                 fi
+                (( ! ecd )) || _sh_cd_word "$shn" "$w"
                 # With -s the words after it are arguments and stdin is still the script, so the walk goes on.
                 if (( ! shs )) && ! _names_input "$w" fd; then
                     act="${act//H/}"

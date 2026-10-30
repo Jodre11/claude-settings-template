@@ -133,7 +133,10 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
   `SendMessage` to main — subagents otherwise go idle without ever reporting back
 
 ## Bash
-- Never use compound shell commands (`&&`, `||`, `;`) — execute each command as a separate Bash call
+- A `;`, `&&`, `||` or newline list of independent commands is allowed; it must not hold
+  a `cd`, an assignment, another state change or a comment, and a recursive search
+  (`grep -r`, `git grep`) may follow only read-only commands. Otherwise run each command
+  as a separate Bash call
 - Never use command substitution (`$(...)`, backticks) — capture output from one Bash call and pass it to the next
 - Never use subshells or grouping (`(...)`, `{ ...; }`) — use separate Bash calls
 - Prefer dedicated tools or separate Bash calls over piping (`|`) where possible
@@ -143,14 +146,20 @@ Keep the housekeeping focused — don't silently include unrelated refactors.
   into a clumsy temp-file handoff. A second carve-out writes a file from a heredoc: one
   stage, `cat > <file> <<'EOF'` (or `>>`) or `tee [-a] <file> <<'EOF'`, with a quoted
   delimiter and nothing after the closing `EOF` line; its body is text and never runs.
-  These are the only two exemptions `bash-guard.sh` recognises. The commit carve-out
+  A third feeds Python a program: `python3 - <<'EOF'`, with a quoted delimiter and
+  nothing after the closing line; `bash-guard.sh` reads its body as text and
+  `secret-bash-guard.sh` screens it as `python3 -c` code. A heredoc may end a list,
+  never start or sit inside one.
+  These are the only three exemptions `bash-guard.sh` recognises. The commit carve-out
   applies only when the words before `-m` are plain (no quotes, `$` or other shell
   syntax) and the message holds no backquote, `$'` or stray closing parenthesis (a
   `1)` list marker); otherwise use `git commit -F <file>`. For PR bodies always use
   `gh ... --body-file <path>` (write the body to `${CLAUDE_TEMP_DIR}/pr-body.md` first).
-- These Bash rules are load-bearing, not stylistic: `hooks/secret-bash-guard.sh` and
-  `hooks/reviewer-guard.sh` tokenise each command and screen every word of every pipeline
-  stage, which is only sound because `bash-guard.sh` denies every other compound form —
+- These Bash rules are load-bearing, not stylistic: `list_check` in `hooks/_lib.sh` is
+  the list contract that both `bash-guard.sh` and `secret-bash-guard.sh` enforce, and
+  `hooks/secret-bash-guard.sh` and `hooks/reviewer-guard.sh` tokenise each command and
+  screen every word of every part and pipeline stage. That is only sound because
+  `bash-guard.sh` denies every other compound form —
   `(...)` grouping, command and process substitution, and control flow included — and
   `secret-bash-guard.sh` denies shell command strings (`bash -c`, `eval`). Never relax one
   without the other.

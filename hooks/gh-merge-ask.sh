@@ -6,10 +6,11 @@
 # repository could never opt out of it. The targets are each --repo/-R value and each URL or host/owner/repo
 # reference, which must name github.com itself; unless a --repo or positional PR URL names the target, also every
 # URL git remote -v lists, since gh may pick any of them (upstream, a set-default). Anything the hook cannot judge
-# prompts: shell metacharacters (a cd, a variable, a second command), an unquoted glob or brace, any word before gh
+# prompts: shell metacharacters (a variable, a pipe, a redirection), an unquoted glob or brace, any word before gh
 # (an assignment such as GIT_DIR=, a path to gh), GH_REPO or GH_HOST in the command or the environment, a malformed
-# reference, a directory with no GitHub remote. A merge it judges unprompted, and every other command, gets no decision, so the
-# native rules and mode decide them.
+# reference, a directory with no GitHub remote. A merge in a list (; && || or a newline) is denied with the route to
+# run it as its own Bash call. A merge it judges unprompted, and every other command, gets no decision, so the native
+# rules and mode decide them.
 
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
@@ -151,6 +152,17 @@ unprompted() {
     done
     return 1
 }
+
+# Another part of a list could change what a merge targets (a cd, an assignment), so a merge in a list is denied with
+# the route to run it alone. bash-guard denies a list that breaks a list rule, so only the part count matters here;
+# the sanctioned heredoc bodies are text, so their lines are no parts.
+listed=$(strip_commit_heredoc "$cmd")
+listed=$(strip_text_heredoc "$listed")
+shell_scan "$listed"
+list_check "$listed"
+if (( LIST_PARTS > 1 )); then
+    hook_deny "MERGE IN A LIST: run gh pr merge … as its own Bash call, so the merge guard can check it."
+fi
 
 if [[ "$cmd" == *[\;\&\|\(\)\<\>\`\$\\]* || "$cmd" == *$'\n'* ]]; then
     ask_merge "the command holds shell syntax the guard does not follow"

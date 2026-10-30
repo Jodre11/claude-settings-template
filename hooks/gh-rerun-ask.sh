@@ -4,10 +4,11 @@
 # check unattended while a rerun of a push, schedule or dispatch run (a deploy, a release) still needs approval. This
 # replaces a native ask rule, because a native ask rule beats every hook "allow", so no run could skip it. The run's
 # trigger comes from gh run view in the payload's working directory, or the --repo given. Anything the hook cannot
-# judge prompts: shell syntax (a cd, a variable, a second command), a glob or brace, any word before gh, flags before
+# judge prompts: shell syntax (a variable, a pipe, a redirection), a glob or brace, any word before gh, flags before
 # rerun, GH_REPO or GH_HOST, --job, an unknown flag, a missing or non-numeric run id, a failed or slow lookup. A
 # command with no literal rerun but a run word beside an expansion, glob or brace (which could assemble one), or too
-# long to check, is denied with a way to rewrite it. A rerun it judges unprompted, and every other command, gets no
+# long to check, is denied with a way to rewrite it, as is a rerun in a list (; && || or a newline), with the route to
+# run it as its own Bash call. A rerun it judges unprompted, and every other command, gets no
 # decision, so the native rules and mode decide them. A rerun spelt through split fragments (r${A:-u}n) or words
 # taken from the environment is deliberate evasion and out of scope, as for the other guards.
 
@@ -107,6 +108,17 @@ normalise_repo() {
         printf '%s/%s' "$owner" "$name"
     fi
 }
+
+# Another part of a list could change what a rerun targets (a cd, an assignment), so a rerun in a list is denied with
+# the route to run it alone. bash-guard denies a list that breaks a list rule, so only the part count matters here;
+# the sanctioned heredoc bodies are text, so their lines are no parts.
+listed=$(strip_commit_heredoc "$cmd")
+listed=$(strip_text_heredoc "$listed")
+shell_scan "$listed"
+list_check "$listed"
+if (( LIST_PARTS > 1 )); then
+    hook_deny "RERUN IN A LIST: run gh run rerun … as its own Bash call, so the rerun guard can check it."
+fi
 
 if [[ "$cmd" == *[\;\&\|\(\)\<\>\`\$\\]* || "$cmd" == *$'\n'* ]]; then
     ask_rerun "the command holds shell syntax the guard does not follow"

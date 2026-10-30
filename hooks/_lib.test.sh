@@ -453,6 +453,211 @@ tx "a CLAUDE_TEMP_DIR assignment as a word is left whole" whole \
 tx "a plain target holding CLAUDE_TEMP_DIR is left whole" whole $'cat > a/CLAUDE_TEMP_DIR/x <<\'EOF\'\nx\nEOF'
 tx "a CLAUDE_TEMP_DIR target in a double-quoted tail is left whole" whole \
     $'cat > "$CLAUDE_TEMP_DIR/x" <<\'EOF\'\nx\nEOF'
+tx "a cat heredoc as a list's last part is reduced" first $'ls; cat > out.txt <<\'EOF\'\n(x)\nEOF'
+tx "a tee heredoc after && is reduced" first $'git status && tee out.txt <<\'EOF\'\nx\nEOF'
+tx "a heredoc operator before the last part is left whole" whole $'cat <<\'X\'; cat > f <<\'EOF\'\nx\nEOF'
+tx "a heredoc in a part before the last is left whole" whole $'cat > f <<\'EOF\'; ls\nx\nEOF'
+tx "a heredoc line holding a comment is left whole" whole $'ls # x; cat > f <<\'EOF\'\nx\nEOF'
+tx "a heredoc line that cannot be scanned is left whole" whole $'echo \'a; cat > f <<\'EOF\'\nx\nEOF'
+
+# _heredoc_last_part: the last list part of a heredoc's first line, the text before it, and the scan state kept.
+shell_scan 'keep me'
+_heredoc_last_part "ls; cat > f <<'EOF'"
+[[ "$HEREDOC_PREFIX" == 'ls; ' && "$HEREDOC_PART" == "cat > f <<'EOF'" && "$SHELL_SKELETON" == 'keep me' ]] \
+    && ok "_heredoc_last_part splits off the last part and keeps the caller's scan" \
+    || bad "_heredoc_last_part: prefix [$HEREDOC_PREFIX] part [$HEREDOC_PART] skeleton [$SHELL_SKELETON]"
+_heredoc_last_part "cat > f <<'EOF' 2>&1 | tee x"
+[[ -z "$HEREDOC_PREFIX" && "$HEREDOC_PART" == "cat > f <<'EOF' 2>&1 | tee x" ]] \
+    && ok "_heredoc_last_part keeps a pipeline whole" || bad "_heredoc_last_part split a pipeline: [$HEREDOC_PART]"
+if _heredoc_last_part "ls # x; cat > f <<'EOF'"; then bad "_heredoc_last_part accepted a comment"
+else ok "_heredoc_last_part refuses a comment"; fi
+
+# script_heredoc_parse: a quoted-delimiter heredoc fed to Python is reduced to its first line, its body kept apart.
+sh_expect() {  # sh_expect <description> <want: strip|whole> <cmd> [<want body>]
+    script_heredoc_parse "$3"
+    local first="${3%%$'\n'*}"
+    if [[ "$2" == strip && "$SCRIPT_HEREDOC_OUT" == "$first" && "$SCRIPT_HEREDOC_BODY" == "${4-x}" ]] \
+            || [[ "$2" == whole && "$SCRIPT_HEREDOC_OUT" == "$3" && -z "$SCRIPT_HEREDOC_BODY" ]]; then
+        ok "$1"
+    else
+        bad "$1: out [$SCRIPT_HEREDOC_OUT] body [$SCRIPT_HEREDOC_BODY]"
+    fi
+}
+sh_expect "python3 - <<'EOF' is reduced"            strip $'python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "python <<\"EOF\" is reduced"             strip $'python <<"EOF"\nx\nEOF'
+sh_expect "an absolute python3.12 <<\\EOF is reduced" strip $'/usr/bin/python3.12 - <<\\EOF\nx\nEOF'
+sh_expect "a <<- body loses its leading tabs"       strip $'python3 - <<-\'EOF\'\n\tx\n\tEOF'
+sh_expect "redirections and a pipe after the heredoc" strip $'python3 - <<\'EOF\' 2>&1 | tail -20\nx\nEOF'
+sh_expect "a redirection to a file after the heredoc" strip $'python3 - <<\'EOF\' > out.json\nx\nEOF'
+sh_expect "a Python heredoc as a list's last part"  strip $'ls x; python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "a body of two lines is kept whole"       strip $'python3 - <<\'EOF\'\na = (1)\nprint(a)\nEOF' \
+    $'a = (1)\nprint(a)'
+sh_expect "an empty body"                           strip $'python3 - <<\'EOF\'\nEOF' ''
+sh_expect "a final newline after the closer"        strip $'python3 - <<\'EOF\'\nx\nEOF\n'
+sh_expect "an unquoted delimiter is left whole"     whole $'python3 - <<EOF\n$(id)\nEOF'
+sh_expect "another option is left whole"            whole $'python3 -u - <<\'EOF\'\nx\nEOF'
+sh_expect "a script operand is left whole"          whole $'python3 x.py <<\'EOF\'\nx\nEOF'
+sh_expect "env before python is left whole"         whole $'env python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "an assignment before python is left whole" whole $'X=1 python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "sudo before python is left whole"        whole $'sudo python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "a shell heredoc is left whole"           whole $'bash <<\'EOF\'\nx\nEOF'
+sh_expect "a node heredoc is left whole"            whole $'node - <<\'EOF\'\nx\nEOF'
+sh_expect "a relative python path is left whole"    whole $'bin/python3 - <<\'EOF\'\nx\nEOF'
+sh_expect "a closer that is not the last line is left whole" whole $'python3 - <<\'EOF\'\nx\nEOF\nls'
+sh_expect "an input redirection is left whole"      whole $'python3 - <<\'EOF\' < f\nx\nEOF'
+sh_expect "a quoted redirection target is left whole" whole $'python3 - <<\'EOF\' > "$x"\nx\nEOF'
+sh_expect "a second heredoc is left whole"          whole $'python3 - <<\'EOF\' | cat <<\'X\'\nx\nEOF'
+sh_expect "a heredoc in an earlier part is left whole" whole $'cat <<\'X\'; python3 - <<\'EOF\'\nx\nEOF'
+sh_body=$(printf 'x%.0s' $(seq 1 $(( SHELL_SCAN_MAX_CHARS - 22 ))))
+sh_expect "a command at the scan bound is reduced"  strip $'python3 - <<\'EOF\'\n'"$sh_body"$'\nEOF' "$sh_body"
+sh_expect "a command over the scan bound is left whole" whole $'python3 - <<\'EOF\'\n'"${sh_body}x"$'\nEOF'
+
+# shell_scan's list parts: the raw text of each part and the separators, as the skeleton cuts them.
+parts() {  # parts <cmd>: "<part>|<sep>|<part>…" or NONE
+    local k out=""
+    shell_scan "$1"
+    if (( ${#SHELL_SCAN_PARTS[@]} == 0 )); then printf NONE; return 0; fi
+    for (( k = 0; k < ${#SHELL_SCAN_PARTS[@]}; k++ )); do
+        out+="${SHELL_SCAN_PARTS[k]}"
+        if (( k < ${#SHELL_SCAN_SEPS[@]} )); then out+="|${SHELL_SCAN_SEPS[k]}|"; fi
+    done
+    printf '%s' "$out"
+}
+expect_parts() {
+    local got
+    got=$(parts "$2")
+    if [[ "$got" == "$3" ]]; then ok "$1"; else bad "$1: want [$3] got [$got]"; fi
+}
+expect_parts "a command with no separator has no parts"  "echo 'a; b'"            NONE
+expect_parts "parts keep their quotes"            "ls 'a;b' && cat \"x y\""        "ls 'a;b'|&&|cat \"x y\""
+expect_parts "each separator is recorded"         $'a; b || c\nd'                  $'a|;|b||||c|\n|d'
+expect_parts "a trailing ; leaves an empty part"  'ls;'                            'ls|;|'
+expect_parts "a backslash-newline is no separator" $'ls \\\n-la; ls'               $'ls \\\n-la|;|ls'
+expect_parts "an escaped ; is no separator"       'find . -exec rm {} \; ; ls'     'find . -exec rm {} \;|;|ls'
+expect_parts "a UTF-8 part keeps its bytes"       'echo "naïve — café"; ls'        'echo "naïve — café"|;|ls'
+expect_parts "a | and a lone & are no separators" 'a | b & c; d'                   'a | b & c|;|d'
+expect_parts "a quoted newline is cut in comment mode" $'echo \'a\nb\' # c'        $'echo \'a|\n|b\' # c'
+expect_parts "a command holding \\x1f has no parts" $'a\x1fb; c'                    NONE
+shell_scan "$(printf 'a;%.0s' $(seq 1 300))"
+(( SHELL_SCAN_OVER == 1 && ${#SHELL_SCAN_SEPS[@]} == 256 )) \
+    && ok "past 256 separators the scan stops cutting and reports it" \
+    || bad "the separator bound: over=$SHELL_SCAN_OVER seps=${#SHELL_SCAN_SEPS[@]}"
+shell_scan 'echo a#b'
+(( SHELL_SCAN_COMMENT == 1 )) && ok "SHELL_SCAN_COMMENT marks a mid-word #" || bad "SHELL_SCAN_COMMENT missed a#b"
+shell_scan "echo 'a#b' \\#"
+(( SHELL_SCAN_COMMENT == 0 )) && ok "SHELL_SCAN_COMMENT ignores a quoted or escaped #" \
+    || bad "SHELL_SCAN_COMMENT flagged a quoted #"
+
+# list_check: the list contract.
+FS=$'\x1c'
+lc() {  # lc <cmd>: "<parts>\x1c<part text joined by \x1d>\x1c<ok or the reason>"
+    shell_scan "$1"
+    list_check "$1"
+    local IFS=$'\x1d'
+    printf '%s%s%s%s%s' "$LIST_PARTS" "$FS" "${LIST_PART_TEXT[*]}" "$FS" "${LIST_REASON:-ok}"
+}
+expect_list() {  # expect_list <description> <ALLOW|DENY> <cmd> [<parts> [<part text joined by \x1d>]]
+    local got n t r
+    got=$(lc "$3")
+    n="${got%%"$FS"*}"
+    r="${got##*"$FS"}"
+    t="${got#*"$FS"}"
+    t="${t%"$FS"*}"
+    if [[ "$2" == ALLOW && "$r" != ok ]] || [[ "$2" == DENY && "$r" == ok ]] \
+            || [[ -n "${4-}" && "$n" != "$4" ]] || [[ -n "${5-}" && "$t" != "$5" ]]; then
+        bad "$1: want $2${4:+ $4 parts} got ${got//"$FS"/ | }"
+    else
+        ok "$1"
+    fi
+}
+reason_is() {  # reason_is <description> <glob the reason must match> <lc output>
+    # shellcheck disable=SC2053  # the reason is matched against a glob
+    if [[ "${3##*"$FS"}" == $2 ]]; then ok "$1"; else bad "$1: got ${3//"$FS"/ | }"; fi
+}
+expect_reason() {  # expect_reason <description> <glob the reason must match> <cmd>
+    reason_is "$1" "$2" "$(lc "$3")"
+}
+X=$'\x1d'
+expect_list "a ; list is admitted"                  ALLOW 'ls a; ls b'                2 "ls a${X}ls b"
+expect_list "an && list is admitted"                ALLOW 'ls a && ls b'              2
+expect_list "an || list is admitted"                ALLOW 'ls a || ls b'              2
+expect_list "a newline list is admitted"            ALLOW $'ls a\nls b'               2
+expect_list "a trailing ; is dropped"               ALLOW 'ls a;'                     1 'ls a'
+expect_list "a trailing newline is dropped"         ALLOW $'ls a\n'                   1
+expect_list "a blank line is dropped"               ALLOW $'ls a\n\nls b'             2
+expect_list "a pipeline is one part"                ALLOW 'git status; git log -1 | head' 2
+expect_list "a quoted ; is one command"             ALLOW "echo 'a; b'"               1 "echo 'a; b'"
+expect_list "an escaped ; is one command"           ALLOW 'find . -exec rm {} \;'     1
+expect_list "a quoted newline is one command"       ALLOW $'echo \'a\nb\''            1
+expect_list "operators in a jq filter are one command" ALLOW "jq '.a | .b; .c' f"     1
+expect_list "UTF-8 text is one command"             ALLOW 'echo "naïve — café"'       1
+expect_list "a double-quoted newline is one command" ALLOW $'jq "\n.a" f'             1
+expect_list "parts keep their quoted text"          ALLOW "ls 'a;b' && cat \"x y\""   2 "ls 'a;b'${X}cat \"x y\""
+expect_list "a UTF-8 part keeps its bytes"          ALLOW 'echo "naïve — café"; ls'   2 "echo \"naïve — café\"${X}ls"
+expect_list "an assignment prefix is scoped to its command" ALLOW 'X=1 make; ls'      2
+expect_list "an assignment prefix before a pipeline" ALLOW 'FOO=bar env | head; ls'   2
+expect_list "a heredoc reduced to its first line may end a list" ALLOW "ls; cat > f <<'EOF'" 2
+expect_list "a here-string is no heredoc"           ALLOW 'cat <<< x; ls'             2
+expect_list "16 parts are admitted"                 ALLOW "$(printf 'ls; %.0s' $(seq 1 15))ls" 16
+expect_list "17 parts are denied"                   DENY  "$(printf 'ls; %.0s' $(seq 1 16))ls"
+expect_reason "the bound names its limit"           '*at most 16*' "$(printf 'ls; %.0s' $(seq 1 16))ls"
+expect_reason "rule 0: an unterminated quote"       '*could not be split*' "echo 'a; ls b"
+expect_reason "rule 0: a command holding \\x1f"     '*could not be split*' $'ls a\x1f; ls'
+for c in 'ls & ls; ls' 'ls; (ls)' 'ls; echo $(id)' 'ls; echo "$(id)"' 'ls; echo `id`' 'ls; cat <(ls)' \
+        'ls; tee >(cat)' ';ls' 'ls;;ls' 'ls && && ls' 'ls &&' 'ls ||' 'ls; ls |' $'ls &&\nls' '&& ls'; do
+    expect_reason "rule 1 denies '$c'" '*;, &&, || or newlines only*' "$c"
+done
+expect_reason "rule 1: a heredoc the strips left whole" '*here-document*' $'ls; cat <<EOF\nx\nEOF'
+expect_reason "rule 1: a heredoc body's lines are no parts" '*here-document*' \
+    $'kubectl apply -f - <<\'EOF\'\nkind: x\nEOF'
+expect_reason "rule 2: a comment line"              '*comment*' $'ls # x\nls'
+expect_reason "rule 2: a mid-word #"                '*comment*' 'echo a#b && ls'
+expect_reason "rule 2: miss 4, apostrophes in comments" '*comment*' $'echo a # it\'s\ncat x/y # it\'s'
+reason_is "rule 2a: the tokeniser disagreeing with the scan" '*could not be split*' \
+    "$(shell_words() { SW_WORDS=(wls); SW_OK=1; }; lc 'ls; ls')"
+reason_is "rule 0: a tokeniser failure" '*could not be split*' \
+    "$(shell_words() { SW_WORDS=(); SW_OK=0; }; lc 'ls; ls')"
+for w in 'if' 'then' 'elif' 'else' 'fi' 'do' 'done' 'case' 'esac' 'while' 'until' 'for' 'select' 'function' \
+        'coproc' '{' '}' '[[' ']]' '!' 'time' 'noglob' 'nocorrect'; do
+    expect_reason "rule 3 denies '$w' at command position" "*'$w' starts a compound command*" "ls; $w x"
+done
+expect_reason "rule 3: miss 3, an if around eval"   "*'if' starts*" 'if true; then eval "$X"; fi'
+expect_reason "rule 3: a reserved word after an assignment" "*'while' starts*" 'ls; X=1 while x'
+for w in cd pushd popd chdir export declare typeset local readonly unset integer float read vared mapfile \
+        readarray getopts let source . eval alias unalias autoload zmodload set shopt setopt unsetopt emulate trap \
+        umask ulimit hash enable; do
+    expect_reason "rule 4 denies '$w'" "*'$w' changes shell state*" "ls; $w x"
+done
+expect_reason "rule 4: miss 1, cd before a search"  "*'cd' changes*git -C*" 'cd ~; grep -r password .'
+expect_reason "rule 4: miss 2, an assignment"       "*'F=.env' changes*"    'F=.env; cat "$F"'
+expect_reason "rule 4: an array assignment"         "*'X\[1\]=a' changes*"  'ls; X[1]=a'
+expect_reason "rule 4: an append assignment"        "*'X+=a' changes*"      'ls; X+=a'
+expect_reason "rule 4: two assignments alone"       "*'Y=2' changes*"       'ls; X=1 Y=2'
+expect_reason "rule 4: cd behind command"           "*'cd' changes*"        'ls; command cd /'
+expect_reason "rule 4: export behind builtin"       "*'export' changes*"    'ls; builtin export X'
+expect_reason "rule 4: a bare exec"                 "*'exec' changes*"      'ls; exec'
+expect_reason "rule 4: a bare exec with a redirection" "*'exec' changes*"   'ls; exec 3>f'
+expect_reason "rule 4: read in a pipeline's last stage" "*'read' changes*"  'echo .env | read F; cat "$F"'
+expect_reason "rule 4: printf -v"                   "*'printf -v' changes*" 'printf -v F .env; cat "$F"'
+expect_reason "rule 4: print with v in a bundle"    "*'print -v' changes*"  'print -rv F x; ls'
+expect_reason "rule 4 names the working directory the Bash tool keeps" '*keeps the working directory*' 'cd x; ls'
+expect_list "printf without -v is no state change"  ALLOW 'printf %s x; ls'       2
+expect_list "a state word as an argument is fine"   ALLOW 'echo cd; grep export f' 2
+expect_list "a single cd is no list"                ALLOW 'cd x'                  1
+expect_list "a single cd with a trailing ; is no list" ALLOW 'cd x;'              1
+for b in "$BASH" /bin/bash; do
+    [[ -x "$b" ]] || continue
+    for c in 'ls a; ls b' 'cd ~; grep -r x .' $'ls # x\nls' 'ls; if x' 'ls &&' "ls 'a;b' && cat \"x y\""; do
+        prog='source "$1"; shell_scan "$2"; list_check "$2"; printf "%s|%s" "$LIST_PARTS" "${LIST_REASON:-ok}"'
+        got=$("$b" -c "$prog" _ "$DIR/_lib.sh" "$c")
+        want=$(lc "$c")
+        if [[ "$got" == "${want%%"$FS"*}|${want##*"$FS"}" ]]; then
+            ok "list_check under $b: '$c'"
+        else
+            bad "list_check under $b: '$c' got $got"
+        fi
+    done
+done
 
 # _ms: the time in milliseconds (EPOCHREALTIME on bash 5; whole seconds before it).
 _ms() {
@@ -629,6 +834,37 @@ full=0
 for (( i = 1; i <= 64; i++ )); do probe_add find "/r$i" a || full=1; done
 probe_add find /r65 a && bad "a 65th root was accepted" || ok "a 65th root is refused"
 (( ! full )) && ok "64 roots are accepted" || bad "fewer than 64 roots were accepted"
+probe_reset
+probe_add find /a a
+probe_add find /b a
+probe_add find /c a
+probe_truncate 1
+[[ "$PROBE_N" == 1 && "${#PROBE_ROOT[@]}" == 1 ]] && ok "probe_truncate keeps the first roots" \
+    || bad "probe_truncate kept $PROBE_N roots"
+probe_add find /a a
+probe_add find /b a
+[[ "$PROBE_N" == 2 && "${PROBE_ROOT[1]}" == /b ]] && ok "probe_truncate forgets a dropped root, not a kept one" \
+    || bad "after probe_truncate: $PROBE_N roots, second ${PROBE_ROOT[1]:-none}"
+probe_add tracked /p a '' '' '' :!x
+probe_add tracked /p a '' '' '' :!y
+[[ "$PROBE_N" == 4 ]] && ok "roots that differ only in their pathspecs are two entries" \
+    || bad "pathspecs are not part of the key: $PROBE_N roots"
+
+# The gps kinds list what git resolves from the command's pathspecs, exclusions included.
+mkdir -p "$pd/gps/src" "$pd/gps/inner"
+git -C "$pd/gps" init -q
+: >"$pd/gps/.env"
+: >"$pd/gps/src/a.py"
+git -C "$pd/gps" add .env src/a.py
+git -C "$pd/gps/inner" init -q
+: >"$pd/gps/inner/.env"
+expect_probe "gpstracked lists a tracked secret the pathspecs keep"  "0 $pd/gps/.env"   gpstracked "$pd/gps" '' '' '' .
+expect_probe "gpstracked leaves out a secret an exclusion drops"     '1 '  gpstracked "$pd/gps" '' '' '' $'.\x1f:!.env'
+expect_probe "gpstracked with no pathspecs lists the whole directory" "0 $pd/gps/.env"  gpstracked "$pd/gps"
+expect_probe "gpsgit still lists a nested repository in full" \
+    "0 $pd/gps/inner/.env" gpsgit "$pd/gps" '' '' '' $'.\x1f:!.env'
+expect_probe "a gps kind outside a work tree lists with find"        '0 *'  gpstracked "$pd/plain" '' '' '' $':!.env'
+expect_probe "a pathspec git rejects makes the listing inconclusive" '2 '  gpstracked "$pd/gps" '' '' '' /elsewhere
 
 # Stub listers: the cap, a failure with and without a hit, and a lister that never finishes.
 stub_cap() {

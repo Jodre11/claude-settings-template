@@ -19,10 +19,32 @@ run() {  # run <cmd>: HELD (a deny with a retry route: the hook could not verify
     elif [[ "$out" == *'"permissionDecision":"ask"'* ]]; then echo ASK
     else echo ALLOW; fi
 }
+# The list parity sweep: a DENY or HELD row stays denied as a list's first part and as its last. Every
+# PARITY_STRIDE-th such row is replayed (about 50 in all); SECRET_GUARD_PARITY=1 replays every one. A row holding <<
+# is skipped, as a list may hold a here-document only as its last part.
+parity=${SECRET_GUARD_PARITY:-0}
+PARITY_STRIDE=36
+parity_n=0
+parity_runs=0
 expect() {  # expect <DENY|HELD|ALLOW> <description> <cmd>
-    local got
+    local got g1 g2
     got=$(run "$3")
     if [[ "$got" == "$1" ]]; then ok "$2"; else bad "$2 (want $1 got $got)"; fi
+    if [[ "$1" != DENY && "$1" != HELD ]] || [[ "$3" == *'<<'* ]]; then
+        return
+    fi
+    parity_n=$(( parity_n + 1 ))
+    if [[ "$parity" != 1 ]] && (( parity_n % PARITY_STRIDE )); then
+        return
+    fi
+    parity_runs=$(( parity_runs + 1 ))
+    g1=$(run "true; $3")
+    g2=$(run "$3"$'\n'true)
+    if [[ ( "$g1" == "$1" || "$g1" == DENY ) && ( "$g2" == "$1" || "$g2" == DENY ) ]]; then
+        ok "as a list part: $2"
+    else
+        bad "as a list part: $2 (want $1 or DENY, got $g1 after true; and $g2 before it)"
+    fi
 }
 expect_in() {  # expect_in <cwd> <DENY|HELD|ALLOW> <description> <cmd>
     local RUN_CWD="$1"
@@ -1361,6 +1383,55 @@ expect_in "$R" HELD   "git grep of a magic word that is not exclude held"       
 expect_in "$R" HELD   "an exclude pathspec holding a variable held"               'git grep -n KEY -- :!$X'
 expect_in "$R" HELD   "an exclude pathspec holding a brace held"                  'git grep -n KEY -- :!{a,b}'
 expect_in "$T" DENY  "an exclude pathspec does not hide a tracked secret, denied" "git grep -n KEY -- ':!nothing'"
+# In the work tree git resolves the command's own pathspecs, exclusions included, from the command's directory: a
+# tracked secret an exclusion leaves out is not read. GXP tracks config.env, docs/a.md and hooks/h.sh.
+GXP="$pt/gx"
+mkdir -p "$GXP/docs" "$GXP/hooks"
+git -C "$GXP" init -q
+: >"$GXP/config.env"
+: >"$GXP/docs/a.md"
+: >"$GXP/hooks/h.sh"
+git -C "$GXP" add config.env docs/a.md hooks/h.sh
+git -C "$GXP" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$GXP" ALLOW "git grep with a short exclusion of the secret allowed"    "git grep -n KEY -- . ':!config.env'"
+expect_in "$GXP" ALLOW "git grep with a long exclusion of the secret allowed" \
+    "git grep -n KEY -- ':(exclude)config.env'"
+expect_in "$GXP" ALLOW "git grep with a caret exclusion of the secret allowed"    "git grep -n KEY -- ':^config.env'"
+expect_in "$pt" ALLOW "git -C grep with an exclusion resolves it from git -C's directory, allowed" \
+    "git -C gx grep -n KEY -- . ':!config.env'"
+expect_in "$GXP/docs" ALLOW "an exclusion is relative to the command's directory, allowed" \
+    "git grep -n KEY -- . ':!../config.env'"
+expect_in "$GXP" ALLOW "an exclusion beside a clean path allowed"                 "git grep -n KEY -- docs hooks ':!x'"
+expect_in "$GXP" DENY  "an exclusion that leaves the secret in denied"            "git grep -n KEY -- . ':!docs'"
+expect_in "$GXP/docs" DENY "an exclusion relative to a subdirectory misses the root's secret, denied" \
+    "git grep -n KEY -- .. ':!config.env'"
+expect_in "$GXP" DENY  "an exclusion of a different case keeps the secret, denied" "git grep -n KEY -- . ':!CONFIG.env'"
+expect_in "$GXP" DENY  "an exclusion beside a variable pathspec keeps today's listing, denied" \
+    "git grep -n KEY -- . ':!config.env' \"\$X\""
+expect_in "$GXP" DENY  "a pathspec setting keeps today's listing, denied" \
+    "git --literal-pathspecs grep -n KEY -- . ':!config.env'"
+expect_in "$GXP" DENY  "an exclusion inside a revision search is not resolved, denied" \
+    "git grep -n KEY HEAD -- . ':!config.env'"
+expect_in "$GXP" HELD  "top magic beside an exclusion still held"                 "git grep -n KEY -- :/ ':!x'"
+# A nested repository is listed in full only under the listing's directory, so a pathspec reaching past it (.. or an
+# absolute path) keeps today's listing.
+mkdir -p "$GXP/inner"
+git -C "$GXP/inner" init -q
+: >"$GXP/inner/.env"
+expect_in "$GXP" DENY  "an exclusion does not hide a nested repository's secret from --untracked, denied" \
+    "git grep --untracked -n KEY -- . ':!config.env'"
+expect_in "$GXP/docs" DENY "a pathspec reaching above the command's directory keeps today's listing, denied" \
+    "git grep --untracked -n KEY -- .. ':!config.env'"
+expect_in "$GXP/docs" DENY "an absolute pathspec keeps today's listing, denied" \
+    "git grep --untracked -n KEY -- $GXP ':!config.env'"
+gx_why=$(jq -nc --arg c "git grep -n KEY -- . ':!docs'" --arg d "$GXP" '{tool_input:{command:$c}, cwd:$d}' \
+    | "$HOOK" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+if [[ "$gx_why" == *"':!<file>'"* && "$gx_why" == *"(-l)"* && "$gx_why" != *--include* ]]; then
+    ok "a git grep probe deny names an exclusion pathspec and -l, not --include"
+else
+    bad "a git grep probe deny names git's routes (reason: ${gx_why:-none})"
+fi
 expect      DENY  "git -C twice resolves the second against the first, denied"   "git -C $pt -C plain grep KEY"
 expect      DENY  "a git grep path resolves against git -C, denied"              "git -C $P grep KEY ."
 expect      HELD   "git grep in another work tree held"                           "git --work-tree=$P grep KEY"
@@ -1373,6 +1444,43 @@ expect_in "$P" ALLOW "diff -rq reports only which files differ, allowed"        
 expect_in "$P" ALLOW "diff --brief likewise, allowed"                            'diff -r --brief . src'
 expect_in "$P" DENY  "a q that is diff -x's value is no -q, denied"              'diff -rxq . src'
 expect      HELD   "env -C moves the directory a relative root resolves against, held" "env -C $P grep -rn KEY ."
+# env with only -C DIR, --chdir=DIR, -- and assignments, wrapping a shell given a script, runs the bare script; an env
+# wrapping env unwraps once more, at most.
+expect ALLOW "env -C running a shell's script allowed"           "env -C $P /opt/homebrew/bin/bash tests/run.sh"
+expect ALLOW "env --chdir= running a shell's script allowed"     "env --chdir=$P bash x.sh"
+expect ALLOW "an env wrapping env running a shell's script allowed" 'env HOME=/dev/null/nope /usr/bin/env bash x.sh'
+expect ALLOW "/usr/bin/env running a shell's script allowed"     '/usr/bin/env bash x.sh'
+expect ALLOW "env with an assignment running a shell's script allowed" 'env FOO=1 bash x.sh'
+expect ALLOW "env -- running a shell's script allowed"           'env -- bash x.sh'
+expect ALLOW "env env running a shell's script allowed"          'env env bash x.sh'
+expect DENY  "env running a shell on a secret denied"            'env bash .env'
+expect DENY  "env -C running a shell on a secret denied"         "env -C $P bash .env"
+expect DENY  "an env wrapping env twice is not unwrapped, denied" 'env env env bash x.sh'
+expect DENY  "an env path wrapping env twice is not unwrapped, denied" \
+    'env FOO=1 /usr/bin/env FOO=2 /usr/bin/env bash x.sh'
+expect DENY  "env wrapping a shell's command string denied"      "env bash -c 'ls'"
+expect DENY  "env wrapping a shell fed a heredoc denied"         $'env bash <<\'EOF\'\nls\nEOF'
+expect DENY  "env -i wrapping a shell's script denied"           'env -i bash x.sh'
+expect DENY  "env -u wrapping a shell's script denied"           'env -u PATH bash x.sh'
+expect DENY  "env -S wrapping a shell's script denied"           "env -S 'bash x.sh'"
+expect DENY  "env with bundled options wrapping a shell's script denied" 'env -iC /tmp bash x.sh'
+expect DENY  "env -C glued wrapping a shell's script denied"     'env -C/tmp bash x.sh'
+expect DENY  "env -i wrapping env wrapping a shell's script denied" 'env -i /usr/bin/env bash x.sh'
+expect DENY  "env wrapping exec of a shell denied"               'env exec bash x.sh'
+expect DENY  "env wrapping xargs denied"                         'env xargs bash x.sh'
+expect DENY  "env wrapping sudo of a shell denied"               'env -C /tmp sudo bash x.sh'
+# The shell resolves a relative script or rc file in the directory env -C names, so it is judged there.
+expect DENY  "env -C running a secret named relative to its directory denied" 'env -C ~/.aws bash credentials'
+expect DENY  "env --chdir= likewise denied"                      'env --chdir=~/.aws bash credentials'
+expect DENY  "a nested env -C resolves against the first, denied" 'env -C ~ env -C .aws bash credentials'
+expect DENY  "env -C with a bundle likewise denied"              'env -iC ~/.aws bash credentials'
+expect DENY  "an rc file relative to env -C's directory denied"  'env -C ~/.aws bash --rcfile credentials x.sh'
+expect DENY  "an rc file value relative to env -C's directory denied" 'env -C ~/.aws bash --rcfile=credentials x.sh'
+expect HELD  "a script under a variable env -C directory held"   'env -C $D bash x.sh'
+expect HELD  "a script pattern under env -C, expanded in the cwd, held" 'env -C ~/.aws bash cred*'
+expect HELD  "a brace-built script under env -C held"            'env -C ~/.aws bash {cred,x}entials'
+expect HELD  "an rc-file pattern under env -C held"              'env -C ~/.aws bash --rcfile cred* x.sh'
+expect ALLOW "an absolute script under env -C allowed"           'env -C ~/.aws bash /tmp/x.sh'
 expect_in "$P" DENY  "an operand named like a reader does not start a second walk, denied" "grep -rn KEY src rg $pt/sec"
 expect_in "$P" DENY  "a names-only grep piped into xargs cat reads what it lists, denied" 'grep -rl KEY . | xargs cat'
 expect_in "$P" ALLOW "a names-only grep of a clean directory piped into xargs cat allowed" \
@@ -1418,21 +1526,23 @@ expect_in "$T" DENY  "git grep --open-files-in-pager -l shows whole files, denie
 expect_in "$T" DENY  "an abbreviated --open-files-in-pager shows whole files, denied" 'git grep --open=cat -l KEY'
 expect_in "$I" DENY  "rg searches a root it is named although .gitignore ignores it, denied" 'rg KEY ign'
 expect_in "$I" ALLOW "rg with no root skips the ignored directory, allowed"       'rg KEY'
-# A revision confined to a literal blob spends the git budget with no directory probe, so the run-wide deadline
-# cannot turn this row into a hold under load.
-mkdir -p "$pt/many"
-git -C "$pt/many" init -q
-printf 'a\n' >"$pt/many/a.md"
-git -C "$pt/many" add a.md
-git -C "$pt/many" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
-    commit -q --no-verify -m one
-many=""
-for i in {1..32}; do
-    many+="git -C $pt/many grep a HEAD -- a.md | "
-done
 : >"$pt/repo/src/.env"
 expect_in "$R" ALLOW "rg of a root .gitignore does not ignore keeps git's listing, allowed" 'rg KEY src'
-expect_in "$R" DENY  "past the hook's 32 git calls, rg lists its root in full, denied" "${many}rg KEY src"
+# A revision confined to a literal blob spends the git budget with no directory probe. The 32 git calls still take
+# about 2 s, and under load the run-wide deadline can turn the row into a hold, so it runs with the timing rows.
+if [[ "${SECRET_GUARD_TIMING:-0}" == 1 ]]; then
+    mkdir -p "$pt/many"
+    git -C "$pt/many" init -q
+    printf 'a\n' >"$pt/many/a.md"
+    git -C "$pt/many" add a.md
+    git -C "$pt/many" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+        commit -q --no-verify -m one
+    many=""
+    for i in {1..32}; do
+        many+="git -C $pt/many grep a HEAD -- a.md | "
+    done
+    expect_in "$R" DENY  "past the hook's 32 git calls, rg lists its root in full, denied" "${many}rg KEY src"
+fi
 expect_in "$P" ALLOW "cat */README.md matches no secret, allowed"                 'cat */README.md'
 expect_in "$P" ALLOW "head of */README.md allowed"                                'head -n 5 */README.md'
 expect_in "$P" ALLOW "a grep of */*.py allowed"                                   'grep -n foo */*.py'
@@ -1781,7 +1891,7 @@ expect HELD   "cd into a glob held"                                       'cd ~/
 expect HELD   "cd into a brace expansion held"                            'cd ~/.{x,aws}'
 expect HELD   "cd into another user's home held"                          'cd ~root'
 expect HELD   "cd with CDPATH set in the command held"                    'CDPATH=~/.config cd gh'
-expect HELD   "a relative cd after an earlier cd held"                    'cd /tmp ; cd foo'
+expect DENY   "a relative cd after an earlier cd denied (list rule 4)"    'cd /tmp ; cd foo'
 expect ALLOW "cd \$HOME allowed"                                         'cd "$HOME"'
 expect ALLOW "cd -P /tmp allowed"                                        'cd -P /tmp'
 expect ALLOW "a ./ cd with CDPATH set allowed"                           'CDPATH=/x cd ./src'
@@ -1814,30 +1924,32 @@ expect DENY  "cat /proc/thread-self/task/1/environ denied"               'cat /p
 # $PWD, $CLAUDE_TEMP_DIR and $HOME resolve only while the command itself cannot have changed them: no earlier cd,
 # pushd or popd for $PWD, and no assignment, export or declaration of the name.
 mkdir -p "$pt/aws/.config/nvim"
-expect_sid abc-123 HELD "\$PWD after an earlier cd held" "cd $pt/aws/.config/nvim ; cd \"\$PWD/..\""
-expect_sid abc-123 HELD "\$PWD after a popd held"                         'popd ; cd "$PWD"'
-expect_sid abc-123 HELD "\$PWD the command assigns held"                  "PWD=$pt/aws/.aws ; cd \"\$PWD\""
+expect_sid abc-123 DENY "\$PWD after an earlier cd denied (list rule 4)" "cd $pt/aws/.config/nvim ; cd \"\$PWD/..\""
+expect_sid abc-123 DENY "\$PWD after a popd denied (list rule 4)"         'popd ; cd "$PWD"'
+expect_sid abc-123 DENY "\$PWD the command assigns denied (list rule 4)"  "PWD=$pt/aws/.aws ; cd \"\$PWD\""
 expect_sid abc-123 HELD "\$PWD the command reads held"                    'read PWD | cd "$PWD"'
-expect_sid abc-123 HELD "\$CLAUDE_TEMP_DIR the command assigns held" \
+expect_sid abc-123 DENY "\$CLAUDE_TEMP_DIR the command assigns denied (list rule 4)" \
     "CLAUDE_TEMP_DIR=$pt/aws/.aws ; cd \"\$CLAUDE_TEMP_DIR\""
-expect_sid abc-123 HELD "\$CLAUDE_TEMP_DIR the command exports held" \
+expect_sid abc-123 DENY "\$CLAUDE_TEMP_DIR the command exports denied (list rule 4)" \
     "export CLAUDE_TEMP_DIR=$pt/aws/.aws ; cd \$CLAUDE_TEMP_DIR"
 expect_sid abc-123 HELD "\$CLAUDE_TEMP_DIR set by printf -v held" \
     'printf -v CLAUDE_TEMP_DIR x | cd $CLAUDE_TEMP_DIR'
-expect HELD   "a bare cd after HOME is assigned held"                     "HOME=$pt/aws/.aws ; cd"
-expect HELD   "cd \$HOME after HOME is assigned held"                     "HOME=$pt/aws/.aws ; cd \"\$HOME\""
-expect HELD   "cd ~ after HOME is exported held"                          "export HOME=$pt/aws/.aws ; cd ~"
+expect DENY   "a bare cd after HOME is assigned denied (list rule 4)"     "HOME=$pt/aws/.aws ; cd"
+expect DENY   "cd \$HOME after HOME is assigned denied (list rule 4)"     "HOME=$pt/aws/.aws ; cd \"\$HOME\""
+expect DENY   "cd ~ after HOME is exported denied (list rule 4)"          "export HOME=$pt/aws/.aws ; cd ~"
 expect DENY  "cd ~/.aws after HOME is assigned denied"                   "HOME=$pt/aws ; cd ~/.aws"
 expect_sid abc-123 ALLOW "cd \$PWD beside \$OLDPWD allowed"              'echo $OLDPWD | cd "$PWD"'
 # An expansion that may assign (${NAME:=…}, zsh's ${(P)…}) or a builtin writing a computed name counts as naming it.
-expect_sid abc-123 HELD "\$PWD after \${PWD:=…} held"                    'echo ${PWD:=/x} ; cd "$PWD"'
-expect HELD   "cd ~ after \${HOME=…} held"                                'echo ${HOME=/x} ; cd ~'
-expect_sid abc-123 HELD "\$CLAUDE_TEMP_DIR after \${CLAUDE_TEMP_DIR::=…} held" \
+expect_sid abc-123 DENY "\$PWD after \${PWD:=…} denied (list rule 4)"    'echo ${PWD:=/x} ; cd "$PWD"'
+expect DENY   "cd ~ after \${HOME=…} denied (list rule 4)"                'echo ${HOME=/x} ; cd ~'
+expect_sid abc-123 DENY "\$CLAUDE_TEMP_DIR after \${CLAUDE_TEMP_DIR::=…} denied (list rule 4)" \
     'echo ${CLAUDE_TEMP_DIR::=/x} ; cd $CLAUDE_TEMP_DIR'
-expect_sid abc-123 HELD "\$PWD after zsh's \${(P)…} held"                 'echo ${(P)n::=/x} ; cd "$PWD"'
-expect_sid abc-123 HELD "\$PWD after a read into a variable name held"    'n=PWD ; read "$n" <<< /x ; cd "$PWD"'
-expect_sid abc-123 HELD "\$PWD after a read into a computed name held"    'n=P ; read "${n}WD" <<< /x ; cd "$PWD"'
-expect_sid abc-123 HELD "\$PWD after a nameref held"                      'declare -n r="$n" ; r=/x ; cd "$PWD"'
+expect_sid abc-123 DENY "\$PWD after zsh's \${(P)…} denied (list rule 4)" 'echo ${(P)n::=/x} ; cd "$PWD"'
+expect_sid abc-123 DENY "\$PWD after a read into a variable name denied (list rule 4)" \
+    'n=PWD ; read "$n" <<< /x ; cd "$PWD"'
+expect_sid abc-123 DENY "\$PWD after a read into a computed name denied (list rule 4)" \
+    'n=P ; read "${n}WD" <<< /x ; cd "$PWD"'
+expect_sid abc-123 DENY "\$PWD after a nameref denied (list rule 4)"      'declare -n r="$n" ; r=/x ; cd "$PWD"'
 expect_sid abc-123 ALLOW "\$PWD beside \${PWD/…} allowed"                'echo ${PWD/a/b} | cd "$PWD"'
 expect_sid abc-123 ALLOW "\$PWD beside an export of a \$ value allowed"  'export X=$Y | cd "$PWD"'
 # bash's cd - reads a temporary OLDPWD; zsh's chdir is cd.
@@ -1847,11 +1959,11 @@ expect DENY  "chdir ~/.aws denied"                                       'chdir 
 expect ALLOW "chdir src allowed"                                         'chdir src'
 # After a sequence separator (; && || & newline) an earlier command may have changed $PWD, $HOME or
 # $CLAUDE_TEMP_DIR in ways the hook does not model, so a target built on one held; a pipe's stages are subshells.
-expect_sid abc-123 HELD "\$PWD after a separator held"                    'cd /tmp ; cd "$PWD"'
-expect HELD   "cd ~ after a separator held"                               'true ; cd ~'
-expect_sid abc-123 HELD "\$CLAUDE_TEMP_DIR after && held"                 'true && cd $CLAUDE_TEMP_DIR/x'
-expect HELD   "a bare cd after a separator held"                          'exec {HOME}>/dev/null ; cd'
-expect HELD   "cd - after a separator held"                               'true ; cd -'
+expect_sid abc-123 DENY "\$PWD after a separator denied (list rule 4)"    'cd /tmp ; cd "$PWD"'
+expect DENY   "cd ~ after a separator denied (list rule 4)"               'true ; cd ~'
+expect_sid abc-123 DENY "\$CLAUDE_TEMP_DIR after && denied (list rule 4)" 'true && cd $CLAUDE_TEMP_DIR/x'
+expect DENY   "a bare cd after a separator denied (list rule 4)"          'exec {HOME}>/dev/null ; cd'
+expect DENY   "cd - after a separator denied (list rule 4)"               'true ; cd -'
 expect_sid abc-123 ALLOW "cd \$PWD/src alone allowed"                    'cd "$PWD/src"'
 expect_sid abc-123 ALLOW "cd \$CLAUDE_TEMP_DIR/x alone allowed"          'cd $CLAUDE_TEMP_DIR/x'
 expect_sid abc-123 ALLOW "cd \$PWD after a pipe allowed"                 'true | cd "$PWD"'
@@ -2002,7 +2114,7 @@ expect DENY  "DOCKER_CONFIG behind sudo denied"                          'sudo D
 expect DENY  "DOCKER_CONFIG behind env denied"                           'env DOCKER_CONFIG=/tmp/d docker login r'
 expect DENY  "skopeo login --authfile outside the vault denied"          'skopeo login --authfile /tmp/x r'
 expect ALLOW "docker --config into the vault allowed"                    'docker --config $CLAUDE_SECRET_DIR/d login r'
-expect ALLOW "DOCKER_CONFIG exported before a non-login allowed"         'export DOCKER_CONFIG=/tmp/d ; docker ps'
+expect DENY  "DOCKER_CONFIG exported before a non-login denied (list rule 4)" 'export DOCKER_CONFIG=/tmp/d ; docker ps'
 expect DENY  "docker compose convert denied"                             'docker compose convert'
 expect DENY  "docker compose config of a service denied"                 'docker compose config svc'
 expect DENY  "docker-compose -p config denied"                           'docker-compose -p p config'
@@ -2357,7 +2469,10 @@ expect_in "$GR" HELD   "a git -c core setting keeps it held" \
     'git -c core.quotePath=false grep -n x HEAD -- notes.md'
 expect_in "$GR" HELD   "a GIT_CONFIG assignment keeps it held" \
     'GIT_CONFIG_GLOBAL=/dev/null git grep -n x HEAD -- notes.md'
+# Pipe stages, as a list of more than 16 parts is denied (list rule 6) before any walk runs.
 expect_in "$GR" HELD   "a revision past the walks' git budget held" \
+    "$(printf 'git grep -n x HEAD -- notes.md | %.0s' {1..33})true"
+expect_in "$GR" DENY   "33 git grep parts denied (list rule 6)" \
     "$(printf 'git grep -n x HEAD -- notes.md ; %.0s' {1..33})true"
 # A revision's pathspecs are tested as blobs of a commit: a tree, by name or by id, hides the directory above them.
 expect_in "$GR" HELD   "a tree revision held"                             'git grep -n x HEAD^{tree} -- notes.md'
@@ -2389,7 +2504,7 @@ expect_in "$GR" HELD   "a pathspec setting under env stays held" \
     'env GIT_ICASE_PATHSPECS=1 git grep -n x HEAD~1 -- DOCS'
 expect_in "$GR" HELD   "a quoted pathspec setting name stays held" \
     'GIT_ICASE_PATH""SPECS=1 git grep -n x HEAD~1 -- DOCS'
-expect_in "$GR" HELD   "an exported pathspec setting stays held" \
+expect_in "$GR" DENY   "an exported pathspec setting denied (list rule 4)" \
     'export GIT_ICASE_PATHSPECS=1 ; git grep -n x HEAD~1 -- DOCS'
 expect_in "$GR" HELD   "git --icase-pathspecs stays held" \
     'git --icase-pathspecs grep -n x HEAD~1 -- DOCS'
@@ -2397,7 +2512,7 @@ expect_in "$GR" HELD   "a quoted pathspecs option stays held" \
     'git --icase-path""specs grep -n x HEAD~1 -- DOCS'
 expect_in "$GR" HELD   "git --literal-pathspecs stays held" \
     'git --literal-pathspecs grep -n x HEAD~1 -- notes.md'
-expect_in "$GR" HELD   "a variable written under a computed name stays held" \
+expect_in "$GR" DENY   "a variable written under a computed name denied (list rule 4)" \
     "printf -v GIT_ICASE_PATHSPEC\$'\\x53' 1 ; export GIT_ICASE_PATHSPEC\$'\\x53' ; git grep -n x HEAD~1 -- DOCS"
 expect_in "$GR" HELD   "a brace-built git option stays held" \
     'git --icase-pathspe{c,c}s grep -n x HEAD~1 -- DOCS'
@@ -2478,7 +2593,7 @@ expect_in "$GS" HELD   "an option built with an octal escape held" \
     "git --icase-pathspec\$'\\163' grep -n x HEAD~0 -- SUB/deep"
 expect_in "$GS" HELD   "an option built with a parameter expansion held" \
     'git --icase-path${IFS:0:0}specs grep -n x HEAD~0 -- SUB/deep'
-expect_in "$GS" HELD   "an option built with a variable held" \
+expect_in "$GS" DENY   "an option built with a variable denied (list rule 4)" \
     's=s ; git --icase-pathspec$s grep -n x HEAD~0 -- SUB/deep'
 expect_in "$GS" HELD   "a glob option built with an escape held" \
     "git --glob-path\$'\\x73'pecs grep -n x HEAD~0 -- SUB/deep"
@@ -2488,9 +2603,9 @@ expect_in "$GS" HELD   "an env word quoted whole with an escape held" \
     "env \$'GIT_ICASE_PATHSPEC\\x53=1' git grep -n x HEAD~0 -- SUB/deep"
 expect_in "$GS" HELD   "an env name built with a parameter expansion held" \
     'env GIT_ICASE_PATH${IFS:0:0}SPECS=1 git grep -n x HEAD~0 -- SUB/deep'
-expect_in "$GS" HELD   "an env name built with a variable held" \
+expect_in "$GS" DENY   "an env name built with a variable denied (list rule 4)" \
     'e=SPECS ; env GIT_ICASE_PATH$e=1 git grep -n x HEAD~0 -- SUB/deep'
-expect_in "$GS" HELD   "an env word quoted whole with a variable held" \
+expect_in "$GS" DENY   "an env word quoted whole with a variable denied (list rule 4)" \
     'e=SPECS ; env "GIT_ICASE_PATH$e=1" git grep -n x HEAD~0 -- SUB/deep'
 expect_in "$GS" HELD   "an assignment name split by quotes held" \
     "GIT_ICASE_PATH''SPECS=1 git grep -n x HEAD~0 -- SUB/deep"
@@ -2504,7 +2619,7 @@ expect_in "$GS" HELD   "an option quoted whole held" \
     'git "--icase-pathspecs" grep -n x HEAD~0 -- SUB/deep'
 expect_in "$GS" HELD   "an option spelled in a dollar-quote held" \
     "git \$'--icase-pathspecs' grep -n x HEAD~0 -- SUB/deep"
-expect_in "$GS" HELD   "an exported name joined from quoted parts held" \
+expect_in "$GS" DENY   "an exported name joined from quoted parts denied (list rule 4)" \
     'export "GIT_ICASE_"PATHSPECS=1 ; git grep -n x HEAD~0 -- SUB/deep'
 # A tree holding docs/ and a differently cased Docs/ with a secret: a pathspec that folds case would match both, so a
 # pathspec with a case variant in the tree held whatever its exact lookup found. Built with plumbing, as a
@@ -2604,11 +2719,11 @@ git -C "$GC" add config app/config/.env
 git -C "$GC" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
     commit -q --no-verify -m one
 expect_in "$GC" ALLOW "a revision confined to a root blob allowed"       'git grep -n x HEAD -- config'
-expect_in "$GC" HELD   "a revision after cd && held"                      'cd app && git grep -n x HEAD -- config'
-expect_in "$GC" HELD   "a revision after cd ; held"                       'cd app ; git grep -n x HEAD -- config'
-expect_in "$GC" HELD   "a revision after pushd held"                      'pushd app && git grep -n x HEAD -- config'
+expect_in "$GC" DENY   "a revision after cd && denied (list rule 4)"      'cd app && git grep -n x HEAD -- config'
+expect_in "$GC" DENY   "a revision after cd ; denied (list rule 4)"       'cd app ; git grep -n x HEAD -- config'
+expect_in "$GC" DENY   "a revision after pushd denied (list rule 4)"      'pushd app && git grep -n x HEAD -- config'
 expect_in "$GC" HELD   "a revision after env -C held"                     'env -C app git grep -n x HEAD -- config'
-expect_in "$GC" ALLOW "a cd after the revision's stage allowed"          'git grep -n x HEAD -- config ; cd app'
+expect_in "$GC" DENY  "a cd after the revision's stage denied (list rule 4)" 'git grep -n x HEAD -- config ; cd app'
 expect_in "$GC" DENY  "a revision tree holding a nested secret denied"   'git grep -n x HEAD -- app'
 
 # bun exec and deno task --eval run their argument as a shell command string; the subcommand is the first word.
@@ -3407,7 +3522,7 @@ expect_in "$GR" ALLOW "a variable in the value of a global option of git stays a
     'git --git-dir=$X/.git log -1 --format=%h'
 expect_in "$P" ALLOW  "a recursive grep of a clean directory stays allowed"           'grep -rn x src/'
 expect_in "$P" ALLOW  "a bracket command stays allowed"                               '[ -f src/a.py ] && ls src'
-expect_in "$P" ALLOW  "a double-bracket command stays allowed"                        '[[ -f src/a.py ]] && ls src'
+expect_in "$P" DENY   "a double-bracket command denied (list rule 3)"                 '[[ -f src/a.py ]] && ls src'
 expect_in "$P" ALLOW  "echo of a variable stays allowed"                              'echo ${X}'
 expect_in "$P" ALLOW  "a variable in an assignment before a command stays allowed"    'A=$X ls src'
 expect_in "$P" HELD    "a variable in the directory part of the command word held"     '$HOME/bin/tool src'
@@ -3440,7 +3555,7 @@ expect_in "$P" HELD    "a vault path after a wrapper held"                      
 expect_in "$P" HELD    "a brace after the vault prefix of a wrapped word held"         'sudo "$CLAUDE_SECRET_DIR"/{a,b}'
 expect_in "$P" HELD    "a variable after the vault prefix of a wrapped word held"      'sudo $CLAUDE_SECRET_DIR/${X}'
 expect_in "$P" HELD    "a glob after the vault prefix of a wrapped word held"          'sudo ${CLAUDE_SECRET_DIR}/*'
-expect_in "$P" HELD    "a vault path held when the command reassigns the vault"        \
+expect_in "$P" DENY    "a vault path when the command reassigns the vault denied (list rule 4)" \
     'export CLAUDE_SECRET_DIR=/etc ; sudo $CLAUDE_SECRET_DIR/x'
 expect_in "$P" HELD    "a vault path held behind an assignment of the vault"           \
     'CLAUDE_SECRET_DIR=/etc sudo $CLAUDE_SECRET_DIR/x'
@@ -3450,11 +3565,11 @@ expect_in "$P" HELD    "a braced vault path as the command word held"           
 expect_in "$P" HELD    "a vault path as the command word behind time held"             'time $CLAUDE_SECRET_DIR/x'
 expect_in "$P" HELD    "a vault path as the command word behind env options held"      'env -i $CLAUDE_SECRET_DIR/x'
 expect_in "$P" HELD    "a vault path held when the command mentions IFS"               'IFS=/ sudo $CLAUDE_SECRET_DIR/x'
-expect_in "$P" HELD    "a vault path held after a read of the vault variable"          \
+expect_in "$P" DENY    "a vault path after a read of the vault variable denied (list rule 4)" \
     'read CLAUDE_SECRET_DIR ; sudo $CLAUDE_SECRET_DIR/x'
-expect_in "$P" HELD    "a vault path held after an attached read option naming it"     \
+expect_in "$P" DENY    "a vault path after an attached read option naming it denied (list rule 4)" \
     'read -aCLAUDE_SECRET_DIR x ; sudo $CLAUDE_SECRET_DIR/x'
-expect_in "$P" HELD    "a vault path held after an attached printf -v naming it"       \
+expect_in "$P" DENY    "a vault path after an attached printf -v naming it denied (list rule 4)" \
     'printf -vCLAUDE_SECRET_DIR %s /etc ; sudo $CLAUDE_SECRET_DIR/x'
 expect_in "$P" HELD    "a vault path held when an export of it feeds a pipe"           \
     'export CLAUDE_SECRET_DIR=/tmp/x | sudo $CLAUDE_SECRET_DIR/x'
@@ -3462,9 +3577,9 @@ expect_in "$P" HELD    "a vault path with a default value held"                 
 expect_in "$P" HELD    "a vault path after a wrapper and a plain operand held"         'sudo $CLAUDE_SECRET_DIR/x y'
 expect_in "$P" HELD    "a vault variable name split by quotes held"                    \
     'sudo CLAUDE_SECRET_"DIR"=/etc $CLAUDE_SECRET_DIR/x'
-expect_in "$P" HELD    "a vault variable written by a computed name held"             \
+expect_in "$P" DENY    "a vault variable written by a computed name denied (list rule 4)" \
     'printf -v "CLAUDE_SECRET_${n}" /etc ; sudo $CLAUDE_SECRET_DIR/x'
-expect_in "$P" HELD    "a vault variable made a nameref held"                          \
+expect_in "$P" DENY    "a vault variable made a nameref denied (list rule 4)" \
     'declare -n CLAUDE_SECRET_DIR=q ; sudo $CLAUDE_SECRET_DIR/x'
 expect_in "$P" ALLOW  "a literal wrapped command stays allowed"                      'timeout 5 make'
 expect_in "$P" ALLOW  "a variable assignment before the command stays allowed"        'A=$X ls src'
@@ -3824,10 +3939,11 @@ bash32_rows() {
     expect      ALLOW "under bash 3.2, cd src allowed"                    'cd src'
     expect_in "$pt/cdl" DENY "under bash 3.2, cd into a link to a secret directory denied" 'cd l'
     expect      HELD   "under bash 3.2, cd into an unresolved variable held" 'cd $SOMEDIR'
-    expect_sid abc-123 HELD "under bash 3.2, \$PWD the command assigns held" 'PWD=/x ; cd "$PWD"'
+    expect_sid abc-123 DENY "under bash 3.2, \$PWD the command assigns denied (list rule 4)" 'PWD=/x ; cd "$PWD"'
     expect_sid abc-123 ALLOW "under bash 3.2, cd \$PWD allowed"            'cd "$PWD"'
-    expect_sid abc-123 HELD "under bash 3.2, \$PWD after \${PWD:=…} held"  'echo ${PWD:=/x} ; cd "$PWD"'
-    expect_sid abc-123 HELD "under bash 3.2, \$PWD after a computed read held" 'read "${n}WD" <<< /x ; cd "$PWD"'
+    expect_sid abc-123 DENY "under bash 3.2, \$PWD after \${PWD:=…} denied (list rule 4)" 'echo ${PWD:=/x} ; cd "$PWD"'
+    expect_sid abc-123 DENY "under bash 3.2, \$PWD after a computed read denied (list rule 4)" \
+        'read "${n}WD" <<< /x ; cd "$PWD"'
     expect      DENY  "under bash 3.2, terraform output -json denied"    'terraform output -json'
     expect      DENY  "under bash 3.2, docker compose config denied"     'docker compose config'
     expect      DENY  "under bash 3.2, an authfile outside the vault denied" 'podman login --authfile /tmp/x r'
@@ -3861,14 +3977,24 @@ bash32_rows() {
     expect_in "$GR" ALLOW "under bash 3.2, a pathspec naming a clean tree allowed" 'git grep -n x HEAD -- docs'
     expect_in "$GR" DENY  "under bash 3.2, a revision tree holding a secret denied" 'git grep -n x HEAD -- .'
     expect_in "$R" ALLOW "under bash 3.2, git grep of an exclude-only pathspec allowed" "git grep -n KEY -- ':!docs'"
+    expect_in "$GXP" ALLOW "under bash 3.2, git grep with a short exclusion of the secret allowed" \
+        "git grep -n KEY -- . ':!config.env'"
+    expect_in "$GXP" DENY  "under bash 3.2, an exclusion that leaves the secret in denied" \
+        "git grep -n KEY -- . ':!docs'"
     expect_in "$GR" ALLOW "under bash 3.2, a clean revision with no -- allowed" 'git grep -n x HEAD~1'
     expect_in "$GR" DENY  "under bash 3.2, a revision with no -- holding a secret denied" 'git grep -n x HEAD'
     expect_in "$GR" HELD   "under bash 3.2, a variable in git's subcommand held" 'git ${X}grep -n x HEAD~0'
+    expect      ALLOW "under bash 3.2, env -C running a shell's script allowed" \
+        "env -C $P /opt/homebrew/bin/bash tests/run.sh"
+    expect      DENY  "under bash 3.2, env -i wrapping a shell's script denied" 'env -i bash x.sh'
+    expect      DENY  "under bash 3.2, env -C running a secret relative to its directory denied" \
+        'env -C ~/.aws bash credentials'
     expect_in "$GR" HELD   "under bash 3.2, a variable inside git held"       'g${X}it grep -n x'
     expect_in "$GR" ALLOW "under bash 3.2, a glob pathspec listed under its directory" \
         "git grep -n x HEAD -- 'docs/*.md'"
     expect_in "$GR" HELD   "under bash 3.2, a tree revision held"        'git grep -n x HEAD^{tree} -- notes.md'
-    expect_in "$GC" HELD   "under bash 3.2, a revision after cd held"    'cd app && git grep -n x HEAD -- config'
+    expect_in "$GC" DENY   "under bash 3.2, a revision after cd denied (list rule 4)" \
+        'cd app && git grep -n x HEAD -- config'
     expect_in "$GC" ALLOW "under bash 3.2, a revision confined to a root blob allowed" 'git grep -n x HEAD -- config'
     expect      DENY  "under bash 3.2, bun exec denied"                 "bun exec 'cat x'"
     expect      DENY  "under bash 3.2, deno task --eval denied"         "deno task --eval 'echo hi'"
@@ -3936,7 +4062,91 @@ bash32_rows() {
         "jq -n '\"./sec\" + \"rets/app\" | modulemeta'"
     expect      DENY  "under bash 3.2, a sequence and a nested brace holding a secret are denied" \
         'cat {1..3}/{a,{b,config.env}}'
+    expect_in "$LM" ALLOW "under bash 3.2, a ; list of read-only commands allowed" 'git status; git log -1'
+    expect_in "$LM" DENY  "under bash 3.2, miss 1 denied"                          'cd ~; grep -r password .'
+    expect_in "$LM" DENY  "under bash 3.2, miss 5 denied"                          'git stash pop; grep -r token .'
+    expect_in "$LM" DENY  "under bash 3.2, python3 -c naming .env denied"          "python3 -c 'open .env'"
+    expect_in "$LM" DENY  "under bash 3.2, a Python heredoc naming .env denied" \
+        $'python3 - <<\'EOF\'\nopen .env\nEOF'
 }
+
+# Lists (list_check, _lib.sh): the contract bash-guard applies holds here too. Rule 5 is this guard's: a probe reads the
+# tree before the list runs, so a part that rests on one is admitted only after read-only parts. LM holds no secret
+# name, so each deny below comes from the list rules alone.
+LM="$pt/lm"
+mkdir -p "$LM/src" "$LM/hooks"
+: >"$LM/src/a.py"
+: >"$LM/hooks/h.sh"
+git -C "$LM" init -q
+git -C "$LM" add -A
+git -C "$LM" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t.invalid \
+    commit -q --no-verify -m one
+expect_in "$LM" ALLOW "a ; list of read-only commands allowed"                    'git status; git log -1'
+expect_in "$LM" ALLOW "an && list allowed"                                        'ls -la && git diff'
+expect_in "$LM" ALLOW "a newline list allowed"                                    $'git status\ngit log -1'
+expect_in "$LM" DENY  "miss 1: cd before a search denied"                         'cd ~; grep -r password .'
+expect_in "$LM" DENY  "miss 2: an assignment read later denied"                   'F=.env; cat "$F"'
+expect_in "$LM" DENY  "miss 3: if around eval denied"                             'if true; then eval "$X"; fi'
+expect_in "$LM" DENY  "miss 4: apostrophes in comments denied"                    $'echo a # it\'s\ncat x # it\'s'
+expect_in "$LM" DENY  "miss 5: a recursive grep of a clone made earlier in the list denied" \
+    'git clone https://example.invalid/r clone && grep -rn api_key clone'
+expect_in "$LM" DENY  "miss 5: a search after a checkout denied"                  'git checkout b && grep -rn KEY .'
+expect_in "$LM" DENY  "miss 5: a search after a stash pop denied"                 'git stash pop; grep -r token .'
+expect_in "$P"  DENY  "miss 5: a search after an extraction denied"               'tar xf a.tar; grep -r key .'
+RUN_CWD="$LM" expect_reason "the fresh-probe deny names the separate-call route" \
+    'git stash pop; grep -r token .' "as its own Bash call"
+RUN_CWD="$LM" expect_reason "a list deny carries bash-guard's text" \
+    'cd ~; grep -r password .' "CLAUDE.md VIOLATION (Bash rules): 'cd' changes shell state"
+expect_in "$LM" ALLOW "rule 5: a search after git status allowed"                 'git status; grep -rn KEY src'
+expect_in "$LM" ALLOW "rule 5: rg after ls allowed"                               'ls; rg KEY src'
+expect_in "$LM" ALLOW "rule 5: git grep after a quiet git log allowed" \
+    'git log -1 > /dev/null; git grep -n KEY -- hooks'
+expect_in "$LM" ALLOW "rule 5: a search after git branch allowed"                 'git branch; grep -rn KEY src'
+expect_in "$LM" ALLOW "rule 5: a search before a change allowed"                  'grep -rn KEY src; make'
+expect_in "$LM" ALLOW "rule 5: a plain reader after a change allowed"             'make; cat src/a.py'
+expect_in "$LM" DENY  "rule 5: a search after git branch NAME denied"             'git branch b; grep -rn KEY src'
+expect_in "$LM" DENY  "rule 5: a search after a redirection into a file denied"   'git log > f; grep -rn KEY src'
+expect_in "$LM" DENY  "rule 5: a search after git diff --output denied" \
+    'git diff --output=f; grep -rn KEY src'
+expect_in "$LM" DENY  "rule 5: a search after rg --pre denied"                    'rg --pre x KEY; grep -rn KEY src'
+expect_in "$LM" DENY  "rule 5: a search after a wrapped reader denied"            'command cat x; grep -rn KEY src'
+expect_in "$LM" DENY  "rule 5: a wildcard after a change denied"                  'make; cat *'
+expect_in "$LM" DENY  "rule 5: a find -exec after a change denied"                'make; find src -exec cat {} +'
+expect_in "$LM" DENY  "rule 5: a git grep after a change denied"                  'make; git grep -n KEY'
+expect_in "$LM" DENY  "rule 6: 17 parts denied"                                   "$(printf 'ls; %.0s' {1..16})ls"
+expect_in "$LM" ALLOW "rule 6: 16 parts allowed"                                  "$(printf 'ls; %.0s' {1..15})ls"
+
+# Python heredocs: the body is the stage's code word, screened as python3 -c '<body>' is; each verdict is pinned too.
+py40=""
+for i in {1..40}; do py40+="x$i = [$i, {'k': $i}]"$'\n'; done
+py40="${py40%$'\n'}"
+py_codes=('print(1)' 'open .env' '.env' "print(open('.env').read())" 'x = "~/.aws/credentials"' "$py40")
+py_want=(ALLOW DENY DENY ALLOW ALLOW ALLOW)
+for i in "${!py_codes[@]}"; do
+    c="${py_codes[$i]}"
+    q=${c//\'/\'\\\'\'}
+    a=$(RUN_CWD="$LM" run "python3 -c '$q'")
+    b=$(RUN_CWD="$LM" run "python3 - <<'EOF'"$'\n'"$c"$'\n'EOF)
+    if [[ "$a" == "$b" && "$a" == "${py_want[$i]}" ]]; then
+        ok "a Python heredoc and -c agree on snippet $i (${py_want[$i]})"
+    else
+        bad "Python heredoc parity on snippet $i: -c gave $a, the heredoc $b, want ${py_want[$i]}"
+    fi
+done
+expect_in "$LM" ALLOW "a Python heredoc piped on allowed" $'python3 - <<\'EOF\' 2>&1 | tail -20\nprint((1))\nEOF'
+expect_in "$LM" DENY  "a Python heredoc piped into a reader of a secret denied" \
+    $'python3 - <<\'EOF\' | cat .env\nprint(1)\nEOF'
+expect_in "$LM" DENY  "a Python heredoc after cd denied" $'cd src; python3 - <<\'EOF\'\nprint(1)\nEOF'
+expect_in "$LM" DENY  "a stripped cat heredoc after cd denied (list rule 4)" $'cd src; cat > n.md <<\'EOF\'\nx\nEOF'
+expect_in "$LM" DENY  "a list ending in an unstripped heredoc still screens its body" $'ls; cat <<EOF\n$(cat .env)\nEOF'
+expect_in "$LM" DENY  "an unquoted Python heredoc's body is screened as shell, denied" \
+    $'python3 - <<EOF\n$(cat .env)\nEOF'
+expect_in "$LM" DENY  "a shell heredoc's body is screened as commands, denied" $'bash <<\'EOF\'\ncat .env\nEOF'
+if (( parity_runs > 0 )); then
+    ok "the list parity sweep replayed $parity_runs rows (rows holding << skipped: a heredoc ends a list)"
+else
+    bad "the list parity sweep replayed no rows"
+fi
 if [[ -x /bin/bash ]] && [[ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" == 3 ]]; then
     HOOK_BASH=/bin/bash
     bash32_rows
@@ -4085,10 +4295,12 @@ if [[ "$budget_got" == "$budget_want" ]]; then
 else
     bad "the word budget deny reason drifted: $budget_got"
 fi
-# Separators count toward the same budget: each ; (here, 6000 or 6001 one-word commands) is one element.
-expect ALLOW "6000 separators at the budget allowed" "$(printf 'a;%.0s' {1..6000})true"
-expect DENY  "6001 separators over the budget denied" "$(printf 'a;%.0s' {1..6001})true"
-budget_got=$(jq -nc --arg c "$(printf 'a;%.0s' {1..6001})true" '{tool_input:{command:$c}}' | "$HOOK" \
+# Separators count toward the same budget: each separator (here a lone &, 6000 or 6001 one-word commands; bash-guard
+# denies a lone &, and a list of ; parts is bounded at 16, list rule 6) is one element.
+expect ALLOW "6000 separators at the budget allowed" "$(printf 'a&%.0s' {1..6000})true"
+expect DENY  "6001 separators over the budget denied" "$(printf 'a&%.0s' {1..6001})true"
+expect DENY  "6001 ; parts denied (list rule 6)" "$(printf 'a;%.0s' {1..6001})true"
+budget_got=$(jq -nc --arg c "$(printf 'a&%.0s' {1..6001})true" '{tool_input:{command:$c}}' | "$HOOK" \
     | jq -r '.hookSpecificOutput.permissionDecisionReason')
 if [[ "$budget_got" == "$budget_want" ]]; then
     ok "the separator budget deny reason is the word budget's"
@@ -4117,6 +4329,10 @@ expect_fast DENY "a fetch command with an expensive tail" \
     "aws secretsmanager get-secret-value --secret-id x | grep -v '$(printf 'a|%.0s' {1..32680})z'"
 # One long piece with no quotes: deleting its non-quote characters is quadratic, so it is walked instead.
 expect_fast DENY "one long piece with no quotes" "echo $(printf 'a%.0s' {1..65000})|cat .env"
+# A list at its 16-part bound, and a Python heredoc whose body is the code word of a 64 KiB command.
+expect_fast ALLOW "a 16-part list" "$(printf 'grep -n KEY src/a | head -1; %.0s' {1..15})grep -n KEY src/a | head -1"
+pyb=$(printf 'x = 1\n%.0s' {1..10919})
+expect_fast ALLOW "a Python heredoc of a 64 KiB command" "python3 - <<'EOF'"$'\n'"$pyb"$'\n'EOF
 # Every stage a reader: none can take the first-word fast path.
 expect_fast DENY "a command whose every stage is a reader" "$(printf 'cat a|%.0s' {1..10900})cat .env"
 # Every stage an echo of a variable: the echo check's regex runs on every stage.

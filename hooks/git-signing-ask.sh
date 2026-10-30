@@ -44,8 +44,12 @@ read_re='(^|[[:space:]])(--get|--get-all|--get-regexp|--get-urlmatch|get|--list|
 value_re="gpgsign[\"']?[[:space:]]+([^[:space:]]+)"
 redirect_re='^[0-9]*[<>&]'
 
-# Each pipeline stage is judged on its own, so a read in one stage cannot vouch for a write in another.
-IFS='|' read -ra stages <<< "${checked//$'\n'/|}"
+# Each pipeline stage and list part is judged on its own, so a read in one cannot vouch for a write in another. The
+# body of a quoted cat or tee heredoc is text no shell runs, so its lines are no parts. ; & and newline become |, so
+# && and || split too (into an empty stage, which the gpgsign test skips).
+staged=$(strip_text_heredoc "$checked")
+staged=${staged//[;&$'\n']/|}
+IFS='|' read -ra stages <<< "$staged"
 for stage in "${stages[@]}"; do
     if [[ "$stage" != *gpgsign* ]] || ! [[ "$stage" =~ $config_re ]]; then
         continue

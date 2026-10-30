@@ -81,6 +81,8 @@ expect deny "a marked glob mid-walk does not hide the subcommand" "git -C '*' pu
 expect none "a reviewer may echo a multi-line quoted git"      $'echo \'git commit\nx\''  "$REVIEWER"
 expect deny "a | ends the walk of an earlier bare git"         'git --no-pager | git commit -m x' "$REVIEWER"
 expect deny "a ; ends the walk of an earlier bare git"         'git --no-pager ; git commit -m x' "$REVIEWER"
+expect deny "a git push after a newline is denied"             $'true\ngit push'         "$REVIEWER"
+expect none "a reviewer may run a list of git reads"           'git status; git log -1'  "$REVIEWER"
 expect none "a reviewer may run git -C dir diff"               'git -C /repo diff HEAD~1' "$REVIEWER"
 expect none "a reviewer may echo the word git"                 'echo git'                "$REVIEWER"
 expect none "a reviewer may pipe git log into grep"            'git log --oneline | grep fix' "$REVIEWER"
