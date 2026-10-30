@@ -625,7 +625,7 @@ expect_reason "rule 3: miss 3, an if around eval"   "*'if' starts*" 'if true; th
 expect_reason "rule 3: a reserved word after an assignment" "*'while' starts*" 'ls; X=1 while x'
 for w in cd pushd popd chdir export declare typeset local readonly unset integer float read vared mapfile \
         readarray getopts let source . eval alias unalias autoload zmodload set shopt setopt unsetopt emulate trap \
-        umask ulimit hash enable; do
+        umask ulimit hash enable zparseopts; do
     expect_reason "rule 4 denies '$w'" "*'$w' changes shell state*" "ls; $w x"
 done
 expect_reason "rule 4: miss 1, cd before a search"  "*'cd' changes*git -C*" 'cd ~; grep -r password .'
@@ -640,6 +640,10 @@ expect_reason "rule 4: a bare exec with a redirection" "*'exec' changes*"   'ls;
 expect_reason "rule 4: read in a pipeline's last stage" "*'read' changes*"  'echo .env | read F; cat "$F"'
 expect_reason "rule 4: printf -v"                   "*'printf -v' changes*" 'printf -v F .env; cat "$F"'
 expect_reason "rule 4: print with v in a bundle"    "*'print -v' changes*"  'print -rv F x; ls'
+expect_reason "rule 4: print -v after another option" "*'print -v' changes*" 'print -r -v F .env; cat "$F"'
+expect_reason "rule 4: print -v after -C and its count" "*'print -v' changes*" 'print -C 2 -v F x; ls'
+expect_reason "rule 4: printf -v behind command"    "*'printf -v' changes*" 'ls; command printf -v F x'
+expect_list "print -v after -- is printed text"     ALLOW 'print -- -v F; ls'      2
 expect_reason "rule 4 names the working directory the Bash tool keeps" '*keeps the working directory*' 'cd x; ls'
 expect_list "printf without -v is no state change"  ALLOW 'printf %s x; ls'       2
 expect_list "a state word as an argument is fine"   ALLOW 'echo cd; grep export f' 2

@@ -39,30 +39,51 @@ if [[ "$checked" == *gpgsign=* || "$checked" == *GIT_CONFIG_* ]]; then
 fi
 
 config_re='(^|[[:space:]/])git[[:space:]](.*[[:space:]])?config([[:space:]]|$)'
-unset_re='(^|[[:space:]])(--unset|--unset-all|unset)([[:space:]]|$)'
-read_re='(^|[[:space:]])(--get|--get-all|--get-regexp|--get-urlmatch|get|--list|-l|list)([[:space:]=]|$)'
-value_re="gpgsign[\"']?[[:space:]]+([^[:space:]]+)"
-redirect_re='^[0-9]*[<>&]'
+
+# judge_stage: deny when the shell_words elements in sw (one pipeline stage or list part) hold git config unsetting a
+# signing key, or with any word after the key, empty included: a value, so a write. Redirections are skipped, and no
+# read option exempts a word after the key, as an option's argument (--comment --get) would pass for one. Words are
+# compared whole, so a quoted word holding a space and an option name (-C ' --unset ') is no option.
+judge_stage() {
+    local i n=${#sw[@]} g=0 c=-1 gs=0 k=0 e
+    for (( i = 0; i < n; i++ )); do
+        e="${sw[i]}"
+        if [[ "$e" == w*gpgsign* ]]; then gs=1; fi
+        if (( c < 0 )); then
+            if [[ "$e" == wgit || "$e" == w*/git ]]; then g=1
+            elif (( g )) && [[ "$e" == wconfig ]]; then c=$i; fi
+        fi
+    done
+    if (( ! gs || c < 0 )); then
+        return 0
+    fi
+    for (( i = c + 1; i < n; i++ )); do
+        case "${sw[i]}" in
+            w--unset|w--unset-all|wunset) hook_deny "$reason" ;;
+            w*gpgsign) if (( k )); then hook_deny "$reason"; fi; k=1 ;;
+            w*) if (( k )); then hook_deny "$reason"; fi ;;
+        esac
+    done
+}
 
 # Each pipeline stage and list part is judged on its own, so a read in one cannot vouch for a write in another. The
-# body of a quoted cat or tee heredoc is text no shell runs, so its lines are no parts. ; & and newline become |, so
-# && and || split too (into an empty stage, which the gpgsign test skips).
+# body of a quoted cat or tee heredoc is text no shell runs, so its lines are no parts. shell_words cuts the stages
+# where the shell would, so a quoted ; & or | (git -C 'R&D' config …) stays inside its word. A command shell_words
+# cannot split is denied when it holds both git config and gpgsign, read or not.
 staged=$(strip_text_heredoc "$checked")
-staged=${staged//[;&$'\n']/|}
-IFS='|' read -ra stages <<< "$staged"
-for stage in "${stages[@]}"; do
-    if [[ "$stage" != *gpgsign* ]] || ! [[ "$stage" =~ $config_re ]]; then
-        continue
-    fi
-    if [[ "$stage" =~ $unset_re ]]; then
+shell_words "$staged"
+if (( ! SW_OK )); then
+    if [[ "$staged" == *gpgsign* && "$staged" =~ $config_re ]]; then
         hook_deny "$reason"
     fi
-    if [[ "$stage" =~ $read_re ]]; then
-        continue
-    fi
-    if [[ "$stage" =~ $value_re ]] && ! [[ "${BASH_REMATCH[1]}" =~ $redirect_re ]]; then
-        hook_deny "$reason"
-    fi
+    exit 0
+fi
+sw=()
+for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"} '|'; do
+    case "$el" in
+        '|'|';') judge_stage; sw=() ;;
+        w*|r*) sw+=("$el") ;;
+    esac
 done
 
 exit 0

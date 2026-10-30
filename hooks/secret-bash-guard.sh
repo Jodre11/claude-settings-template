@@ -6265,7 +6265,8 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                     *)
                         # The unwrapped command. An env of only -C DIR, --chdir=DIR, -- and assignments (ewk) runs a
                         # shell as the bare shell, which the shell walk screens, and may wrap one more such env (ewd).
-                        # Otherwise, unless env's first word was an assignment, a bare env, an unrecognised option or a
+                        # Otherwise, unless env's first word was an assignment (as the [A-Za-z_]*=* case above reads
+                        # one: an abbreviated option such as --chd=DIR is none), a bare env, an unrecognised option or a
                         # runner after env runs a command this walk cannot account for.
                         ewsh=0
                         case "$nm" in
@@ -6284,7 +6285,7 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
                             act="${act//E/}"
                             atcmd=1
                         fi
-                        if (( ! ewsh )) && [[ "$ewf" != *=* ]]; then
+                        if (( ! ewsh )) && [[ "$ewf" != [A-Za-z_]*=* ]]; then
                             case "$nm" in
                                 command|builtin|exec|nice|nohup|time|timeout|xargs|sudo|doas|stdbuf|ionice|sh|bash|\
                                 zsh|dash|ksh)

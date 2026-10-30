@@ -1469,6 +1469,9 @@ expect DENY  "env -i wrapping env wrapping a shell's script denied" 'env -i /usr
 expect DENY  "env wrapping exec of a shell denied"               'env exec bash x.sh'
 expect DENY  "env wrapping xargs denied"                         'env xargs bash x.sh'
 expect DENY  "env wrapping sudo of a shell denied"               'env -C /tmp sudo bash x.sh'
+expect DENY  "an abbreviated env option with = is no assignment, denied" 'env --chd=/tmp bash x.sh'
+expect DENY  "an abbreviated env option before a reader likewise denied" 'env --chd=/tmp cat x'
+expect ALLOW "an assignment as env's first word still exempts its runner" 'env FOO=1 sudo ls'
 # The shell resolves a relative script or rc file in the directory env -C names, so it is judged there.
 expect DENY  "env -C running a secret named relative to its directory denied" 'env -C ~/.aws bash credentials'
 expect DENY  "env --chdir= likewise denied"                      'env --chdir=~/.aws bash credentials'
@@ -3571,6 +3574,10 @@ expect_in "$P" DENY    "a vault path after an attached read option naming it den
     'read -aCLAUDE_SECRET_DIR x ; sudo $CLAUDE_SECRET_DIR/x'
 expect_in "$P" DENY    "a vault path after an attached printf -v naming it denied (list rule 4)" \
     'printf -vCLAUDE_SECRET_DIR %s /etc ; sudo $CLAUDE_SECRET_DIR/x'
+expect_in "$P" DENY    "a secret name held by print -v after another option denied (list rule 4)" \
+    'print -r -v F .env; cat "$F"'
+expect_in "$P" DENY    "a secret name held by zparseopts denied (list rule 4)" \
+    'zparseopts -D -E -a F -- x; cat "$F"'
 expect_in "$P" HELD    "a vault path held when an export of it feeds a pipe"           \
     'export CLAUDE_SECRET_DIR=/tmp/x | sudo $CLAUDE_SECRET_DIR/x'
 expect_in "$P" HELD    "a vault path with a default value held"                      'sudo ${CLAUDE_SECRET_DIR:-/etc}/x'

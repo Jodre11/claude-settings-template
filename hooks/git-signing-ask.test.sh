@@ -74,6 +74,20 @@ denies=(
     'git config --get commit.gpgsign || git config commit.gpgsign false'
     $'git config --get commit.gpgsign\ngit config commit.gpgsign false'
     'git config --get commit.gpgsign & git config commit.gpgsign false'
+    'git -C "/Users/x/R&D" config commit.gpgsign false'
+    "git -c 'a=b;c' config commit.gpgsign false"
+    "git -C 'a&b' config --unset commit.gpgsign"
+    "git -C 'a&b' config commit.GPGSIGN false"
+    "git -C 'a|b' config commit.gpgsign false"
+    "git -C 'a;b' config commit.gpgsign false; git config --get user.name"
+    $'git config commit.gpgsign false #\x1e'
+    "git config commit.gpgsign ''"
+    'git config --global commit.gpgsign ""'
+    "git -C ' --get ' config commit.gpgsign false"
+    "git -c 'x= -l' config commit.gpgsign false"
+    'git config commit.gpgsign 2>/dev/null false'
+    'git config --comment --get commit.gpgsign false'
+    'git config --file x --get commit.gpgsign false'
 )
 for c in "${denies[@]}"; do
     out=$(run "$c")
@@ -109,6 +123,8 @@ quiet=(
     'git config --get commit.gpgSign | cat'
     'git config --get commit.gpgsign; git log -1'
     'git config --get commit.gpgsign 2>&1; git log -1'
+    "git -C 'R&D' config --get commit.gpgsign"
+    'git -C "a;b" log -1; git config --get commit.gpgsign'
     $'cat > notes.md <<\'EOF\'\ngit config --get commit.gpgsign\ngit config commit.gpgsign false\nEOF'
     'ls -la'
     ''

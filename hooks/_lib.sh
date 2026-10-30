@@ -1308,8 +1308,8 @@ list_check() {
         LIST_REASON="$LIST_MSG_FAIL"
         return 0
     fi
-    # Rules 3 and 4, one stage at a time (st: 0 before the command word, 1 after command, builtin or exec, 2 after
-    # printf or print, 3 among the arguments); rule 2a counts the separators shell_words emits as it goes.
+    # Rules 3 and 4, one stage at a time (st: 0 before the command word, 1 after command, builtin or exec, 2 among
+    # printf or print's words up to --, 3 among the arguments); rule 2a counts the separators shell_words emits.
     for e in ${SW_WORDS[@]+"${SW_WORDS[@]}"} '|'; do
         case "$e" in
             m*|r*) continue ;;
@@ -1352,7 +1352,7 @@ list_check() {
                         continue ;;
                     cd|pushd|popd|chdir|export|declare|typeset|local|readonly|unset|integer|float|read|vared|mapfile|\
                     readarray|getopts|let|source|.|eval|alias|unalias|autoload|zmodload|set|shopt|setopt|unsetopt|\
-                    emulate|trap|umask|ulimit|hash|enable)
+                    emulate|trap|umask|ulimit|hash|enable|zparseopts)
                         if [[ -z "$r4" ]]; then r4="$w"; fi
                         st=3 ;;
                     printf|print)
@@ -1362,14 +1362,12 @@ list_check() {
                         st=3 ;;
                 esac ;;
             2)
-                if [[ -z "$r4" ]]; then
-                    if [[ "$pw" == printf && "$w" == -v* ]]; then
-                        r4="printf -v"
-                    elif [[ "$pw" == print && "$w" =~ ^-[A-Za-z]*v ]]; then
-                        r4="print -v"
-                    fi
-                fi
-                st=3 ;;
+                # zsh's print takes option words with arguments (-C 2, -u 2), so every word up to -- is read.
+                if [[ "$w" == -- ]]; then
+                    st=3
+                elif [[ -z "$r4" && "$w" =~ ^-[A-Za-z0-9]*v ]]; then
+                    r4="$pw -v"
+                fi ;;
         esac
     done
     if (( nsemi != ${#SHELL_SCAN_SEPS[@]} )); then
