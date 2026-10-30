@@ -50,11 +50,15 @@ judge_stage() {
         e="${sw[i]}"
         if [[ "$e" == w*gpgsign* ]]; then
             gs=1
-            # A word that is itself a git config command (bash -c '…', "$(…)") is code the stage would run.
-            if [[ "${e:1}" =~ $config_re ]]; then hook_deny "$reason"; fi
+            # A word that is itself a git config command (bash -c '…', "$(…)") is code the stage would run; its
+            # own quotes and backslashes are removed first, as for the --no-gpg-sign check.
+            e="${e:1}"
+            e=${e//[\"\'\\]/}
+            if [[ "$e" =~ $config_re ]]; then hook_deny "$reason"; fi
         fi
         if (( c < 0 )); then
-            if [[ "$e" == wgit || "$e" == w*/git ]]; then g=1
+            # An unquoted backquote stays in its word (`git), so it opens a command as a / path does.
+            if [[ "$e" == wgit || "$e" == w*[/\`]git ]]; then g=1
             elif (( g )) && [[ "$e" == wconfig ]]; then c=$i; fi
         fi
     done

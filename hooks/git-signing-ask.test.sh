@@ -91,6 +91,10 @@ denies=(
     "bash -c 'git config commit.gpgsign false'"
     'echo "$(git config commit.gpgsign false)"'
     "eval 'git config --unset commit.gpgsign'"
+    "bash -c \"g'i't config commit.gpgsign false\""
+    "bash -c 'gi\\t config commit.gpgsign false'"
+    'echo `git config commit.gpgsign false`'
+    'x=`git config --unset commit.gpgsign`'
 )
 for c in "${denies[@]}"; do
     out=$(run "$c")
@@ -128,6 +132,7 @@ quiet=(
     'git config --get commit.gpgsign 2>&1; git log -1'
     "git -C 'R&D' config --get commit.gpgsign"
     'git -C "a;b" log -1; git config --get commit.gpgsign'
+    'echo `git config --get commit.gpgsign`'
     $'cat > notes.md <<\'EOF\'\ngit config --get commit.gpgsign\ngit config commit.gpgsign false\nEOF'
     'ls -la'
     ''
