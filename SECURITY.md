@@ -9,15 +9,21 @@ scripts and configuration. [README.md](README.md) has the detail on each layer.
   script needs is fetched into the session vault (`$CLAUDE_SECRET_DIR`) and passed to the script by path.
 - **Memory stays local** — `projects/*/memory/` is gitignored, because Claude Code's per-project memory names real
   organisations, repositories and people. Version it only in a private repository.
-- **Subprocess env scrubbing** — `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` keeps credentials in Claude Code's environment
-  out of the processes it starts.
+- **No subprocess env scrub** — `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` forces every session to start in the default
+  permission mode, and the Bash tool's shell snapshot re-exports what it strips, so the template removes it. Keep a
+  credential out of Claude Code at its source instead: export it from your shell profile only when `CLAUDECODE` is
+  unset.
 
 ## Claude Code Hooks
 
 - **The secret firewall** — the `secret-*` hooks keep secret values out of the model's context: they deny reads and
   commands that would print a secret, block a prompt carrying one, and redact tool output, recording each leak's class
   and source but never its value.
-- **Fail closed** — a guard that cannot finish screening a command in the time it has asks rather than allows.
+- **Fail closed** — a guard that cannot finish screening a command in the time it has denies it, with a route to
+  retry in a form it can check, rather than allowing it or parking an unattended session on a prompt.
+- **Safer routes** — `git-safer-route.sh` denies a forced branch delete, hard reset, forced clean or force push with
+  the non-destructive equivalent; their native ask rules stay as the backstop. `gh-rerun-ask.sh` asks before a rerun
+  unless a pull request triggered the run.
 - **Single-command Bash discipline is load-bearing** — `secret-bash-guard.sh` and `reviewer-guard.sh` screen every
   word of every pipeline stage, which is only sound because `bash-guard.sh` denies every other compound form. Never
   relax one without the other.

@@ -10,13 +10,15 @@ sensitive values out of version control.
 
 | Hook | Purpose |
 |---|---|
-| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/ask/deny decisions, the held ask and the crash backstop, the quote-aware command scan, the `shell_words` tokeniser, path normalisation and the bounded directory probe) |
+| `_lib.sh` | Shared helpers for all hooks (input parsing, allow/ask/deny decisions, the held deny and the crash backstop, the quote-aware command scan, the `shell_words` tokeniser, path normalisation and the bounded directory probe) |
 | `api-failure-log.sh` | StopFailure: appends one slim record per turn that ended on an API error to `telemetry/api-failures.jsonl` |
 | `bash-guard.sh` | Enforces single-command-per-Bash-call discipline |
 | `reviewer-guard.sh` | Denies mutating git commands to read-only code-review agents |
 | `settings-edit-ask.sh` | Asks before a direct Edit/Write of `settings.json`, which is generated from `settings.json.tmpl` |
 | `secret-bash-guard.sh` | Denies a Bash command that would print a secret into context: screens every word of every pipeline stage, lists the directory of a recursive reader that prints contents, denies `cd` into a secret directory and shell command strings (`bash -c`, `eval`), and allows a secret fetch only into the vault (`$CLAUDE_SECRET_DIR`) |
 | `git-signing-ask.sh` | Asks before a Bash command overrides or removes git signing, in any key spelling; reads of the setting pass |
+| `git-safer-route.sh` | Denies a forced branch delete, hard reset, forced clean or force push, naming the non-destructive equivalent, so an unattended session takes it instead of waiting on a prompt |
+| `gh-rerun-ask.sh` | Asks before `gh run rerun` unless a pull request triggered the run, so a flaky PR check can be rerun unattended |
 | `secret-path-guard.sh` | Denies a Read or Grep of a secret-bearing path, and a content-mode Grep over a directory that holds a secret file |
 | `secret-prompt-guard.sh` | UserPromptSubmit: blocks a prompt carrying a live secret value (a prompt cannot be redacted), so rotate it and resubmit |
 | `secret-output-scrubber.sh` | Redacts secrets in tool output, keeping its shape, and raises the alarm; failed tool output: alarm only |

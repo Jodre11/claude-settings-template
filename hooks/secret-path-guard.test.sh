@@ -6,11 +6,13 @@ ok()  { printf 'PASS: %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf 'FAIL: %s\n' "$1"; fail=$((fail + 1)); }
 
 PG_CWD=$(mktemp -d)
-# verdict <tool> <field-json>  -> DENY|ASK|ALLOW; PG_CWD is the payload's cwd
+# verdict <tool> <field-json>  -> UNVERIFIED (a deny for a call the hook cannot verify, with a retry route), DENY,
+# ASK or ALLOW; PG_CWD is the payload's cwd
 verdict() {
     local out
     out=$(printf '%s' "$2" | jq -c --arg t "$1" --arg d "$PG_CWD" '{tool_name:$t, cwd:$d} + .' | "$HOOK")
-    if [[ "$out" == *'"permissionDecision":"deny"'* ]]; then echo DENY
+    if [[ "$out" == *'"permissionDecision":"deny"'* && "$out" == *UNVERIFIED* ]]; then echo UNVERIFIED
+    elif [[ "$out" == *'"permissionDecision":"deny"'* ]]; then echo DENY
     elif [[ "$out" == *'"permissionDecision":"ask"'* ]]; then echo ASK
     else echo ALLOW; fi
 }
@@ -69,12 +71,13 @@ for p in /tmp/claude-abc-vault/secrets/x.cs /tmp/claude-abc-vault/certifi/cacert
         && ok "Read of $p denied" || bad "Read of $p allowed"
 done
 
-# A crash the ERR trap misses (bash 3.2 unbound variables, a crash inside a function) still asks: the hook installs
-# the EXIT-trap backstop. A malformed payload asks too.
-grep -q '^hook_backstop ask ' "$HOOK" && ok "the path guard installs the crash backstop" \
+# A crash the ERR trap misses (bash 3.2 unbound variables, a crash inside a function) still denies, with a retry
+# route: the hook installs the EXIT-trap backstop. A malformed payload is denied the same way.
+grep -q '^hook_backstop deny ' "$HOOK" && ok "the path guard installs the crash backstop" \
     || bad "the path guard has no crash backstop"
 crash=$(printf '%s' '{not json' | "$HOOK" 2>/dev/null)
-[[ "$crash" == *'"permissionDecision":"ask"'* ]] && ok "a malformed payload asks" || bad "a malformed payload: $crash"
+[[ "$crash" == *'"permissionDecision":"deny"'*UNVERIFIED* ]] && ok "a malformed payload is denied" \
+    || bad "a malformed payload: $crash"
 
 # A content-mode Grep prints the matching lines of every file it searches, so its directory is listed and a secret file
 # there denies it; files_with_matches (the default) and count print names or counts only. Fixtures are empty files

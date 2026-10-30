@@ -184,8 +184,8 @@ case "$2" in
     unsettled) : ;;
     deny) hook_deny "denied" ;;
     pass) hook_pass ;;
-    held-pass) hook_hold_ask "held"; hook_hold_ask "second"; hook_pass ;;
-    held-deny) hook_hold_ask "held"; hook_deny "denied" ;;
+    held-pass) hook_hold_deny "held"; hook_hold_deny "second"; hook_pass ;;
+    held-deny) hook_hold_deny "held"; hook_deny "denied" ;;
 esac
 FIXTURE
 for b in "$BASH" /bin/bash; do
@@ -216,16 +216,16 @@ for b in "$BASH" /bin/bash; do
     [[ -z "$out" ]] && ok "hook_pass under $b prints nothing" || bad "hook_pass under $b printed: $out"
     out=$("$b" "$fixture" "$DIR/_lib.sh" held-pass 2>/dev/null)
     if [[ "$(jq -sc 'map(.hookSpecificOutput.permissionDecision + ":" + .hookSpecificOutput.permissionDecisionReason)' \
-            <<< "$out")" == '["ask:held"]' ]]; then
-        ok "a held ask is emitted once by hook_pass under $b, with its first reason"
+            <<< "$out")" == "[\"deny:held$HELD_DENY_NOTE\"]" ]]; then
+        ok "a held deny is emitted once by hook_pass under $b, with its first reason and the retry route"
     else
-        bad "a held ask under $b printed: $out"
+        bad "a held deny under $b printed: $out"
     fi
     out=$("$b" "$fixture" "$DIR/_lib.sh" held-deny 2>/dev/null)
-    if [[ "$(jq -sc 'map(.hookSpecificOutput.permissionDecision)' <<< "$out")" == '["deny"]' ]]; then
-        ok "a deny after a held ask wins under $b"
+    if [[ "$(jq -sc 'map(.hookSpecificOutput.permissionDecisionReason)' <<< "$out")" == '["denied"]' ]]; then
+        ok "a deny after a held deny is the one reported under $b"
     else
-        bad "a deny after a held ask under $b printed: $out"
+        bad "a deny after a held deny under $b printed: $out"
     fi
 done
 rm -f "$fixture"
@@ -689,8 +689,8 @@ rm -f "$pfix"
 
 # hook_deadline, under every bash the hooks run on: the hook runs again as a child, given its arguments and payload,
 # and the child's stdout, stderr and exit status are relayed once. A child past the deadline is killed with its
-# children, and one that dies by a signal asks too; no watchdog outlives a call. The 1.25 s deadline sits far from the
-# 31 s sleep and the 10 s bound.
+# children and denied, as is one that dies by a signal; no watchdog outlives a call. The 1.25 s deadline sits far
+# from the 31 s sleep and the 10 s bound.
 hfix=$(mktemp "${CLAUDE_TEMP_DIR:-/tmp}/lib-hfix.XXXXXX")
 cat > "$hfix" <<'FIXTURE'
 set -uo pipefail
@@ -733,9 +733,9 @@ for b in "$BASH" /bin/bash; do
         || bad "a child's status under $b: rc=$rc err=$err out=$out"
     deadline_run "$b" slow
     if [[ $rc -eq 0 && "$(jq -r '.hookSpecificOutput.permissionDecision + ":" +
-            .hookSpecificOutput.permissionDecisionReason' <<< "$out" 2>/dev/null)" == "ask:fixture ran out of time" ]] \
-            && (( el < 10000 )); then
-        ok "a child past the deadline asks in ${el} ms under $b"
+            .hookSpecificOutput.permissionDecisionReason' <<< "$out" 2>/dev/null)" \
+            == "deny:fixture ran out of time" ]] && (( el < 10000 )); then
+        ok "a child past the deadline denies in ${el} ms under $b"
     else
         bad "a child past the deadline under $b: rc=$rc out=$out in ${el} ms"
     fi
@@ -748,8 +748,8 @@ for b in "$BASH" /bin/bash; do
         || bad "a child past the deadline left its sleep running under $b"
     pkill -f 'sleep 31.4159' 2>/dev/null
     deadline_run "$b" signal
-    [[ $rc -eq 0 && "$(jq -r '.hookSpecificOutput.permissionDecision' <<< "$out" 2>/dev/null)" == ask ]] \
-        && ok "a child that dies by a signal asks under $b" \
+    [[ $rc -eq 0 && "$(jq -r '.hookSpecificOutput.permissionDecision' <<< "$out" 2>/dev/null)" == deny ]] \
+        && ok "a child that dies by a signal denies under $b" \
         || bad "a child killed by a signal under $b: rc=$rc out=$out"
 done
 rm -f "$hfix" "$herr"

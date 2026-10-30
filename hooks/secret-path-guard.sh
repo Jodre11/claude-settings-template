@@ -5,9 +5,12 @@ set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
 source "$DIR/secret-patterns.sh"
-# Fail SAFE: any unexpected error, or a crash the ERR trap misses, forces a manual permission prompt.
-hook_backstop ask "secret-path-guard failed to evaluate; approve manually."
-trap 'hook_ask "secret-path-guard failed to evaluate; approve manually."' ERR
+# Fail SAFE: any unexpected error, or a crash the ERR trap misses, denies with a retry route rather than prompting, so
+# an unattended session is never parked. The backstop prints its reason unescaped, so it stays plain ASCII.
+_SPG_FAIL="SECRET-PROBE UNVERIFIED: secret-path-guard failed to evaluate this call. Retry it with a narrower path; if"
+_SPG_FAIL+=" none fits, leave it undone and list it in your final report."
+hook_backstop deny "$_SPG_FAIL"
+trap 'hook_deny "$_SPG_FAIL"' ERR
 hook_read_input
 
 if [[ "${CLAUDE_ALLOW_SECRET_READ:-0}" == "1" ]]; then
@@ -30,9 +33,9 @@ if [[ "$(hook_field '.tool_name')" == Grep && "$(hook_field '.tool_input.output_
     cwd=$(hook_field '.cwd')
     cwd="${cwd:-$PWD}"
     if ! norm_path "${path:-$cwd}" "$cwd" literal; then
-        msg="SECRET-PROBE ASK: a content-mode Grep of '$path' names a directory the hook cannot resolve. Approve it"
-        msg+=" only if no secret-bearing file is under it."
-        hook_hold_ask "$msg"
+        msg="SECRET-PROBE UNVERIFIED: a content-mode Grep of '$path' names a directory the hook cannot resolve."
+        msg+=" It is denied because the hook cannot confirm that no secret-bearing file is under it."
+        hook_hold_deny "$msg"
     elif [[ -d "$NORM_PATH" ]]; then
         root="$NORM_PATH"
         if probe_root_too_wide "$root"; then
@@ -63,9 +66,9 @@ if [[ "$(hook_field '.tool_name')" == Grep && "$(hook_field '.tool_input.output_
             msg+=" files_with_matches or count."
             hook_deny "$msg"
         elif (( rc == 2 )); then
-            msg="SECRET-PROBE ASK: a content-mode Grep of '$root' could not be checked for secret-bearing files:"
-            msg+=" $DHS_WHY. Approve it only if none is under that directory."
-            hook_hold_ask "$msg"
+            msg="SECRET-PROBE UNVERIFIED: a content-mode Grep of '$root' could not be checked for secret-bearing files:"
+            msg+=" $DHS_WHY. It is denied because the hook cannot confirm that none is under that directory."
+            hook_hold_deny "$msg"
         fi
     fi
 fi

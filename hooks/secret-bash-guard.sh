@@ -14,11 +14,15 @@ set -uo pipefail
 export LC_ALL=C
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_lib.sh"
-# A screen still running at 4 s asks rather than overrun the 5 s timeout, past which the command would run unscreened.
-hook_deadline 4 "secret-bash-guard ran out of time to screen this command; approve manually." "$@"
+# A screen still running at 4 s denies rather than overrun the 5 s timeout, past which the command would run
+# unscreened; a crash denies too. Each denies with a retry route rather than asking, so an unattended session is never
+# parked on a prompt. The backstop prints its reason unescaped, so it stays plain ASCII.
+_SBG_RETRY=" Retry it in a simpler form: fewer wildcards, a narrower path, or the logic in a script written with the"
+_SBG_RETRY+=" Write tool. If none fits, leave it undone and list it in your final report; the user can run it with !."
+hook_deadline 4 "SECRET-SCAN UNVERIFIED: secret-bash-guard ran out of time to screen this command.$_SBG_RETRY" "$@"
 source "$DIR/secret-patterns.sh"
-hook_backstop ask "secret-bash-guard failed to evaluate; approve manually."
-trap 'hook_ask "secret-bash-guard failed to evaluate; approve manually."' ERR
+hook_backstop deny "SECRET-SCAN UNVERIFIED: secret-bash-guard failed to evaluate this command.$_SBG_RETRY"
+trap 'hook_deny "SECRET-SCAN UNVERIFIED: secret-bash-guard failed to evaluate this command.$_SBG_RETRY"' ERR
 hook_read_input
 
 if [[ "${CLAUDE_ALLOW_SECRET_READ:-0}" == "1" ]]; then
@@ -931,18 +935,18 @@ _deny_wide() {
     hook_deny "$msg"
 }
 
-# _hold_probe <form> <why>: hold an ask for a recursive reader whose root could not be checked.
+# _hold_probe <form> <why>: hold a deny for a recursive reader whose root could not be checked.
 _hold_probe() {
-    local msg="SECRET-PROBE ASK: '$1' prints file contents under a directory the hook could not check ($2). Approve"
-    msg+=" it only if no secret-bearing file is under that directory."
-    hook_hold_ask "$msg"
+    local msg="SECRET-PROBE UNVERIFIED: '$1' prints file contents under a directory the hook could not check ($2)."
+    msg+=" It is denied because the hook cannot confirm that no secret-bearing file is under that directory."
+    hook_hold_deny "$msg"
 }
 
-# _hold_wild: hold an ask for a command with more wildcard operands than the hook expands.
+# _hold_wild: hold a deny for a command with more wildcard operands than the hook expands.
 _hold_wild() {
-    local msg="SECRET-SCAN ASK: this command has more wildcard operands than the hook expands (64). Approve it only"
-    msg+=" if none can match a secret-bearing file."
-    hook_hold_ask "$msg"
+    local msg="SECRET-SCAN UNVERIFIED: this command has more wildcard operands than the hook expands (64)."
+    msg+=" It is denied because the hook cannot confirm that none can match a secret-bearing file."
+    hook_hold_deny "$msg"
 }
 
 # _rr_has_glob <word>: 0 if the shell expands <word> as a pattern: it holds * ? [ or a {…,…} or {…..…} brace.
@@ -962,7 +966,7 @@ _rr_glob_dir() {
     fi
 }
 
-# _rr_hold <form> <why>: hold an ask for a probe walk; in a names-only walk, queue it for the reader after xargs.
+# _rr_hold <form> <why>: hold a deny for a probe walk; in a names-only walk, queue it for the reader after xargs.
 _rr_hold() {
     if (( RR_LIST )); then
         pipe_find+="a0"$'\x1f'"$1"$'\x1f'"$2"$'\x1e'
@@ -1001,7 +1005,7 @@ _rr_dir() {
 # directory before its first pattern component instead for ** and braces (whose matches bash cannot list), a git
 # pathspec (which matches at any depth), a recursive reader's wildcard-only operand (RR_DEEP), or more than 64 matches.
 # A secret path is denied as a reader; a root naming a variable, or resolved after the command changes directory, holds
-# an ask. The directory standing for a pattern's matches is listed following links: each match, a link included, is an
+# a deny. The directory standing for a pattern's matches is listed following links: each match, a link included, is an
 # operand the reader is given. Returns 0 when the operand names an existing path or was held, else 1.
 _rr_root() {
     local o="$3" m c sub=0 k="$2" grc
@@ -1128,7 +1132,7 @@ _rr_xrep() {
     if [[ -z "$xrep" || "$sf" != *X* ]]; then
         return 1
     fi
-    # Finding the string in the operand costs their lengths' product: past 4096 characters either way, it asks.
+    # Finding the string in the operand costs their lengths' product: past 4096 characters either way, it is held.
     if (( ${#1} > 4096 || ${#xrep} > 4096 )); then
         RR_XDIR='!'
         return 0
@@ -1239,9 +1243,9 @@ _many_slashes() {
 
 # _xd_word <word>: record in wout the directory <word> names outside the payload's cwd (for a glob, the literal
 # directory before its pattern), or the word itself when the hook cannot resolve it (it names a variable or another
-# user's home, so its probe holds an ask), for a recursive reader after xargs. A word of more than 256 slashes, a
-# pattern that may match .., or a pattern followed by a .. segment, is not resolved either, and holds an ask. At most
-# 64 per stage; past that, one ! entry holds an ask.
+# user's home, so its probe holds a deny), for a recursive reader after xargs. A word of more than 256 slashes, a
+# pattern that may match .., or a pattern followed by a .. segment, is not resolved either, and holds a deny. At most
+# 64 per stage; past that, one ! entry holds a deny.
 # bash before 5.2 matches .. with any component that starts with . and holds a pattern character (.*, .?, ..*):
 # "/$w" =~ $DOT_PAT_RE tests every component of a word.
 DOT_PAT_RE='/\.[^/]*[][*?]'
@@ -1988,8 +1992,8 @@ _rr_case_clear() {
 # one; diff and git diff --no-index have none, and probe every operand); a recursive one with no operand naming an
 # existing path probes its working directory (git -C's, for git), except an rg whose stdin it reads. A reader after
 # xargs takes more words from its input, so neither shortcut applies there. Inside find -exec, a {} operand is find's
-# and, under -execdir, a relative root holds an ask. A names-only reader queues its roots for a reader after xargs and
-# marks the stage (srl). A git grep operand that is no path may be a revision, which holds an ask unless _rr_rev_ok
+# and, under -execdir, a relative root holds a deny. A names-only reader queues its roots for a reader after xargs and
+# marks the stage (srl). A git grep operand that is no path may be a revision, which holds a deny unless _rr_rev_ok
 # lists what the search reads from it; a pathspec with magic may reach past the root and holds one too. After
 # xargs or parallel, a recursive reader's operand holding the replacement string
 # has the directory before it probed, following links (xk), as grep -r follows a link it is given.
@@ -2322,7 +2326,7 @@ _find_collect() {
 
 # _find_roots <entries> <reader> <how> [<kind>]: probe each root in <entries>, entries of <tag><kind>\x1f<lister>\x1f
 # <root>, optionally followed by \x1f and the root's include globs, then by \x1d and its exclude globs (\x1f-separated),
-# each ending in \x1e. The tag is r (a root), c (a word that may be a root), a (hold an ask; the root field is the
+# each ending in \x1e. The tag is r (a root), c (a word that may be a root), a (hold a deny; the root field is the
 # reason) or ! (too many roots); the kind is 0 find, 1 findL, o one, g git or t tracked. <how> names the reader in a
 # decision: exec (find -exec), own (<reader> itself, reading a directory glob of its stage), or xargs (<lister> | xargs
 # <reader>). <kind> findL makes a find root follow links: a grep -r after xargs follows a link it is given, and each
@@ -2373,7 +2377,7 @@ _find_roots() {
 # _wild_word <word>: 0 if <word>, expanded against the payload's cwd, matches a secret path: a word whose last component
 # is wildcard-only (*, ?*), expanded in its directory, or one with a pattern in a directory part (*/x, */*), expanded
 # whole. At most 64 distinct patterns are expanded per run; past that, or past PROBE_MAX_ENTRIES matches, or for a
-# directory part at or above $HOME or the vault, an ask is held. zsh's ** and braces, which bash does not expand as zsh
+# directory part at or above $HOME or the vault, a deny is held. zsh's ** and braces, which bash does not expand as zsh
 # does, queue the directory before them in wpend instead, for the stage end to probe when the stage reads. Every other
 # such word records the directory it expands in (wpip) for a reader after xargs.
 _wild_word() {
@@ -2424,9 +2428,9 @@ _wild_word() {
     fi
     _pcwd
     if (( ecd )) && [[ "$d" != /* && "$d" != '~'* ]]; then
-        msg="SECRET-SCAN ASK: '$w' is expanded after the command changes its directory, which the hook does not"
-        msg+=" follow. Approve it only if it matches no secret-bearing file."
-        hook_hold_ask "$msg"
+        msg="SECRET-SCAN UNVERIFIED: '$w' is expanded after the command changes its directory, which the hook does not"
+        msg+=" follow. It is denied because the hook cannot confirm that it matches no secret-bearing file."
+        hook_hold_deny "$msg"
         return 1
     fi
     if (( dg )); then
@@ -2435,9 +2439,10 @@ _wild_word() {
             return 1
         fi
         if probe_root_too_wide "$NORM_PATH"; then
-            msg="SECRET-SCAN ASK: '$w' expands across '$NORM_PATH', at or above \$HOME or the secret vault, which the"
-            msg+=" hook does not expand. Approve it only if it matches no secret-bearing file."
-            hook_hold_ask "$msg"
+            msg="SECRET-SCAN UNVERIFIED: '$w' expands across '$NORM_PATH', at or above \$HOME or the secret vault,"
+            msg+=" which the hook does not expand. It is denied because the hook cannot confirm that it matches no"
+            msg+=" secret-bearing file."
+            hook_hold_deny "$msg"
             return 1
         fi
         # The part of the word after the directory before its first pattern component.
@@ -2475,13 +2480,13 @@ _wild_word() {
         return 0
     fi
     if (( wrc == 2 )); then
-        msg="SECRET-SCAN ASK: '$w' expands to more entries than the hook checks ($PROBE_MAX_ENTRIES). Approve it"
-        msg+=" only if none is a secret-bearing file."
-        hook_hold_ask "$msg"
+        msg="SECRET-SCAN UNVERIFIED: '$w' expands to more entries than the hook checks ($PROBE_MAX_ENTRIES)."
+        msg+=" It is denied because the hook cannot confirm that none is a secret-bearing file."
+        hook_hold_deny "$msg"
     elif (( wrc == 3 )); then
-        msg="SECRET-SCAN ASK: '$w' could not be expanded in the time the hook has. Approve it only if it matches no"
-        msg+=" secret-bearing file."
-        hook_hold_ask "$msg"
+        msg="SECRET-SCAN UNVERIFIED: '$w' could not be expanded in the time the hook has."
+        msg+=" It is denied because the hook cannot confirm that it matches no secret-bearing file."
+        hook_hold_deny "$msg"
     fi
     return 1
 }
@@ -2493,17 +2498,17 @@ _deny_cd() {
     hook_deny "$msg"
 }
 
-# _hold_cd <form> <why>: hold an ask for a cd whose target the hook could not check.
+# _hold_cd <form> <why>: hold a deny for a cd whose target the hook could not check.
 _hold_cd() {
-    local msg="SECRET-PATH ASK: 'cd $1' enters a directory the hook could not check ($2). Approve it only if that"
-    msg+=" directory holds no secret-bearing file."
-    hook_hold_ask "$msg"
+    local msg="SECRET-PATH UNVERIFIED: 'cd $1' enters a directory the hook could not check ($2)."
+    msg+=" It is denied because the hook cannot confirm that that directory holds no secret-bearing file."
+    hook_hold_deny "$msg"
 }
 
 # _cd_tree <abs> <form>: deny the cd <form> when the absolute path <abs> is a secret directory, or one of its ancestors
 # holds a secret directly (from ~/.aws/sso, ../credentials is bare; below ~/.config, which only holds gh/hosts.yml
 # deeper, is not denied). The paths tested cost time linear in their length, so past CD_TREE_BUDGET characters in a
-# run the rest hold an ask.
+# run the rest hold a deny.
 _cd_tree() {
     local a="$1" near=""
     while [[ "$a" == /?* ]]; do
@@ -2606,7 +2611,7 @@ _cd_names() {
 # _cd_vars <word>: set CDW to <word> with a leading $PWD written as the payload's cwd, and a leading $CLAUDE_TEMP_DIR as
 # the session's temp directory (/tmp/claude-<session id>) when the session id is plain; any other word is kept, as is
 # each of these when the command may have changed it: after a sequence separator (cdsq), $PWD after an earlier cd,
-# pushd or popd, or either named by the command (_cd_names). A word kept with its $ does not resolve, so the cd asks.
+# pushd or popd, or either named by the command (_cd_names). A word kept with its $ does not resolve, so the cd is held.
 _cd_vars() {
     local n=0
     CDW="$1"
@@ -2637,7 +2642,7 @@ _cd_vars() {
 }
 
 # _cd_check <word>: deny a cd to <word> that enters a secret directory: as written, resolved against the payload's cwd
-# or a CDPATH entry, or with its links resolved (before its .. segments too: cd -P, or zsh's CHASE_DOTS). Hold an ask
+# or a CDPATH entry, or with its links resolved (before its .. segments too: cd -P, or zsh's CHASE_DOTS). Hold a deny
 # when the hook cannot resolve it: a pattern, a variable (but $HOME, $PWD and the session's $CLAUDE_TEMP_DIR) or ~user,
 # ~ or $HOME after a sequence separator or when the command names HOME, CDPATH set by the command, or a relative word
 # after an earlier cd (which the hook does not follow).
@@ -2703,7 +2708,7 @@ _cd_check() {
     fi
 }
 
-# _cd_count: count a cd; 0 while at most CD_MAX have run, else 1, holding one ask for those past it (left unchecked).
+# _cd_count: count a cd; 0 while at most CD_MAX have run, else 1, holding one deny for those past it (left unchecked).
 _cd_count() {
     cdc=$(( cdc + 1 ))
     if (( cdc <= CD_MAX )); then
@@ -3126,9 +3131,10 @@ _xargs_opt() {
         return 0
     fi
     if (( ${#1} > 4096 || ${#xrep} > 4096 )); then
-        n="SECRET-SCAN ASK: xargs's replacement string or command is too long for the hook to tell whether its input"
-        n+=" names the command. Approve it only if the command it runs is the one written."
-        hook_hold_ask "$n"
+        n="SECRET-SCAN UNVERIFIED: xargs's replacement string or command is too long for the hook to tell whether its"
+        n+=" input names the command. It is denied because the hook cannot confirm that the command it runs is the one"
+        n+=" written."
+        hook_hold_deny "$n"
     elif [[ "$1" == *"$xrep"* ]]; then
         _deny_shell "xargs running the command its input names ('$1')"
     fi
@@ -3309,7 +3315,7 @@ _np_word() {
 }
 
 # _np_end: end the stage's check. A stage that is not a name producer (or one fed by an input redirection, which reads
-# a list) marks the pipeline (pnu): a recursive reader after xargs in a later stage then asks. A grep is a producer
+# a list) marks the pipeline (pnu): a recursive reader after xargs in a later stage is then held. A grep is a producer
 # when it lists names only with no long option outside _NP_GREP_LONG (npl), or filters with no file operand; rg when it
 # lists names only with none outside _NP_RG_LONG; git for ls-files, or diff with --name-only.
 _np_end() {
@@ -3837,7 +3843,7 @@ if [[ "$cmd" == *PATHSPECS* || "$cmd" == *-pathspecs* || -n "${GIT_ICASE_PATHSPE
     rr_gitps=1
 fi
 # The cd walk (_cd_word): cdd marks a --, cdn counts operands and cdo holds the first; cdc counts the cd commands so far
-# (each costs a few pattern tests and a fork, so past CD_MAX the rest hold an ask unchecked), and cdtb the characters
+# (each costs a few pattern tests and a fork, so past CD_MAX the rest hold a deny unchecked), and cdtb the characters
 # of the paths whose ancestors _cd_tree has tested (at most CD_TREE_BUDGET); cdp marks a command that sets CDPATH, or
 # zsh's cdpath, which can send a relative cd anywhere (-1 until _cd_cdpath first looks); CDSID is the payload's
 # session id once _cd_sid has read it (cdsf); CDT is the dequoted command once _cd_text has made it (cdtf); cddyn marks
@@ -3941,9 +3947,9 @@ _wild_check() {
     if (( ${#1} > 4096 )) || [[ "$1" != *[\*\?] && "$1" != *[\*\?\[\{]*/* ]]; then
         return 1
     fi
-    # With 64 patterns expanded, wpip already marked unknown and an ask held, _wild_word changes nothing for a word with
+    # With 64 patterns expanded, wpip already marked unknown and a deny held, _wild_word changes nothing for a word with
     # no pattern before its last /, so it is not called.
-    if (( _wild_n >= 64 && wpq >= 64 )) && [[ "$wpip" == '!'* && -n "${_HOOK_HELD_ASK:-}" \
+    if (( _wild_n >= 64 && wpq >= 64 )) && [[ "$wpip" == '!'* && -n "${_HOOK_HELD_DENY:-}" \
             && "$1" != *[\*\?\[\{]*/* ]]; then
         return 1
     fi
@@ -4563,7 +4569,7 @@ _w_expands() {
         || [[ "$w" == *\$* && "$wmk" != *d* ]]
 }
 
-# _asm_hold <text> <what>: hold an ask for the current word when <text>, the part of it that names a tool or a git
+# _asm_hold <text> <what>: hold a deny for the current word when <text>, the part of it that names a tool or a git
 # option or subcommand, is one the shell may assemble: a numeric escape kept as written (\x \u \U \0-\7 of a $'...'
 # body; other backslashes assemble nothing), or a $, backquote, glob or brace with a comma or a x..y sequence in it that
 # no marker says is quoted ({} and {+..} stand for themselves). Plain quotes are decoded, so none survives into a name.
@@ -4572,11 +4578,11 @@ _asm_hold() {
     local msg
     if [[ "$1" == *\\[xuU0-7]* || "$wmk" == *n* ]] || { [[ "$wmk" == *b* && "$1" == "$w" ]]; } \
             || { [[ "$1" == *[\$\`\*\?\[]* || "$1" == *\{*,*\}* || "$1" == *\{?*..?*\}* ]] && _w_expands; }; then
-        msg="SECRET-SCAN ASK: $2 '$w' may be assembled by the shell, so the hook cannot tell which tool or git"
+        msg="SECRET-SCAN UNVERIFIED: $2 '$w' may be assembled by the shell, so the hook cannot tell which tool or git"
         msg+=" subcommand runs."
         if [[ "$2" == a\ word\ of* ]]; then msg+=" (An --opt=value value is not held.)"; fi
-        msg+=" Approve it only if that reads no secret file."
-        hook_hold_ask "$msg"
+        msg+=" It is denied because the hook cannot confirm that it reads no secret file."
+        hook_hold_deny "$msg"
     fi
 }
 
@@ -5327,11 +5333,11 @@ _bx_balanced() {
 # as, in the place the shell puts it. Each carries the marker b (n: the part before the first = held the brace), which
 # every check that holds a word holding a brace reads as one: a role walk voided by a brace, an assembled command word,
 # git option or subcommand. A word's own secret-name screens still run, on an h element after its expansions that
-# takes no place in a walk. A word the expander cannot follow stays as it was, with an ask held, as does a command
-# past BX_TOTAL expansions. A variable an expansion keeps is screened as the written-out word is, with an ask held
+# takes no place in a walk. A word the expander cannot follow stays as it was, with a deny held, as does a command
+# past BX_TOTAL expansions. A variable an expansion keeps is screened as the written-out word is, with a deny held
 # only when the marker says a quoted $ and a live one are mixed (q) or quoted text lies among the braces (x). Without
 # x, a space or quote in the word is quoted text outside the braces and the dequoted word expands as the shell does;
-# a backslash or a command substitution still holds an ask. A word whose marker says its glob characters are all
+# a backslash or a command substitution still holds a deny. A word whose marker says its glob characters are all
 # quoted is left. A redirect target has no marker, so its braces count as live.
 _bx_splice() {
     local el pend="" cm="" wd acc="" item its vacc rest why held=0 total=0 found=0 restore_glob=1 msg kind op mf r1
@@ -5386,7 +5392,7 @@ _bx_splice() {
             BX_DEPTH=0
             BX_DQ=""
             # With a quoted $ (d) or a quoted and a live one (q) the hook cannot tell which ${ opens a parameter
-            # expansion, so each $ is text and a brace beside it is expanded; the expansion keeps its $ and asks.
+            # expansion, so each $ is text and a brace beside it is expanded; the expansion keeps its $ and is held.
             if [[ "$cm" == *[dq]* ]]; then
                 BX_DQ=1
             fi
@@ -5447,9 +5453,9 @@ _bx_splice() {
         pend=""
         cm=""
         if [[ -n "$why" ]]; then
-            msg="SECRET-SCAN ASK: '$wd' is a brace expansion the hook cannot follow ($why), so it cannot tell which"
-            msg+=" files it names. Approve it only if that reads no secret file."
-            hook_hold_ask "$msg"
+            msg="SECRET-SCAN UNVERIFIED: '$wd' is a brace expansion the hook cannot follow ($why), so it cannot tell"
+            msg+=" which files it names. It is denied because the hook cannot confirm that it reads no secret file."
+            hook_hold_deny "$msg"
         fi
     done
     if [[ "$-" == *f* ]]; then
@@ -6572,10 +6578,10 @@ for el in ${SW_WORDS[@]+"${SW_WORDS[@]}"}; do
     fi
     # A command word: the stage's first, the one env unwraps, or any word of a wrapper's stage, as the hook cannot tell
     # a wrapper's option values and operands from the command it runs. The whole word is tested: a brace or glob in the
-    # directory part (/{bin/cat,x/.env}) changes which program runs and what it reads. A held ask keeps its first
+    # directory part (/{bin/cat,x/.env}) changes which program runs and what it reads. A held deny keeps its first
     # reason, so once one is held the test is skipped. A vault path is no exception: no scan proves the vault variable
     # unchanged.
-    if (( atcmd && ! cmv )) && [[ -z "${_HOOK_HELD_ASK:-}" && ( "$w" == *[\\\$\`\{\*\?\[]* || "$wmk" == *b* ) \
+    if (( atcmd && ! cmv )) && [[ -z "${_HOOK_HELD_DENY:-}" && ( "$w" == *[\\\$\`\{\*\?\[]* || "$wmk" == *b* ) \
             && "$w" != '[' && "$w" != '[[' ]]; then
         cwhat="the command word"
         if (( ! hok )) && [[ "$sf" == *A* ]]; then cwhat="a word of this wrapper's command"; fi
