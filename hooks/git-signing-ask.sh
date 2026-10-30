@@ -38,7 +38,7 @@ if [[ "$checked" == *gpgsign=* || "$checked" == *GIT_CONFIG_* ]]; then
     hook_deny "$reason"
 fi
 
-config_re='(^|[[:space:]/])git[[:space:]](.*[[:space:]])?config([[:space:]]|$)'
+config_re='(^|[[:space:](/;&|`])git[[:space:]](.*[[:space:]])?config([[:space:]]|$)'
 
 # judge_stage: deny when the shell_words elements in sw (one pipeline stage or list part) hold git config unsetting a
 # signing key, or with any word after the key, empty included: a value, so a write. Redirections are skipped, and no
@@ -48,7 +48,11 @@ judge_stage() {
     local i n=${#sw[@]} g=0 c=-1 gs=0 k=0 e
     for (( i = 0; i < n; i++ )); do
         e="${sw[i]}"
-        if [[ "$e" == w*gpgsign* ]]; then gs=1; fi
+        if [[ "$e" == w*gpgsign* ]]; then
+            gs=1
+            # A word that is itself a git config command (bash -c '…', "$(…)") is code the stage would run.
+            if [[ "${e:1}" =~ $config_re ]]; then hook_deny "$reason"; fi
+        fi
         if (( c < 0 )); then
             if [[ "$e" == wgit || "$e" == w*/git ]]; then g=1
             elif (( g )) && [[ "$e" == wconfig ]]; then c=$i; fi

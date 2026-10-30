@@ -88,6 +88,9 @@ denies=(
     'git config commit.gpgsign 2>/dev/null false'
     'git config --comment --get commit.gpgsign false'
     'git config --file x --get commit.gpgsign false'
+    "bash -c 'git config commit.gpgsign false'"
+    'echo "$(git config commit.gpgsign false)"'
+    "eval 'git config --unset commit.gpgsign'"
 )
 for c in "${denies[@]}"; do
     out=$(run "$c")
