@@ -45,16 +45,16 @@ config_re='(^|[[:space:](/;&|`])git[[:space:]](.*[[:space:]])?config([[:space:]]
 # read option exempts a word after the key, as an option's argument (--comment --get) would pass for one. Words are
 # compared whole, so a quoted word holding a space and an option name (-C ' --unset ') is no option.
 judge_stage() {
-    local i n=${#sw[@]} g=0 c=-1 gs=0 k=0 e
+    local i n=${#sw[@]} g=0 c=-1 gs=0 k=0 e u
     for (( i = 0; i < n; i++ )); do
         e="${sw[i]}"
         if [[ "$e" == w*gpgsign* ]]; then
             gs=1
             # A word that is itself a git config command (bash -c '…', "$(…)") is code the stage would run; its
             # own quotes and backslashes are removed first, as for the --no-gpg-sign check.
-            e="${e:1}"
-            e=${e//[\"\'\\]/}
-            if [[ "$e" =~ $config_re ]]; then hook_deny "$reason"; fi
+            u="${e:1}"
+            u=${u//[\"\'\\]/}
+            if [[ "$u" =~ $config_re ]]; then hook_deny "$reason"; fi
         fi
         if (( c < 0 )); then
             # An unquoted backquote stays in its word (`git), so it opens a command as a / path does.
