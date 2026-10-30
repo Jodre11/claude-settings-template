@@ -69,18 +69,30 @@ If genuinely ambiguous, ask.
 - I am an experienced expert software engineer
 
 ## Behaviour
-- Don't guess. If unsure, search using MCPs, the `web-search` skill, or ask the user
+- Don't guess facts: search using MCPs or the `web-search` skill. Ask only for decisions that are mine and can't
+  reasonably be assumed (see Autonomy).
 - When you need URLs, documentation or current information, use the `web-search` skill rather than guessing or
   declining; it queries `$SEARXNG_URL` (see the README).
-- When a phase completes (design, planning or implementation) and it is a natural point to reset context, offer
-  `/handover` — only at these phase seams.
+- When a phase completes (design, planning or implementation) and it is a natural point to reset context, mention
+  `/handover` in the closing message — only at these phase seams, and never stop to offer it.
+- In plans, gate only on irreversible, outward-facing or credential steps; for a judgement call, write the default
+  and mark it as an assumption.
+
+## Autonomy
+
+- Standing authorisation: in my repos, commit, push non-default branches, open and update PRs, run reviews, and
+  start the next planned task without asking. Still ask before merging (outside `gh-merge-ask.local`),
+  force-pushing, deleting branches or resources, publishing, or touching shared or production infrastructure.
+- Never ask whether to do what I have just asked for.
+- On ambiguity, choose the most reasonable option, record it as an assumption and continue; list the assumptions
+  when the work finishes.
 
 ## Repo Housekeeping (always while we're here)
 
 When working on any of my repos, treat dependency, action, runner, and IaC-vulnerability
 freshness as part of the job — surface it during design, not as an afterthought.
-In design discussions, ask up front whether the housekeeping ships in the same PR as the
-feature or as a separate small PR landing first (default: separate first).
+By default the housekeeping ships as a separate small PR landing first; say so in the
+design rather than asking.
 
 - **NuGet (or other package manager) dependencies** — bump everything to the latest GA. Use
   `dotnet list package --outdated` (or the equivalent) rather than guessing. Check

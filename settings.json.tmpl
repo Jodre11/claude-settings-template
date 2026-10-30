@@ -2,9 +2,9 @@
   "awsAuthRefresh": "__AWS_SSO_REFRESH_PATH__",
   "env": {
     "API_TIMEOUT_MS": "1200000",
+    "BASH_MAX_TIMEOUT_MS": "1800000",
     "CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF": "1",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
     "ENABLE_PROMPT_CACHING_1H": "1",
     "ENABLE_TOOL_SEARCH": "true",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
@@ -134,7 +134,6 @@
       "Bash(gh release upload*)",
       "Bash(gh release edit*)",
       "Bash(gh workflow run*)",
-      "Bash(gh run rerun*)",
       "Bash(gh repo sync *--force*)",
       "Bash(gh secret set*)",
       "Bash(gh repo deploy-key add*)",
@@ -196,6 +195,14 @@
       "Bash(strings **/secrets/**)",
       "Bash(xxd **/secrets/**)",
       "Bash(*strongbox_keyring*)"
+    ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Local read-only inspection: reading, listing, searching, diffing and inspecting files, git history and state, processes, ports and tool versions on this machine, when the command writes nothing and sends nothing off the machine.",
+      "Running a repository's own test, lint, type-check or build commands (for example bash tests/run.sh, dotnet test, npm test, pytest) inside that repository's working tree, including the scratch files and directories those commands create.",
+      "Creating or editing documentation, specs, plans, handover files, a repository's own CLAUDE.md and its .claude/skills files inside a git working tree of one of the user's own repositories, where the change is committed for review by pull request."
     ]
   },
   "model": "opus",
@@ -296,6 +303,18 @@
             "command": "~/.claude/hooks/gh-merge-ask.sh",
             "timeout": 5,
             "statusMessage": "Checking gh pr merge target..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/gh-rerun-ask.sh",
+            "timeout": 5,
+            "statusMessage": "Checking gh run rerun trigger..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/git-safer-route.sh",
+            "timeout": 5,
+            "statusMessage": "Checking for a safer git route..."
           }
         ]
       },
@@ -410,6 +429,7 @@
       ["sandbox", "allowedDomains"],
       ["env", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"],
       ["env", "AWS_PROFILE"],
+      ["env", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"],
       ["modelOverrides"]
     ],
     "entries": {
@@ -449,7 +469,8 @@
       "permissions.ask": [
         "Bash(gh pr merge*)",
         "Bash(git *gpgsign*)",
-        "Bash(git *gpgSign*)"
+        "Bash(git *gpgSign*)",
+        "Bash(gh run rerun*)"
       ]
     }
   }
