@@ -68,7 +68,8 @@ expect "FORCE PUSH" \
     'git push --force-with-lease=main:abc origin main' \
     'git push --force-if-includes origin main' \
     'git push origin +main' \
-    'git push -uf origin feat'
+    'git push -uf origin feat' \
+    'echo x && git push -f'
 
 quiet=(
     'git branch -d feat'
@@ -90,6 +91,7 @@ quiet=(
     'grep -rn "branch -D" docs'
     'git log --grep=-D'
     'git log --oneline -- clean'
+    'git status; git log -1'
     'ls -la'
     ''
 )

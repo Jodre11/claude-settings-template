@@ -41,12 +41,14 @@ run() {
         | "$HOOK" 2>&1
 }
 
-# expect <ask|none> <cwd> <command>
+# expect <ask|deny|none> <cwd> <command>: a deny must give the list route.
 expect() {
-    local out decision
+    local out decision reason
     out=$(run "$2" "$3")
     decision=$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<< "$out" 2>/dev/null)
-    if [[ "$1" == none && -z "$out" ]] || [[ "$1" == ask && "$decision" == ask ]]; then
+    reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<< "$out" 2>/dev/null)
+    if [[ "$1" == none && -z "$out" ]] || [[ "$1" == ask && "$decision" == ask ]] \
+            || [[ "$1" == deny && "$decision" == deny && "$reason" == *"as its own Bash call"* ]]; then
         ok "$1 from ${2##*/}: $3"
     else
         bad "$1 from ${2##*/}: $3 -> ${out:-<no output>}"
@@ -139,7 +141,7 @@ expect ask "$o" "gh \$'pr' merge 7 -R Acme/widgets"
 expect ask "$o" "gh \$\"pr\" merge 7 -R Acme/widgets"
 expect ask "$o" "gh pr \$'merge' 7 -R Acme/widgets"
 expect ask "$o" "gh \$'\\x70r' merge 7 -R Acme/widgets"
-expect ask "$o" "echo \"a\" && gh \$\"pr\" merge 7"
+expect deny "$o" "echo \"a\" && gh \$\"pr\" merge 7"
 expect ask "$o" "true # it's"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
 expect ask "$o" "true # it\"s"$'\n'"gh \$\"pr\" merge 7 -R Acme/widgets"
 expect ask "$o" "cat <<EOF"$'\n'"it's"$'\n'"EOF"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
@@ -175,9 +177,19 @@ expect ask "$x" "gh pr merge"
 expect ask "$x" "gh  pr   merge 7"
 expect ask "$x" "/opt/homebrew/bin/gh pr merge 7"
 expect ask "$x" "env FOO=1 gh pr merge 7"
-expect ask "$x" "echo hi; gh pr merge 7"
-expect ask "$o" "cd $x && gh pr merge 7"
-expect ask "$o" "git -C $x status; gh pr merge 7"
+expect ask "$x" "gh pr merge 7 \$X"
+expect ask "$x" "gh pr merge 7 > out.txt"
+expect ask "$x" "echo hi | gh pr merge 7"
+
+# A merge in a list is denied with the route to run it alone, so the guard can check it.
+expect deny "$x" "echo hi; gh pr merge 7"
+expect deny "$o" "cd $x && gh pr merge 7"
+expect deny "$o" "git -C $x status; gh pr merge 7"
+expect deny "$o" "git status && gh pr merge 1 --squash"
+expect deny "$o" "gh pr merge 1"$'\n'"ls"
+expect deny "$o" "gh pr merge 1 || true"
+# A text heredoc whose notes mention a merge is one command, so it keeps today's ask.
+expect ask "$o" "cat > notes.md <<'EOF'"$'\n'"then gh pr merge 7"$'\n'"EOF"
 
 # A comment is not a repository, and a missing or empty list skips no prompt.
 expect ask "$x" "gh pr merge 7 -R unprompted/repositories"

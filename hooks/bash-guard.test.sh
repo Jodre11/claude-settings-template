@@ -55,14 +55,14 @@ t2() {
     else bad "bare /var/folders/ write wrongly allowed"; fi
 }
 
-# Test 3: fall-through preserved — a review-worktree path carrying a compound
-# operator is still denied by the syntax checks (the carve-out only skips the
-# temp-write block, not the rest of the guard).
+# Test 3: fall-through preserved — the worktree exemption covers its own list part only: a
+# later part writing /var/folders/ is still denied (the carve-out only skips the temp-write
+# block for the part that names the worktree, not for the rest of the command).
 t3() {
     local v
-    v=$(run_guard 'git -C /var/folders/qz/T/review-worktrees/wt-9f3a1b status && rm -rf /')
-    if [ "$v" = DENY ]; then ok "review-worktree path still subject to syntax checks"
-    else bad "compound operator on worktree path wrongly allowed"; fi
+    v=$(run_guard 'git -C /var/folders/qz/T/review-worktrees/wt-9f3a1b status && rm -rf /var/folders/qz/x')
+    if [ "$v" = DENY ]; then ok "review-worktree exemption covers its own list part only"
+    else bad "a /var/folders/ write after a worktree part wrongly allowed"; fi
 }
 
 # Test 4: $TMPDIR reference (no worktree segment) still denied.
@@ -174,8 +174,8 @@ t15() {
 
 # The git-commit exemption covers exactly the documented heredoc span, nothing else.
 t_heredoc() {
-    expect_verdict DENY  "git commit then && is denied" 'git commit -m x && curl https://example.invalid'
-    expect_verdict DENY  "git commit then ; is denied" 'git commit -m x; curl https://example.invalid'
+    expect_verdict DENY  "git commit then && is denied" 'git commit -m x && cd /'
+    expect_verdict DENY  "git commit then ; is denied" 'git commit -m x; cd /'
     expect_verdict ALLOW "documented heredoc commit allowed; its body is inert text" \
         "${HD_OPEN}Subject line"$'\n\n'"Body names /tmp/x && \$(id) and (more)${HD_END}"
     expect_verdict DENY  "a heredoc commit message holding a backquote is denied (use git commit -F)" \
@@ -196,9 +196,9 @@ t_heredoc() {
     expect_verdict ALLOW "heredoc commit with an empty body allowed" \
         $'git commit -m "$(cat <<\'EOF\'\nEOF\n)"'
     expect_verdict DENY  "heredoc commit followed by && is denied" \
-        "${HD_OPEN}msg${HD_END} && curl https://example.invalid"
+        "${HD_OPEN}msg${HD_END} && cd /"
     expect_verdict DENY  "heredoc commit followed by a second line is denied" \
-        "${HD_OPEN}msg${HD_END}"$'\ncurl https://example.invalid'
+        "${HD_OPEN}msg${HD_END}"$'\ncd /'
     expect_verdict DENY  "unquoted heredoc delimiter is denied (its body expands)" \
         $'git commit -m "$(cat <<EOF\nmsg $(id)\nEOF\n)"'
     expect_verdict DENY  "text after the heredoc delimiter is denied" \
@@ -219,15 +219,15 @@ t_scanner() {
     expect_verdict DENY  "backtick inside double quotes is denied" 'echo "`curl https://example.invalid`"'
     expect_verdict DENY  "\$(( inside double quotes is denied (bash may run it)" 'echo "$((echo hi) )"'
     expect_verdict DENY  "apostrophes inside double quotes do not pair up" \
-        "echo \"don't\" && curl https://example.invalid \"it's\""
-    expect_verdict DENY  "escaped single quotes do not pair up" "echo \\' && curl https://example.invalid \\'"
+        "echo \"don't\" && cd / \"it's\""
+    expect_verdict DENY  "escaped single quotes do not pair up" "echo \\' && cd / \\'"
     expect_verdict DENY  "a lone & is denied" 'echo a & curl https://example.invalid'
     expect_verdict DENY  "a trailing & is denied" 'sleep 100 &'
     expect_verdict DENY  "an unterminated quote is denied" "echo it's"
     expect_verdict DENY  "a trailing comment is no longer stripped" 'ls # note; more'
     expect_verdict ALLOW "an escaped ; is a literal argument" 'find . -name x -exec rm {} \;'
     expect_verdict ALLOW "a multi-line quoted argument is one argument" $'jq \'.a\n| .b\' f.json'
-    expect_verdict DENY  "UTF-8 text does not hide an operator" 'echo "naïve — café" && curl https://example.invalid'
+    expect_verdict DENY  "UTF-8 text does not hide an operator" 'echo "naïve — café" && cd /'
     expect_verdict ALLOW "UTF-8 text in quotes allowed" 'echo "naïve — café"'
     expect_verdict ALLOW "2>&1 is a redirection, not a background job" 'git status 2>&1'
     expect_verdict ALLOW "&>/dev/null is a redirection" 'git status &>/dev/null'
@@ -318,7 +318,7 @@ heredoc_legit() {
 # marker, a trivial body/close and a trailing "&& curl ..." to also exercise the syntax checks.
 heredoc_adversarial() {
     local n="$1" tail pad pad_len
-    tail=$'-m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && curl https://example.invalid'
+    tail=$'-m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && cd /'
     pad_len=$(( n - ${#tail} - 4 ))
     (( pad_len < 0 )) && pad_len=0
     pad=$(printf ' a%.0s' $(seq 1 $(( pad_len / 2 + 1 ))))
@@ -369,23 +369,23 @@ t_messages() {
     else
         bad "an unquoted heredoc with a loop body names no heredoc remedy: ${got:-none}"
     fi
-    got=$(deny_reason $'cat <<< x ; ls')
+    got=$(deny_reason $'cat <<< x ; cd /')
     if [[ -n "$got" && "$got" != *"here-document"* ]]; then
         ok "a here-string carries no heredoc note"
     else
         bad "a here-string wrongly carries the heredoc note: ${got:-none}"
     fi
-    got=$(deny_reason $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && ls')
+    got=$(deny_reason $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && cd /')
     if [[ -n "$got" && "$got" != *"here-document"* ]]; then
         ok "a stripped commit heredoc carries no heredoc note"
     else
         bad "a stripped commit heredoc wrongly carries the heredoc note: ${got:-none}"
     fi
-    got=$(deny_reason $'ls && cat <<\'EOF\' > out.txt\nx\nEOF')
+    got=$(deny_reason $'cd x && cat <<\'EOF\' > out.txt\nx\nEOF')
     if [[ "$got" == *"here-document"* ]]; then
-        ok "a heredoc after a live && carries the heredoc note"
+        ok "a denied list ending in a heredoc carries the heredoc note"
     else
-        bad "a heredoc after a live && lacks the heredoc note: ${got:-none}"
+        bad "a denied list ending in a heredoc lacks the heredoc note: ${got:-none}"
     fi
     expect_verdict ALLOW "the heredoc remedy: a one-stage cat > heredoc" $'cat > out.txt <<\'EOF\'\nfor x in y; do\nEOF'
     expect_verdict ALLOW "the heredoc remedy: a one-stage tee heredoc"   $'tee out.txt <<\'EOF\'\nbody\nEOF'
@@ -403,14 +403,14 @@ t_false_alarms() {
     expect_verdict ALLOW "an escaped ; is text"                     'echo a \; b'
     expect_verdict ALLOW "find -exec cat {} \\; allowed"            'find . -name x -exec cat {} \;'
     expect_verdict ALLOW "an escaped | and & are text"              'echo a \| b \& c'
-    expect_verdict DENY  "a newline after a continuation denied"     $'ls \\\n-la\necho b'
-    expect_verdict DENY  "&& after a continuation denied"            $'ls \\\n&& curl https://example.invalid'
-    expect_verdict DENY  "a live ; after an escaped one denied"      'echo a \;; echo b'
+    expect_verdict DENY  "a newline after a continuation denied"     $'ls \\\n-la\ncd /'
+    expect_verdict DENY  "&& after a continuation denied"            $'ls \\\n&& cd /'
+    expect_verdict DENY  "a live ; after an escaped one denied"      'echo a \;; cd /'
     expect_verdict DENY  "a continuation inside a comment denied"    $'echo a # b \\\nexport -p'
     expect_verdict DENY  "a comment after a pipe denied"             $'echo a |# b \\\nexport -p'
     expect_verdict DENY  "apostrophes in comments do not hide a line" $'# don\'t\nexport -p\n# it\'s'
     expect_verdict DENY  "a # inside \${#x} keeps the comment guard on" $'echo ${#x} \\\nexport -p'
-    expect_verdict DENY  "an escaped backslash then a newline denied" $'echo a \\\\\necho b'
+    expect_verdict DENY  "an escaped backslash then a newline denied" $'echo a \\\\\ncd /'
     expect_verdict DENY  "a live & after an escaped & denied"        'echo a \&& echo b'
     expect_verdict DENY  "an escaped & after a live & denied"        'echo a &\& echo b'
     expect_verdict DENY  "a \$\$ before a quote does not open an ANSI-C quote" \
@@ -460,12 +460,12 @@ t_false_alarms() {
     expect_verdict ALLOW "a newline in \$'…' is text"               $'printf $\'a\nb\''
     expect_verdict ALLOW "a backslash-newline in double quotes is text" $'echo "a\\\nb"'
     expect_verdict ALLOW "a backslash-newline in \$'…' is text"     $'printf $\'a\\\nb\''
-    expect_verdict DENY  "an unquoted newline after a quoted one denied" $'echo \'a\nb\'\necho c'
-    expect_verdict DENY  "an unquoted newline after a multi-line double-quoted word denied" $'echo "a\nb"\necho c'
+    expect_verdict DENY  "an unquoted newline after a quoted one denied" $'echo \'a\nb\'\ncd /'
+    expect_verdict DENY  "an unquoted newline after a multi-line double-quoted word denied" $'echo "a\nb"\ncd /'
     expect_verdict DENY  "a quote opened in a comment does not hide a line" $'echo # \'\nexport -p\n\''
     expect_verdict DENY  "a double quote opened in a comment does not hide a line" $'echo # "\nexport -p\n"'
     expect_verdict DENY  "an ANSI-C quote opened in a comment does not hide a line" $'echo # $\'\nexport -p\n\''
-    expect_verdict DENY  "a multi-line quoted word then a live ; denied" $'echo \'a\nb\' ; echo c'
+    expect_verdict DENY  "a multi-line quoted word then a live ; denied" $'echo \'a\nb\' ; cd /'
     expect_verdict DENY  "a multi-line quoted word then a substitution denied" $'echo "a\nb $(id)"'
     expect_verdict ALLOW "a quoted /var/folders/ pattern is text"       "grep -c '/var/folders/' f"
     expect_verdict ALLOW "rg of a quoted /var/folders/ pattern allowed" "rg '/var/folders/' f"
@@ -537,7 +537,8 @@ t_false_alarms() {
     expect_verdict ALLOW "a tee heredoc writes a file"                     $'tee out.txt <<\'EOF\'\nbody\nEOF'
     expect_verdict ALLOW "a tee -a heredoc writes two files"               $'tee -a a.txt b.txt <<\'EOF\'\nbody\nEOF'
     expect_verdict DENY  "an unquoted-delimiter cat heredoc denied"        $'cat > out.txt <<EOF\n$(id)\nEOF'
-    expect_verdict DENY  "an interpreter heredoc denied"                   $'python3 - <<\'EOF\'\nprint(1)\nEOF'
+    expect_verdict ALLOW "a quoted Python heredoc's body is text"          $'python3 - <<\'EOF\'\nprint(1)\nEOF'
+    expect_verdict DENY  "a shell heredoc's body is screened as commands"  $'bash <<\'EOF\'\nprint(1)\nEOF'
     expect_verdict DENY  "a cat heredoc piped to a shell denied"           $'cat <<\'EOF\' | sh\necho hi\nEOF'
     expect_verdict DENY  "a command after the closing line denied" \
         $'cat > out.txt <<\'EOF\'\nbody\nEOF\ncat .env'
@@ -626,6 +627,10 @@ t_heredoc_generated() {
     HOME=$h expect_verdict_in "$hd" DENY  "a heredoc to ~/.claude/settings.json denied" \
         "cat > ~/.claude/settings.json <<'EOF'$body"
     HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to a plain file allowed" "cat > notes.md <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" DENY  "a list's last-part heredoc to a hydrated output denied" \
+        "ls; cat > out <<'EOF'$body"
+    HOME=$h expect_verdict_in "$hd" ALLOW "a list's last-part heredoc to a plain file allowed" \
+        "ls; cat > notes.md <<'EOF'$body"
     HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to the .tmpl itself allowed" "cat > out.tmpl <<'EOF'$body"
     HOME=$h expect_verdict_in "$hd" ALLOW "a heredoc to the session temp dir allowed" \
         "cat > \"\$CLAUDE_TEMP_DIR\"/x <<'EOF'$body"
@@ -657,12 +662,88 @@ t_heredoc_generated() {
     rm -rf "$hd"
 }
 
+# Lists of simple commands the shared contract (list_check) admits; one row per rule it denies, and the routes.
+t_lists() {
+    local got b
+    expect_verdict ALLOW "a ; list of read-only commands allowed"      'git status; git log -1'
+    expect_verdict ALLOW "an && list allowed"                          'ls -la && git diff'
+    expect_verdict ALLOW "a newline list allowed"                      $'git fetch\ngit status'
+    expect_verdict ALLOW "an || list allowed"                          'git diff --quiet || git diff --stat'
+    expect_verdict ALLOW "a trailing ; allowed"                        'git status;'
+    expect_verdict DENY  "miss 1: cd before a search denied"           'cd ~; grep -r password .'
+    expect_verdict DENY  "miss 2: an assignment read later denied"     'F=.env; cat "$F"'
+    expect_verdict DENY  "miss 3: if around eval denied"               'if true; then eval "$X"; fi'
+    expect_verdict DENY  "miss 4: apostrophes in comments denied"      $'echo a # it\'s\ncat x # it\'s'
+    expect_verdict DENY  "rule 0: an unterminated quote in a list denied" "ls; echo 'a"
+    expect_verdict DENY  "rule 1: a lone & in a list denied"           'ls & ls; ls'
+    expect_verdict DENY  "rule 1: a dangling && denied"                'ls &&'
+    expect_verdict DENY  "rule 1: an empty part denied"                'ls;;ls'
+    expect_verdict DENY  "rule 2: a comment in a list denied"          'ls; ls # note'
+    expect_verdict DENY  "rule 3: a reserved word in a list denied"    'ls; time ls'
+    expect_verdict DENY  "rule 4: read in a pipeline's last stage denied" 'echo .env | read F; cat "$F"'
+    expect_verdict DENY  "rule 4: cd behind command denied"            'ls; command cd /'
+    expect_verdict DENY  "rule 6: 17 parts denied"                     "$(printf 'ls; %.0s' $(seq 1 16))ls"
+    got=$(deny_reason 'cd x; ls')
+    if [[ "$got" == *"git -C"* && "$got" == *"keeps the working directory"* ]]; then
+        ok "the state-change deny names git -C and the kept working directory"
+    else
+        bad "the state-change deny lacks its route: ${got:-none}"
+    fi
+    got=$(deny_reason 'ls; ls # note')
+    if [[ "$got" == *"comment (#)"* ]]; then ok "the comment deny names the comment"
+    else bad "the comment deny lacks its reason: ${got:-none}"; fi
+    got=$(deny_reason "ls; echo '\\c'; cd /")
+    if [[ "$got" == *"'cd' changes"* ]]; then ok "a deny reason with a backslash in the command is printed whole"
+    else bad "a backslash cut the deny reason short: ${got:-none}"; fi
+    # Each part is judged on its own by the temp-directory block.
+    expect_verdict DENY  "a /tmp/ write after a session-temp part denied" 'ls /tmp/claude-x; rm -rf /tmp/y'
+    expect_verdict DENY  "a /tmp/ write after a /tmp/ read denied"       'cat /tmp/x && touch /tmp/y'
+    expect_verdict ALLOW "two /tmp/ reads allowed"                       'ls /tmp/x; ls /tmp/y'
+    expect_verdict ALLOW "a session-temp read then a plain part allowed" 'cat /tmp/claude-x/f; ls'
+    expect_verdict ALLOW "a quoted /var/folders/ grep pattern in a list allowed" "git status; grep -c '/var/folders/' f"
+    expect_verdict DENY  "a grep part redirecting into /var/folders/ denied" \
+        "ls; grep '/var/folders/' f > /var/folders/o"
+    # Python heredocs: a quoted-delimiter body is text; shells, wrappers and unquoted delimiters keep their screening.
+    expect_verdict ALLOW "a Python heredoc body holding ( allowed"       $'python3 - <<\'EOF\'\nprint((1))\nEOF'
+    expect_verdict ALLOW "a Python heredoc piped on allowed" \
+        $'python3 - <<\'EOF\' 2>&1 | tail -20\nx = (1)\nEOF'
+    expect_verdict ALLOW "a Python heredoc as a list's last part allowed" $'ls; python3 - <<\'EOF\'\n(x)\nEOF'
+    expect_verdict DENY  "a shell heredoc body holding ( denied"         $'bash <<\'EOF\'\n(x)\nEOF'
+    expect_verdict DENY  "an unquoted Python heredoc denied"             $'python3 - <<EOF\n$(id)\nEOF'
+    expect_verdict DENY  "a Python heredoc whose closer is not last denied" $'python3 - <<\'EOF\'\nx\nEOF\nls'
+    expect_verdict DENY  "a Python heredoc behind env denied"            $'env python3 - <<\'EOF\'\n(x)\nEOF'
+    expect_verdict DENY  "a Python heredoc after cd denied"              $'cd x; python3 - <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a Python heredoc writing into /tmp/ denied"    $'python3 - <<\'EOF\' > /tmp/x\nx\nEOF'
+    expect_verdict DENY  "a Python heredoc body naming /tmp/ denied, as python3 -c's code is" \
+        $'python3 - <<\'EOF\'\nopen("/tmp/x", "w")\nEOF'
+    expect_verdict DENY  "python3 -c code naming /tmp/ denied"           "python3 -c 'open(\"/tmp/x\", \"w\")'"
+    expect_verdict DENY  "a Python heredoc body naming /var/folders/ denied" \
+        $'ls; python3 - <<\'EOF\'\nopen("/var/folders/x", "w")\nEOF'
+    expect_verdict ALLOW "a Python heredoc body naming the session temp dir allowed" \
+        $'python3 - <<\'EOF\'\nopen("/tmp/claude-x/f", "w")\nEOF'
+    # A text heredoc may end a list; the parts before it are screened.
+    expect_verdict ALLOW "a cat heredoc as a list's last part allowed"   $'ls; cat > notes.md <<\'EOF\'\n(x)\nEOF'
+    expect_verdict DENY  "a cat heredoc after cd denied"                 $'cd x; cat > notes.md <<\'EOF\'\nx\nEOF'
+    expect_verdict DENY  "a heredoc before the last part denied"         $'cat > f <<\'EOF\'; ls\nx\nEOF'
+    expect_verdict DENY  "a body fed to an earlier heredoc denied"       $'sh <<\'X\'; cat > f <<\'EOF\'\nrm -rf x\nEOF'
+    for b in "$BASH" /bin/bash; do
+        [[ -x "$b" ]] || continue
+        HOOK_BASH="$b" expect_verdict_in "$PWD" ALLOW "a ; list allowed under $b"          'git status; git log -1'
+        HOOK_BASH="$b" expect_verdict_in "$PWD" DENY  "miss 1 denied under $b"             'cd ~; grep -r password .'
+        HOOK_BASH="$b" expect_verdict_in "$PWD" ALLOW "a Python heredoc allowed under $b" \
+            $'python3 - <<\'EOF\'\nprint((1))\nEOF'
+        HOOK_BASH="$b" expect_verdict_in "$PWD" DENY  "a per-part /tmp/ write denied under $b" \
+            'ls /tmp/claude-x; rm -rf /tmp/y'
+    done
+}
+
 t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11; t12; t13; t14; t15
 t_heredoc; t_scanner; t_paren_messages; t_backstop; t_scan_fails_closed; t_scan_size_bound; t_heredoc_size_bound
 t_text_heredoc_token_bound
 t_heredoc_generated
 t_false_alarms
 t_messages
+t_lists
 echo "-----"
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

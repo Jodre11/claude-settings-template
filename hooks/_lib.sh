@@ -440,10 +440,46 @@ _text_heredoc_word() {
     return 1
 }
 
+# _heredoc_last_part <first-line>: set HEREDOC_PART to the last list part of a heredoc command's first line and
+# HEREDOC_PREFIX to the text before it (empty, and HEREDOC_PART the whole line, when the line holds no ; & or |).
+# Returns 1, so the caller keeps the heredoc whole, when the line cannot be scanned (E or U), holds a comment, or holds
+# a heredoc operator before its last part: bash would feed the body to that earlier one. The caller's SHELL_* scan
+# results are kept.
+# shellcheck disable=SC2034  # HEREDOC_PREFIX and HEREDOC_PART are read by the caller
+_heredoc_last_part() {
+    local fl="$1" sk sf sc so hs ht n rc=0
+    local -a sp ss
+    HEREDOC_PREFIX=""
+    HEREDOC_PART="$fl"
+    if [[ "$fl" != *[\;\&\|]* ]]; then
+        return 0
+    fi
+    sk="${SHELL_SKELETON-}" sf="${SHELL_SCAN_FLAGS-}" sc="${SHELL_SCAN_COMMENT-1}" so="${SHELL_SCAN_OVER-0}"
+    sp=(${SHELL_SCAN_PARTS[@]+"${SHELL_SCAN_PARTS[@]}"})
+    ss=(${SHELL_SCAN_SEPS[@]+"${SHELL_SCAN_SEPS[@]}"})
+    shell_scan "$fl"
+    hs="${SHELL_SKELETON//<<</}"
+    ht="${hs//<</}"
+    n=${#SHELL_SCAN_PARTS[@]}
+    if [[ "$SHELL_SCAN_FLAGS" == *[EU]* ]] || (( SHELL_SCAN_COMMENT || SHELL_SCAN_OVER )) \
+            || (( ${#hs} - ${#ht} > 2 )); then
+        rc=1
+    elif (( n > 0 )); then
+        HEREDOC_PART="${SHELL_SCAN_PARTS[n-1]}"
+        HEREDOC_PREFIX="${fl%"$HEREDOC_PART"*}"
+    fi
+    SHELL_SKELETON="$sk" SHELL_SCAN_FLAGS="$sf" SHELL_SCAN_COMMENT="$sc" SHELL_SCAN_OVER="$so"
+    SHELL_SCAN_PARTS=(${sp[@]+"${sp[@]}"})
+    SHELL_SCAN_SEPS=(${ss[@]+"${ss[@]}"})
+    return "$rc"
+}
+
 # text_heredoc_parse <cmd>: set TEXT_HEREDOC_OUT to the first line alone when <cmd> is a quoted-delimiter cat or tee
 # heredoc that writes a file, else to <cmd> unchanged, and TEXT_HEREDOC_TARGETS to its plain-word write targets (empty
 # unless the carve-out applied; $CLAUDE_TEMP_DIR targets are not recorded). The body is inert only for that exact
-# shape, a closing line that ends the command and write-only first-line words. Runs in the caller's shell.
+# shape, a closing line that ends the command and write-only first-line words. The shape is tested on the first line's
+# last list part (_heredoc_last_part): the parts before it stay in TEXT_HEREDOC_OUT, for the guards to screen. Runs in
+# the caller's shell.
 # shellcheck disable=SC2034  # TEXT_HEREDOC_TARGETS is read by the calling hook
 text_heredoc_parse() {
     local cmd="$1" fl q="'" tok_re redir_re='^>>?(.+)$' t rc pend=0 nred=0 nfile=0 nheredoc=0 ntmp=0 occ
@@ -454,7 +490,8 @@ text_heredoc_parse() {
     tok_re="^<<(-?)(${q}([A-Za-z_][A-Za-z0-9_]*)${q}|\"([A-Za-z_][A-Za-z0-9_]*)\"|\\\\([A-Za-z_][A-Za-z0-9_]*))\$"
     if (( ${#cmd} > COMMIT_HEREDOC_MAX_CHARS )) || [[ "$cmd" != *$'\n'* ]]; then return 0; fi
     fl="${cmd%%$'\n'*}"
-    IFS=$' \t' read -ra toks <<<"$fl" || return 0
+    _heredoc_last_part "$fl" || return 0
+    IFS=$' \t' read -ra toks <<<"$HEREDOC_PART" || return 0
     if (( ${#toks[@]} > 64 )); then return 0; fi
     for t in ${toks[@]+"${toks[@]}"}; do
         if [[ "$t" =~ $tok_re ]]; then
@@ -497,9 +534,10 @@ text_heredoc_parse() {
             return 0
         fi
     done
-    # Every CLAUDE_TEMP_DIR in the line must be an accepted target: no reassignment or other use of it.
-    occ="${fl//CLAUDE_TEMP_DIR/}"
-    if (( (${#fl} - ${#occ}) != ntmp * 15 )); then return 0; fi
+    # Every CLAUDE_TEMP_DIR in the part must be an accepted target: no reassignment or other use of it. An earlier part
+    # that sets it is a state change the list rules deny.
+    occ="${HEREDOC_PART//CLAUDE_TEMP_DIR/}"
+    if (( (${#HEREDOC_PART} - ${#occ}) != ntmp * 15 )); then return 0; fi
     if (( nheredoc != 1 || pend )) || [[ -z "$first" ]] || { [[ "$first" == cat ]] && (( nred < 1 )); } \
             || { [[ "$first" == tee ]] && (( nfile < 1 )); }; then
         return 0
@@ -515,6 +553,92 @@ text_heredoc_parse() {
 strip_text_heredoc() {
     text_heredoc_parse "$1"
     printf '%s' "$TEXT_HEREDOC_OUT"
+}
+
+# script_heredoc_parse <cmd>: when <cmd>'s first line ends in a quoted-delimiter heredoc fed to Python as its program
+# (python, python3 or python3.N, bare or by absolute path, then optionally -, then the heredoc, then only redirections
+# to plain targets and pipe stages) and its closing line ends the command, set SCRIPT_HEREDOC_OUT to the first line
+# and SCRIPT_HEREDOC_BODY to the body (leading tabs removed under <<-, as bash removes them); else SCRIPT_HEREDOC_OUT
+# to <cmd> and SCRIPT_HEREDOC_BODY empty. The shape is tested on the first line's last list part, as for
+# text_heredoc_parse. The body is Python code: a guard screens it as python3 -c code, or not at all. Runs in the
+# caller's shell.
+# shellcheck disable=SC2034  # SCRIPT_HEREDOC_OUT and SCRIPT_HEREDOC_BODY are read by the calling hook
+script_heredoc_parse() {
+    local cmd="$1" fl q="'" tok_re t rc st=0 pend=0 dsh=0 nheredoc=0 dash=0 w="" closing rest
+    local py_re='^((/[A-Za-z0-9_.+-]+)*/)?python(3(\.[0-9]+)?)?$' redir_re='^[0-9]*(>|>>|&>|&>>)(.*)$'
+    local dup_re='^[0-9]*>&[0-9-]$'
+    local -a toks
+    SCRIPT_HEREDOC_OUT="$cmd"
+    SCRIPT_HEREDOC_BODY=""
+    tok_re="^<<(-?)(${q}([A-Za-z_][A-Za-z0-9_]*)${q}|\"([A-Za-z_][A-Za-z0-9_]*)\"|\\\\([A-Za-z_][A-Za-z0-9_]*))\$"
+    if (( ${#cmd} > SHELL_SCAN_MAX_CHARS )) || [[ "$cmd" != *$'\n'* || "$cmd" == *[$'\x1e\x1f']* ]]; then
+        return 0
+    fi
+    fl="${cmd%%$'\n'*}"
+    if [[ "$fl" != *python* ]]; then
+        return 0
+    fi
+    _heredoc_last_part "$fl" || return 0
+    IFS=$' \t' read -ra toks <<<"$HEREDOC_PART" || return 0
+    if (( ${#toks[@]} > 64 )); then return 0; fi
+    # st: 0 the program word is due, 1 an optional - or the heredoc, 2 redirections, 3 a pipe stage's free words.
+    for t in ${toks[@]+"${toks[@]}"}; do
+        if [[ "$t" =~ $tok_re ]]; then
+            if (( st != 1 )); then return 0; fi
+            nheredoc=$(( nheredoc + 1 ))
+            if [[ -n "${BASH_REMATCH[1]}" ]]; then dash=1; fi
+            w="${BASH_REMATCH[3]}${BASH_REMATCH[4]}${BASH_REMATCH[5]}"
+            st=2
+            continue
+        fi
+        case "$st" in
+            0)
+                if ! [[ "$t" =~ $py_re ]]; then return 0; fi
+                st=1 ;;
+            1)
+                if [[ "$t" != - ]] || (( dsh )); then return 0; fi
+                dsh=1 ;;
+            2)
+                if (( pend )); then
+                    rc=0; _text_heredoc_word "$t" || rc=$?
+                    if (( rc == 1 )); then return 0; fi
+                    pend=0
+                elif [[ "$t" == '|' ]]; then
+                    st=3
+                elif [[ "$t" =~ $dup_re ]]; then
+                    :
+                elif [[ "$t" =~ $redir_re ]]; then
+                    if [[ -z "${BASH_REMATCH[2]}" ]]; then
+                        pend=1
+                    else
+                        rc=0; _text_heredoc_word "${BASH_REMATCH[2]}" || rc=$?
+                        if (( rc == 1 )); then return 0; fi
+                    fi
+                else
+                    return 0
+                fi ;;
+            3) ;;
+        esac
+    done
+    if (( nheredoc != 1 || pend )); then
+        return 0
+    fi
+    closing=$(printf '%s' "$cmd" | LC_ALL=C awk -v w="$w" -v dash="$dash" "$_TEXT_HEREDOC_AWK") || closing=""
+    if [[ -z "$closing" ]]; then return 0; fi
+    # Offsets, not ${cmd#*$'\n'}: a shortest-prefix removal is quadratic in the command's length.
+    rest="${cmd:${#fl}+1}"
+    rest="${rest%$'\n'}"
+    if [[ "$rest" == *$'\n'* ]]; then
+        rest="${rest%$'\n'*}"
+    else
+        rest=""
+    fi
+    if (( dash )) && [[ "$rest" == *$'\t'* ]]; then
+        rest=$(printf '%s\n' "$rest" | LC_ALL=C awk '{ sub(/^\t+/, ""); print }') || return 0
+    fi
+    SCRIPT_HEREDOC_OUT="$fl"
+    SCRIPT_HEREDOC_BODY="$rest"
+    return 0
 }
 
 # resolve_path <abs-path>: print <abs-path> with every symlink resolved, parent directories included (Stow
@@ -588,7 +712,24 @@ hydrated_output_tmpl() {
 # shells read it as a nested quote and the scan cannot follow), and neither pass lets it end the "…".
 # An unquoted or "…" $[ or $$[ (its ] may follow a } the scan would count) and a ## before a ', " or \ (zsh
 # reads that character as a literal) report U in the main pass only: U denies whatever the comment guard says.
+# The main pass also cuts the command into list parts at each separator the skeleton prints in state N (; && || and a
+# newline that is no backslash-newline) and, with cm 1, at each newline it prints inside quotes; past 256 separators it
+# stops cutting and reports ov. With nop set (the command holds \x1e or \x1f) it cuts nothing. After the skeleton it
+# prints \x1e, then (when it cut at all) each trimmed part and each separator alternately, each followed by \x1f, then
+# \x1e, cm and ov as digits, and the newline, flags and "." sentinel.
 _SHELL_SCAN_AWK='
+# Returns p with leading and trailing blanks and newlines removed.
+function trim(p) {
+    sub(/^[ \t\n]+/, "", p)
+    sub(/[ \t\n]+$/, "", p)
+    return p
+}
+# Ends the current part just before byte i at the separator v of length l.
+function cut(i, v, l) {
+    if (nop || ov) return
+    if (np >= 256) { ov = 1; return }
+    np++; pt[np] = substr(s, ps, i - ps); sv[np] = v; ps = i + l
+}
 # Returns 1 when s holds an unquoted, unescaped #, else 0.
 function has_comment(s, n, q,    i, c, st, dp) {
     st = "N"; dp = 0
@@ -618,7 +759,7 @@ function has_comment(s, n, q,    i, c, st, dp) {
 }
 { s = (NR == 1) ? $0 : s "\n" $0 }
 END {
-    n = length(s); st = "N"; subst = 0; paren = 0; bad = 0; dp = 0
+    n = length(s); st = "N"; subst = 0; paren = 0; bad = 0; dp = 0; np = 0; ps = 1; ov = 0
     cm = has_comment(s, n, q)
     for (i = 1; i <= n; i++) {
         c = substr(s, i, 1)
@@ -649,24 +790,33 @@ END {
             else {
                 if (c == "(" && substr(s, i - 1, 1) !~ /[$<>]/) paren = 1
                 printf "%s", c
+                if (c == ";" || c == "\n") cut(i, c, 1)
+                else if ((c == "&" || c == "|") && substr(s, i + 1, 1) == c) { printf "%s", c; cut(i, c c, 2); i++ }
             }
         } else if (st == "S") {
             if (c == q) st = "N"
-            else if (c == "\n" && cm) printf "\n"
+            else if (c == "\n" && cm) { printf "\n"; cut(i, c, 1) }
         } else if (st == "A") {
-            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") printf "\n" }
+            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") { printf "\n"; cut(i, "\n", 1) } }
             else if (c == q) st = "N"
-            else if (c == "\n" && cm) printf "\n"
+            else if (c == "\n" && cm) { printf "\n"; cut(i, c, 1) }
         } else {
-            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") printf "\n" }
+            if (c == "\\") { i++; if (cm && substr(s, i, 1) == "\n") { printf "\n"; cut(i, "\n", 1) } }
             else if (c == "$" && substr(s, i + 1, 1) == "{") { dp++; i++ }
             else if (c == "}" && dp > 0) dp--
             else if (dp > 0 && (c == "\"" || c == q)) bad = 1
             else if (c == "\"") st = "N"
             else if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "(")) subst = 1
-            else if (c == "\n" && cm) printf "\n"
+            else if (c == "\n" && cm) { printf "\n"; cut(i, c, 1) }
         }
     }
+    us = sprintf("%c", 31)
+    printf "%c", 30
+    if (np > 0) {
+        for (k = 1; k <= np; k++) printf "%s%s%s%s", trim(pt[k]), us, sv[k], us
+        printf "%s%s", trim(substr(s, ps)), us
+    }
+    printf "%c%d%d", 30, cm, ov
     printf "\n%s%s%s.", (subst ? "S" : ""), (paren ? "P" : ""), ((st != "N" || bad) ? "U" : "")
 }'
 
@@ -685,16 +835,29 @@ SHELL_SCAN_MAX_CHARS=65536
 # (a subshell, grouping, zsh glob qualifier or extglob), U = a quote is left open, a run of two or more $
 # precedes a ' (bash and zsh read it differently), a quote sits inside ${…} within "…", or there is a $[ or a
 # ## before a ', " or \ outside single quotes, E = the scan itself failed or <cmd> is over SHELL_SCAN_MAX_CHARS.
-# Always returns 0.
-# shellcheck disable=SC2034  # SHELL_SKELETON and SHELL_SCAN_FLAGS are read by the calling hook
+# It also sets SHELL_SCAN_COMMENT (1 when <cmd> holds an unquoted, unescaped #, or the scan failed), SHELL_SCAN_PARTS
+# and SHELL_SCAN_SEPS: <cmd>'s list parts (raw text, leading and trailing blanks and newlines trimmed, empty parts
+# kept) and the separators between them as written (; && || or a newline), cut where the skeleton prints a separator.
+# Both are empty when the skeleton holds none, when <cmd> holds \x1e or \x1f, or on E; SHELL_SCAN_OVER is 1, with
+# both cut short, past 256 separators. Always returns 0.
+# shellcheck disable=SC2034  # the SHELL_* results are read by the calling hook
 shell_scan() {
-    local raw
+    local raw fields restore_glob=1 k=0 f
+    local -a all
+    SHELL_SCAN_PARTS=()
+    SHELL_SCAN_SEPS=()
+    SHELL_SCAN_COMMENT=1
+    SHELL_SCAN_OVER=0
     if (( ${#1} > SHELL_SCAN_MAX_CHARS )); then
         SHELL_SKELETON="$1"
         SHELL_SCAN_FLAGS="E"
         return 0
     fi
-    raw=$(printf '%s' "$1" | LC_ALL=C awk -v q="'" "$_SHELL_SCAN_AWK") || raw=""
+    f=0
+    if [[ "$1" == *[$'\x1e\x1f']* ]]; then
+        f=1
+    fi
+    raw=$(printf '%s' "$1" | LC_ALL=C awk -v q="'" -v nop="$f" "$_SHELL_SCAN_AWK") || raw=""
     if [[ "$raw" != *. ]]; then
         SHELL_SKELETON="$1"
         SHELL_SCAN_FLAGS="E"
@@ -702,7 +865,31 @@ shell_scan() {
     fi
     raw="${raw%.}"
     SHELL_SCAN_FLAGS="${raw##*$'\n'}"
-    SHELL_SKELETON="${raw%$'\n'*}"
+    raw="${raw%$'\n'*}"
+    SHELL_SCAN_COMMENT="${raw:${#raw}-2:1}"
+    SHELL_SCAN_OVER="${raw:${#raw}-1}"
+    raw="${raw:0:${#raw}-3}"
+    # Offsets, not ${raw#*$'\x1e'}: a shortest-prefix removal is quadratic in the length of the parts.
+    SHELL_SKELETON="${raw%$'\x1e'*}"
+    fields="${raw:${#SHELL_SKELETON}+1}"
+    if [[ -z "$fields" ]]; then
+        return 0
+    fi
+    if [[ "$-" == *f* ]]; then
+        restore_glob=0
+    fi
+    set -f
+    local IFS=$'\x1f'
+    # shellcheck disable=SC2206  # split on \x1f with pathname expansion off
+    all=($fields)
+    if (( restore_glob )); then
+        set +f
+    fi
+    # The fields alternate part, separator, …, part, each ended by \x1f, so the split keeps the empty ones.
+    for f in ${all[@]+"${all[@]}"}; do
+        if (( k % 2 )); then SHELL_SCAN_SEPS+=("$f"); else SHELL_SCAN_PARTS+=("$f"); fi
+        k=$(( k + 1 ))
+    done
 }
 
 # Quote-state awk for sq_strip, in the states of _SHELL_SCAN_AWK (N, S '…', A $'…', D "…" with ${…} nesting;
@@ -1009,6 +1196,190 @@ shell_words() {
     return 0
 }
 
+# The list contract (list_check). A list of at most LIST_MAX_PARTS non-empty parts is admitted when every guard can
+# screen each part on its own: each LIST_MSG_* names the rule a list broke and the route that works instead.
+LIST_MAX_PARTS=16
+LIST_MSG_FAIL="the command could not be split into parts the guards can screen; run each command as its own Bash call"
+LIST_MSG_SEP="a list may join simple commands and pipelines with ;, &&, || or newlines only; run the rest as"
+LIST_MSG_SEP+=" separate Bash calls"
+LIST_MSG_HEREDOC="a list may hold a here-document only as its last part, and only a quoted-delimiter cat, tee or"
+LIST_MSG_HEREDOC+=" Python one; run the rest as separate Bash calls"
+LIST_MSG_COMMENT="a list must not hold a comment (#); drop the comment, or run each command as its own Bash call"
+LIST_MSG_BOUND="a list may hold at most ${LIST_MAX_PARTS} commands; split it into separate Bash calls"
+_LIST_BG_RE='(^|[^&<>])&([^&>]|$)'
+_LIST_ASG_RE='^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?='
+
+# _list_word_reason <rule> <word>: set LIST_REASON for a reserved word (3) or a state change (4) the list holds.
+_list_word_reason() {
+    if [[ "$1" == 3 ]]; then
+        LIST_REASON="'$2' starts a compound command, which a list may not hold; unroll it into separate Bash calls, or"
+        LIST_REASON+=" put it in a script in \$CLAUDE_TEMP_DIR and run it with bash <file>"
+    else
+        LIST_REASON="'$2' changes shell state that a later part depends on; use absolute paths or git -C instead of"
+        LIST_REASON+=" cd, write the value out instead of holding it in a variable, or run each command as its own Bash"
+        LIST_REASON+=" call (the Bash tool keeps the working directory between calls)"
+    fi
+}
+
+# list_check <cmd>: judge <cmd> as a list, after shell_scan "$cmd" has run. Sets LIST_PARTS (the number of non-empty
+# parts, 1 for a single command), LIST_PART_TEXT (their raw text; <cmd> itself for a single command) and LIST_REASON
+# (empty when the list is admissible, else one line naming the rule broken and its route). A command whose skeleton
+# holds no ; && || or newline is a single command and returns at once. A list must: scan cleanly (rule 0); join only
+# simple commands and pipelines, with no empty or dangling part and no heredoc the strips left whole (1); hold no
+# comment (2); split into the same parts under shell_words (2a); start no stage with a reserved word (3); change no
+# shell state a later part could read (4: cd, an assignment, read, set and the rest, behind command, builtin or exec
+# too, in any stage, as zsh runs a pipeline's last stage in the current shell); and hold at most LIST_MAX_PARTS parts
+# (6). Rule 5 (fresh probes) is secret-bash-guard's. Always returns 0.
+# shellcheck disable=SC2034  # LIST_PARTS, LIST_PART_TEXT and LIST_REASON are read by the calling hook
+list_check() {
+    local cmd="$1" skel="$SHELL_SKELETON" hs p prev nxt e w st=0 nasg=0 asgw="" wrap="" pw="" nsemi=0 r3="" r4=""
+    local k n
+    local -a pt=()
+    LIST_PARTS=1
+    LIST_PART_TEXT=("$cmd")
+    LIST_REASON=""
+    if [[ "$SHELL_SCAN_FLAGS" == *[EU]* || "$cmd" == *[$'\x1e\x1f']* ]]; then
+        if [[ "$cmd" == *[\;$'\n']* || "$cmd" == *'&&'* || "$cmd" == *'||'* ]]; then
+            LIST_REASON="$LIST_MSG_FAIL"
+        fi
+        return 0
+    fi
+    if [[ "$skel" != *[\;$'\n']* && "$skel" != *'&&'* && "$skel" != *'||'* ]]; then
+        return 0
+    fi
+    # Rule 1: list separators only, and no heredoc whose body the strips left in the command (its lines are no parts).
+    hs="${skel//<<</}"
+    if [[ "$SHELL_SCAN_FLAGS" == *[PS]* || "$skel" == *'$('* || "$skel" == *'`'* || "$skel" == *'<('* \
+            || "$skel" == *'>('* ]] || [[ "$skel" =~ $_LIST_BG_RE ]]; then
+        LIST_REASON="$LIST_MSG_SEP"
+        return 0
+    fi
+    if [[ "$hs" == *'<<'* && "$skel" == *$'\n'* ]]; then
+        LIST_REASON="$LIST_MSG_HEREDOC"
+        return 0
+    fi
+    if (( SHELL_SCAN_COMMENT )); then
+        LIST_REASON="$LIST_MSG_COMMENT"
+        return 0
+    fi
+    if (( SHELL_SCAN_OVER )); then
+        LIST_REASON="$LIST_MSG_BOUND"
+        return 0
+    fi
+    n=${#SHELL_SCAN_PARTS[@]}
+    if (( n == 0 || ${#SHELL_SCAN_SEPS[@]} != n - 1 )); then
+        LIST_REASON="$LIST_MSG_FAIL"
+        return 0
+    fi
+    # Empty parts: a trailing ; or newline and a blank line are dropped; one beside && or ||, or before a ;, is a
+    # dangling operator. A part may not end in a pipe. The arrays hold at most 257 entries, so indexing is cheap.
+    for (( k = 0; k < n; k++ )); do
+        p="${SHELL_SCAN_PARTS[k]}"
+        prev=""
+        nxt=""
+        if (( k > 0 )); then prev="${SHELL_SCAN_SEPS[k-1]}"; fi
+        if (( k < n - 1 )); then nxt="${SHELL_SCAN_SEPS[k]}"; fi
+        if [[ -n "$p" ]]; then
+            if [[ "$p" == *'|' && "$p" != *'\|' ]]; then
+                LIST_REASON="$LIST_MSG_SEP"
+                return 0
+            fi
+            pt+=("$p")
+        elif [[ "$prev" == '&&' || "$prev" == '||' || "$nxt" == '&&' || "$nxt" == '||' || "$nxt" == ';' ]]; then
+            LIST_REASON="$LIST_MSG_SEP"
+            return 0
+        fi
+    done
+    if (( ${#pt[@]} > LIST_MAX_PARTS )); then
+        LIST_REASON="$LIST_MSG_BOUND"
+        return 0
+    fi
+    if (( ${#pt[@]} == 0 )); then
+        LIST_REASON="$LIST_MSG_FAIL"
+        return 0
+    fi
+    LIST_PARTS=${#pt[@]}
+    LIST_PART_TEXT=("${pt[@]}")
+    if (( LIST_PARTS == 1 )); then
+        return 0
+    fi
+    shell_words "$cmd"
+    if (( ! SW_OK )); then
+        LIST_REASON="$LIST_MSG_FAIL"
+        return 0
+    fi
+    # Rules 3 and 4, one stage at a time (st: 0 before the command word, 1 after command, builtin or exec, 2 among
+    # printf or print's words up to --, 3 among the arguments); rule 2a counts the separators shell_words emits.
+    for e in ${SW_WORDS[@]+"${SW_WORDS[@]}"} '|'; do
+        case "$e" in
+            m*|r*) continue ;;
+            ';'|'|')
+                if [[ "$e" == ';' ]]; then nsemi=$(( nsemi + 1 )); fi
+                if [[ -z "$r4" ]]; then
+                    if (( st == 0 && nasg > 0 )); then
+                        r4="$asgw"
+                    elif (( st == 1 )) && [[ "$wrap" == exec ]]; then
+                        r4="exec"
+                    fi
+                fi
+                st=0 nasg=0 wrap="" pw=""
+                continue ;;
+        esac
+        w="${e:1}"
+        if (( st == 0 )); then
+            if [[ "$w" =~ $_LIST_ASG_RE ]]; then
+                nasg=$(( nasg + 1 ))
+                asgw="$w"
+                continue
+            fi
+            case "$w" in
+                'if'|'then'|'elif'|'else'|'fi'|'do'|'done'|'case'|'esac'|'while'|'until'|'for'|'select'|'function'\
+                |'coproc'|'{'|'}'|'[['|']]'|'!'|'time'|'noglob'|'nocorrect')
+                    if [[ -z "$r3" ]]; then r3="$w"; fi
+                    st=3
+                    continue ;;
+            esac
+            st=1
+        fi
+        case "$st" in
+            1)
+                if [[ -n "$wrap" && "$w" == -* ]]; then
+                    continue
+                fi
+                case "$w" in
+                    command|builtin|exec)
+                        wrap="$w"
+                        continue ;;
+                    cd|pushd|popd|chdir|export|declare|typeset|local|readonly|unset|integer|float|read|vared|mapfile|\
+                    readarray|getopts|let|source|.|eval|alias|unalias|autoload|zmodload|set|shopt|setopt|unsetopt|\
+                    emulate|trap|umask|ulimit|hash|enable|zparseopts)
+                        if [[ -z "$r4" ]]; then r4="$w"; fi
+                        st=3 ;;
+                    printf|print)
+                        pw="$w"
+                        st=2 ;;
+                    *)
+                        st=3 ;;
+                esac ;;
+            2)
+                # zsh's print takes option words with arguments (-C 2, -u 2), so every word up to -- is read.
+                if [[ "$w" == -- ]]; then
+                    st=3
+                elif [[ -z "$r4" && "$w" =~ ^-[A-Za-z0-9]*v ]]; then
+                    r4="$pw -v"
+                fi ;;
+        esac
+    done
+    if (( nsemi != ${#SHELL_SCAN_SEPS[@]} )); then
+        LIST_REASON="$LIST_MSG_FAIL"
+    elif [[ -n "$r3" ]]; then
+        _list_word_reason 3 "$r3"
+    elif [[ -n "$r4" ]]; then
+        _list_word_reason 4 "$r4"
+    fi
+    return 0
+}
+
 # norm_path <path> <cwd> [literal]: set NORM_PATH to <path> made absolute against <cwd>, with a leading ~ or ~/
 # expanded (and, unless literal, a leading $HOME or ${HOME}), . and .. segments collapsed lexically and repeated or
 # trailing slashes dropped. Returns 1, with NORM_PATH empty, when <path> starts ~user or, unless literal, holds any
@@ -1109,19 +1480,21 @@ probe_reset() {
     PROBE_INC=()
     PROBE_EXC=()
     PROBE_XDIR=()
+    PROBE_PS=()
     _PROBE_KEYS=$'\x1e'
 }
 probe_reset
 
-# probe_add <kind> <root> <form> [<include> <exclude> <exclude-dir>]: add the absolute directory <root>, listed by
-# <kind>: git (git ls-files -co --exclude-standard in a work tree, with nested repositories and submodules listed in
-# full, else find), tracked (git ls-files in a work tree, else find), find, findL (find -L), one (one level, as ls
+# probe_add <kind> <root> <form> [<include> <exclude> <exclude-dir> <pathspecs>]: add the absolute directory <root>,
+# listed by <kind>: git (git ls-files -co --exclude-standard in a work tree, with nested repositories and submodules
+# listed in full, else find), tracked (git ls-files in a work tree, else find), gpsgit and gpstracked (the same,
+# limited by <pathspecs>, a \x1f-separated list git resolves from <root>), find, findL (find -L), one (one level, as ls
 # lists it), or a rev kind (a revision's tree, listed by git ls-tree; see _dhs_rev). <form> names the reader in a
 # decision. The glob lists (\x1f-separated bash patterns) narrow the hits; a glob holding { is ignored. A repeated
 # entry is ignored; returns 1 once PROBE_MAX_ROOTS are held.
 # shellcheck disable=SC2034  # PROBE_FORM is read by the calling hook
 probe_add() {
-    local key="$1"$'\x1f'"$2"$'\x1f'"${4:-}"$'\x1f'"${5:-}"$'\x1f'"${6:-}"
+    local key="$1"$'\x1f'"$2"$'\x1f'"${4:-}"$'\x1f'"${5:-}"$'\x1f'"${6:-}"$'\x1f'"${7:-}"
     if [[ "$_PROBE_KEYS" == *$'\x1e'"$key"$'\x1e'* ]]; then
         return 0
     fi
@@ -1135,7 +1508,37 @@ probe_add() {
     PROBE_INC[PROBE_N]="${4:-}"
     PROBE_EXC[PROBE_N]="${5:-}"
     PROBE_XDIR[PROBE_N]="${6:-}"
+    PROBE_PS[PROBE_N]="${7:-}"
     PROBE_N=$(( PROBE_N + 1 ))
+}
+
+# probe_truncate <n>: forget every probe root added after the first <n>.
+probe_truncate() {
+    local i=0
+    local -a tk=() tr=() tf=() ti=() te=() tx=() tp=()
+    if (( $1 >= PROBE_N )); then
+        return 0
+    fi
+    _PROBE_KEYS=$'\x1e'
+    while (( i < $1 )); do
+        tk[i]="${PROBE_KIND[i]}"
+        tr[i]="${PROBE_ROOT[i]}"
+        tf[i]="${PROBE_FORM[i]}"
+        ti[i]="${PROBE_INC[i]}"
+        te[i]="${PROBE_EXC[i]}"
+        tx[i]="${PROBE_XDIR[i]}"
+        tp[i]="${PROBE_PS[i]}"
+        _PROBE_KEYS+="${tk[i]}"$'\x1f'"${tr[i]}"$'\x1f'"${ti[i]}"$'\x1f'"${te[i]}"$'\x1f'"${tx[i]}"$'\x1f'"${tp[i]}"$'\x1e'
+        i=$(( i + 1 ))
+    done
+    PROBE_KIND=(${tk[@]+"${tk[@]}"})
+    PROBE_ROOT=(${tr[@]+"${tr[@]}"})
+    PROBE_FORM=(${tf[@]+"${tf[@]}"})
+    PROBE_INC=(${ti[@]+"${ti[@]}"})
+    PROBE_EXC=(${te[@]+"${te[@]}"})
+    PROBE_XDIR=(${tx[@]+"${tx[@]}"})
+    PROBE_PS=(${tp[@]+"${tp[@]}"})
+    PROBE_N=$1
 }
 
 # _dhs_find <root> [-L]: list every entry under <root>, relative to it, except a directory named secrets (whose files
@@ -1221,6 +1624,7 @@ _dhs_nested() {
 # _dhs_list: the default lister. For each probe root print \002<index>\t<root>, then its entries, then \003<status>.
 _dhs_list() {
     local i=0 rc k r
+    local -a ps=()
     while (( i < PROBE_N )); do
         k="${PROBE_KIND[i]}"
         r="${PROBE_ROOT[i]}"
@@ -1237,6 +1641,21 @@ _dhs_list() {
                     fi
                 else
                     _dhs_git "$r" --cached || rc=$?
+                fi ;;
+            gps*)
+                ps=()
+                if [[ -n "${PROBE_PS[i]}" ]]; then
+                    IFS=$'\x1f' read -ra ps <<<"${PROBE_PS[i]}"
+                fi
+                if [[ "$(git -C "$r" rev-parse --is-inside-work-tree 2>/dev/null)" != true ]]; then
+                    _dhs_find "$r" || rc=$?
+                elif [[ "$k" == gpsgit ]]; then
+                    _dhs_git "$r" -co --exclude-standard -- ${ps[@]+"${ps[@]}"} || rc=$?
+                    if ! _dhs_nested "$r" && (( rc == 0 )); then
+                        rc=1
+                    fi
+                else
+                    _dhs_git "$r" --cached -- ${ps[@]+"${ps[@]}"} || rc=$?
                 fi ;;
             findL) _dhs_find "$r" -L || rc=$? ;;
             one) _dhs_one "$r" || rc=$? ;;
