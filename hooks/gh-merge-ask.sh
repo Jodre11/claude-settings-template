@@ -19,10 +19,15 @@ hook_read_input
 # An unreadable payload cannot be judged a merge, so it gets no decision.
 cmd=$(hook_field '.tool_input.command' 2>/dev/null || true)
 
+# The sanctioned commit and text heredoc bodies are inert text (the helpers strip a body only when it is), so the
+# possible-merge scan below reads the command without them: a body's braces, quotes or prose never run.
+scanned=$(strip_commit_heredoc "$cmd") || scanned=$cmd
+scanned=$(strip_text_heredoc "$scanned") || scanned=$cmd
+
 # Quotes and backslashes are removed as the shell would splice them out, and flags (with an optional value) may sit
 # between gh, pr and merge, so neither hides a merge. A flag value that is itself a subcommand word still stops it.
 # zsh expands =gh to gh's path, so = also leads gh.
-unquoted=${cmd//\"/}
+unquoted=${scanned//\"/}
 unquoted=${unquoted//\'/}
 unquoted=${unquoted//\\/}
 flags='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
@@ -81,19 +86,19 @@ range_re='\{[^[:space:]{}]*\.\.[^[:space:]{}]*\}'
 if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re ]]; then
     uspaced=${unquoted//[][\{\}*?,]/ }
     ansi_hint=0
-    if [[ "$cmd" == *"\$'"* || "$cmd" == *'$"'* ]]; then
+    if [[ "$scanned" == *"\$'"* || "$scanned" == *'$"'* ]]; then
         ansi_hint=1
     fi
     if (( ! ansi_hint )) && ! [[ "$unquoted" == *[][\{\}*?]* && "$uspaced" =~ $pr_word_re ]]; then
         exit 0
     fi
-    if (( ${#cmd} <= 4096 )); then
-        glob_scan "$cmd"
+    if (( ${#scanned} <= 4096 )); then
+        glob_scan "$scanned"
         # glob_scan does not model comments or heredocs, where a quote character is literal, so either could leave its
         # quote state out of step with the shell's (true # it's, a newline, then gh $'pr' merge); fail closed. Both
         # need a newline to hide a later command: on one line a comment runs to the end, so what follows it is inert,
         # and glob_scan's quote state up to it is exact (grep -v "^#" f | grep -v "^$" gets no decision).
-        if (( ansi_hint )) && [[ "$cmd" == *$'\n'* ]]; then
+        if (( ansi_hint )) && [[ "$scanned" == *$'\n'* ]]; then
             ansi_seen=1
         fi
         if (( ! ansi_seen )) && ! [[ "$glob_seen" == 1 && "$spaced" =~ $pr_word_re ]]; then
@@ -158,10 +163,8 @@ unprompted() {
 # Another part of a list could change what a merge targets (a cd, an assignment), so a merge in a list is denied with
 # the route to run it alone. bash-guard denies a list that breaks a list rule, so only the part count matters here;
 # the sanctioned heredoc bodies are text, so their lines are no parts.
-listed=$(strip_commit_heredoc "$cmd")
-listed=$(strip_text_heredoc "$listed")
-shell_scan "$listed"
-list_check "$listed"
+shell_scan "$scanned"
+list_check "$scanned"
 if (( LIST_PARTS > 1 )); then
     hook_deny "MERGE IN A LIST: run gh pr merge … as its own Bash call, so the merge guard can check it."
 fi
