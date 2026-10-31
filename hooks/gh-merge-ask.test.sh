@@ -145,6 +145,9 @@ expect deny "$o" "echo \"a\" && gh \$\"pr\" merge 7"
 expect ask "$o" "true # it's"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
 expect ask "$o" "true # it\"s"$'\n'"gh \$\"pr\" merge 7 -R Acme/widgets"
 expect ask "$o" "cat <<EOF"$'\n'"it's"$'\n'"EOF"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
+expect ask "$o" "true # it's gh \$'pr' merge 7"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
+expect none "$o" "grep -v \"^#\" CODEOWNERS | grep -v \"^\$\""
+expect none "$o" "true # it's gh \$'pr' merge 7"
 expect none "$o" "echo \$HOME"
 expect none "$o" "grep -rln \"enum Field\\b\\|enum Field\$\" src"
 expect none "$o" "grep -n 'pr merge\$' notes.txt"
@@ -188,8 +191,14 @@ expect deny "$o" "git -C $x status; gh pr merge 7"
 expect deny "$o" "git status && gh pr merge 1 --squash"
 expect deny "$o" "gh pr merge 1"$'\n'"ls"
 expect deny "$o" "gh pr merge 1 || true"
-# A text heredoc whose notes mention a merge is one command, so it keeps today's ask.
-expect ask "$o" "cat > notes.md <<'EOF'"$'\n'"then gh pr merge 7"$'\n'"EOF"
+# A sanctioned heredoc body is inert text, so a merge, brace or quote inside one is no merge; an unquoted delimiter's
+# body expands, so it is still scanned.
+expect none "$o" "cat > notes.md <<'EOF'"$'\n'"then gh pr merge 7"$'\n'"EOF"
+expect none "$o" "cat > Row.cs <<'EOF'"$'\n'"/// <c>{\"total\":N,\"data\":[...]}</c>"$'\n'"EOF"
+expect none "$o" "cat > notes.md <<'EOF'"$'\n'"it's gh \$'pr' merge 7"$'\n'"EOF"
+expect none "$o" "git commit -m \"\$(cat <<'EOF'"$'\n'"Run gh pr merge 7 after {a..b}"$'\n'"EOF"$'\n'")\""
+expect ask "$o" "cat > notes.md <<EOF"$'\n'"{p..p}r"$'\n'"EOF"
+expect ask "$o" "cat > notes.md <<'EOF'"$'\n'"text"$'\n'"EOF"$'\n'"gh \$'pr' merge 7 -R Acme/widgets"
 
 # A comment is not a repository, and a missing or empty list skips no prompt.
 expect ask "$x" "gh pr merge 7 -R unprompted/repositories"
