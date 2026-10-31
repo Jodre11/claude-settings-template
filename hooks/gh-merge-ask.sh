@@ -89,9 +89,11 @@ if ! [[ "$unquoted" =~ $merge_re || "$unquoted" =~ $range_re ]]; then
     fi
     if (( ${#cmd} <= 4096 )); then
         glob_scan "$cmd"
-        # glob_scan does not model comments or heredocs, where a quote character is literal, so a newline or # could
-        # leave its quote state out of step with the shell's (true # it's, a newline, then gh $'pr' merge); fail closed.
-        if (( ansi_hint )) && [[ "$cmd" == *$'\n'* || "$cmd" == *'#'* ]]; then
+        # glob_scan does not model comments or heredocs, where a quote character is literal, so either could leave its
+        # quote state out of step with the shell's (true # it's, a newline, then gh $'pr' merge); fail closed. Both
+        # need a newline to hide a later command: on one line a comment runs to the end, so what follows it is inert,
+        # and glob_scan's quote state up to it is exact (grep -v "^#" f | grep -v "^$" gets no decision).
+        if (( ansi_hint )) && [[ "$cmd" == *$'\n'* ]]; then
             ansi_seen=1
         fi
         if (( ! ansi_seen )) && ! [[ "$glob_seen" == 1 && "$spaced" =~ $pr_word_re ]]; then
