@@ -153,9 +153,10 @@ test_permission_policy_pr_merge_asked_by_hook() {
         "gh-merge-ask.sh is registered once on Bash"
 }
 
-# The same precedence would stop a flaky PR check being rerun unattended, so gh-rerun-ask.sh asks instead and skips
-# the prompt only for a run a pull request triggered (hooks/gh-rerun-ask.test.sh covers its judgement).
-test_permission_policy_run_rerun_asked_by_hook() {
+# The same precedence would stop a flaky PR check being rerun unattended, so gh-rerun-ask.sh judges reruns instead:
+# a run a pull request triggered passes, and any other rerun is denied with a route, never asked
+# (hooks/gh-rerun-ask.test.sh covers its judgement).
+test_permission_policy_run_rerun_judged_by_hook() {
     assert_equals false "$(_pp_in .permissions.ask 'Bash(gh run rerun*)')" "the tmpl no longer asks on gh run rerun"
     assert_equals true "$(_pp_in '.__remove__.entries["permissions.ask"]' 'Bash(gh run rerun*)')" \
         "__remove__ drops the live gh run rerun ask"
