@@ -141,16 +141,15 @@ test_permission_policy_ask_gh() {
         'gh pr close 12 -dc done'
 }
 
-# An ask rule outranks every allow rule and PreToolUse hook at any scope, so a native merge ask would stop a
-# repository opting out of the prompt. gh-merge-ask.sh asks instead and skips the prompt only for the repositories in
-# the untracked gh-merge-ask.local (hooks/gh-merge-ask.test.sh covers its judgement).
-test_permission_policy_pr_merge_asked_by_hook() {
+# An ask rule outranks every allow rule and PreToolUse hook at any scope, so a native merge ask would halt an
+# unattended loop at every merge. Merging is authorised, so gh pr merge hits no ask rule and no hook: auto mode's
+# classifier and the repository's branch protection judge it.
+test_permission_policy_pr_merge_not_asked() {
     assert_equals false "$(_pp_in .permissions.ask 'Bash(gh pr merge*)')" "the tmpl no longer asks on gh pr merge"
     assert_equals true "$(_pp_in '.__remove__.entries["permissions.ask"]' 'Bash(gh pr merge*)')" \
         "__remove__ drops the live gh pr merge ask"
-    assert_equals 1 "$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[]
-        | select(.command == "~/.claude/hooks/gh-merge-ask.sh")] | length' "$REPO_ROOT/settings.json.tmpl")" \
-        "gh-merge-ask.sh is registered once on Bash"
+    assert_equals 0 "$(jq '[.hooks[][] | .hooks[] | select(.command | test("gh-merge-ask"))] | length' \
+        "$REPO_ROOT/settings.json.tmpl")" "no hook judges gh pr merge"
 }
 
 # The same precedence would stop a flaky PR check being rerun unattended, so gh-rerun-ask.sh judges reruns instead:
