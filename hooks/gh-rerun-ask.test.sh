@@ -127,7 +127,7 @@ expect none 'gh run view 200 --log'
 expect none "gh run list --json databaseId --jq '.[0].databaseId'"
 expect none 'gh run view 200 --log | grep rerun'
 expect none 'gh pr checks 12'
-# Quote removal makes a quoted mention read as a rerun; the guard fails closed on it, as gh-merge-ask.sh does.
+# Quote removal makes a quoted mention read as a rerun; the guard fails closed on it.
 expect ask 'echo "gh run rerun 200"' 'does not start with gh'
 expect none 'npm run build'
 expect none "npm run lint -- '*.ts'"
