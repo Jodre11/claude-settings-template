@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for gh-rerun-ask.sh: gh run rerun gets no decision when the run was triggered by a pull request, and prompts
-# for any other trigger, a failed or slow lookup, or a form the guard does not judge. Other commands get no decision.
+# Tests for gh-rerun-ask.sh: gh run rerun gets no decision when the run was triggered by a pull request, and is denied
+# with a route for any other trigger, a failed or slow lookup, or a form the guard does not judge. It never asks. Other
+# commands, a rerun assembled at run time included, get no decision.
 # A stub gh on PATH answers the trigger lookup by run id and logs each call.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +38,7 @@ run() {
         | "$HOOK" 2>&1
 }
 
-# expect <ask|deny|none> <command> [<reason fragment>]
+# expect <deny|none> <command> [<reason fragment>]
 expect() {
     local out decision reason
     out=$(run "$r" "$2")
@@ -63,72 +64,60 @@ expect none 'gh run rerun 100 -RExampleOrg/ours'
 expect none 'gh run rerun 100 -R https://github.com/ExampleOrg/ours'
 expect none 'gh run rerun "100"'
 
-# Any other trigger, or a lookup that fails or overruns, prompts.
-expect ask 'gh run rerun 200' "triggered by 'push'"
-expect ask 'gh run rerun 300 --failed' "triggered by 'schedule'"
-expect ask 'gh run rerun 400' 'could not be looked up'
-expect ask 'gh run rerun 500' 'could not be looked up'
+# Any other trigger, or a lookup that fails or overruns, is denied with a route.
+expect deny 'gh run rerun 200' "triggered by 'push'"
+expect deny 'gh run rerun 200' 'list it in your final report'
+expect deny 'gh run rerun 300 --failed' "triggered by 'schedule'"
+expect deny 'gh run rerun 400' 'could not be looked up'
+expect deny 'gh run rerun 500' 'could not be looked up'
 
-# Forms the guard does not judge prompt.
-expect ask 'gh run rerun' 'no run id'
-expect ask 'gh run rerun 100 200' 'more than one run'
-expect ask 'gh run rerun abc' 'not a run id'
-expect ask 'gh run rerun --job 123' 'one job'
-expect ask 'gh run rerun -j 123' 'one job'
-expect ask 'gh run rerun 100 --verbose' 'not one the guard knows'
-expect ask 'gh run rerun 100 --repo' 'no value'
-expect ask 'gh run rerun 100 --repo ghe.example.com/o/r' 'not a GitHub owner/name'
-expect ask 'gh run -R ExampleOrg/ours rerun 100' 'flags after rerun'
-expect ask '"gh" run "re"run 200'
-expect ask 'gh run rerun $ID' 'shell syntax'
-expect ask 'gh run rerun 100 | cat' 'shell syntax'
-expect ask 'gh run rerun 100 > out.txt' 'shell syntax'
+# Forms the guard does not judge are denied with the form to write instead.
+expect deny 'gh run rerun' 'no run id'
+expect deny 'gh run rerun 100 200' 'as its own Bash call'
+expect deny 'gh run rerun abc' 'not a run id'
+expect deny 'gh run rerun --job 123' '--failed instead'
+expect deny 'gh run rerun -j 123' 'one job'
+expect deny 'gh run rerun 100 --verbose' 'not one the guard knows'
+expect deny 'gh run rerun 100 --repo' 'no value'
+expect deny 'gh run rerun 100 --repo ghe.example.com/o/r' 'not a GitHub owner/name'
+expect deny 'gh run -R ExampleOrg/ours rerun 100' 'flags after rerun'
+expect deny '"gh" run "re"run 200' "triggered by 'push'"
+expect deny 'gh run rerun $ID' 'shell syntax'
+expect deny 'gh run rerun 100 | cat' 'one plain command'
+expect deny 'gh run rerun 100 > out.txt' 'shell syntax'
+expect deny 'gh run rerun 100 [1]' 'glob or brace'
+expect deny 'GH_REPO=a/b gh run rerun 100' 'GH_REPO'
+expect deny 'env gh run rerun 100' 'does not start with gh'
+expect deny '/usr/local/bin/gh run rerun 100' 'no word before gh'
+expect deny "gh run rerun 100 'unterminated" 'unterminated quote'
+expect deny 'gh run rerun>/dev/null 1' 'shell syntax'
+expect deny 'gh run rerun<x 1' 'shell syntax'
 # A rerun in a list is denied with the route to run it alone, so the guard can check it.
 expect deny 'cd /x && gh run rerun 100' 'as its own Bash call'
 expect deny 'gh run rerun 100; echo done' 'as its own Bash call'
 expect deny $'gh run rerun 100\necho x' 'as its own Bash call'
 expect deny 'git status && gh run rerun 100' 'as its own Bash call'
 expect deny 'gh run rerun 100 || true' 'as its own Bash call'
-# A text heredoc whose notes mention a rerun is one command, so it keeps today's ask.
-expect ask $'cat > notes.md <<\'EOF\'\nthen gh run rerun 100\nEOF' 'shell syntax'
-expect ask 'GH_REPO=a/b gh run rerun 100' 'GH_REPO'
-expect ask 'env gh run rerun 100' 'does not start with gh'
-expect ask '/usr/local/bin/gh run rerun 100' 'does not start with gh'
-expect ask "gh run rerun 100 'unterminated" 'unterminated quote'
+# Quote removal makes a quoted mention read as a rerun; the guard denies it with the route for a mention.
+expect deny 'echo "gh run rerun 200"' 're[r]un'
+expect deny "grep -n 'gh run rerun' notes.md | head" 'Write tool'
 
-# With no literal rerun, a glob, brace or expansion beside a run word could assemble one: denied with a way to rewrite
-# it. Double quotes leave $ and backquote live, so an expansion in them counts; so does one that assembles gh.
-expect deny 'gh run {re,}run 100' 'could assemble gh run rerun'
-expect deny 'gh run r?run 100' 'could assemble gh run rerun'
-expect deny "gh run \$'rerun' 100" 'could assemble gh run rerun'
-expect deny 'gh run ${X:-rerun} 100' 'could assemble gh run rerun'
-expect deny 'gh run "${X:-rerun}" 100' 'could assemble gh run rerun'
-expect deny 'gh run "`printf rerun`" 100' 'could assemble gh run rerun'
-expect deny '${G:-g}h run rerun 100' 'could assemble gh run rerun'
-expect deny 'npm run test -- $FOO' 'written out literally'
-expect deny 'docker run -v "$PWD:/w" img' 'written out literally'
-# A run word inside an expansion, or any rerun, beside an expansion counts too.
-expect deny 'gh ${X:-run} rerun 100' 'could assemble gh run rerun'
-expect deny 'gh ${X:-run rerun} 100' 'could assemble gh run rerun'
-expect deny 'gh $X rerun 100' 'could assemble gh run rerun'
-expect deny '${G:-g}h ${R:-run} ${S:-rerun} 100' 'could assemble gh run rerun'
-# A redirection ends a word, so it hides neither a rerun nor a run word.
-expect ask 'gh run rerun>/dev/null 1' 'shell syntax'
-expect ask 'gh run rerun<x 1' 'shell syntax'
-expect deny 'gh $X rerun>/dev/null 1' 'could assemble gh run rerun'
-expect deny 'npm run>$F' 'written out literally'
-# A command with a run word too long to scan is denied too.
+# A command with no literal rerun gets no decision: an ordinary run word beside an expansion, glob or brace, and a
+# rerun assembled at run time, which is deliberate evasion and out of scope.
+expect none 'npm run test -- $FOO'
+expect none 'docker run -v "$PWD:/w" img'
+expect none 'npm run>$F'
+expect none 'gh run {re,}run 100'
+expect none 'gh run ${X:-rerun} 100'
+expect none 'gh $X rerun 100'
 long=$(printf 'x%.0s' {1..4100})
-expect deny "gh run \"\${X:-rerun}\" 100 # $long" 'too long'
-expect deny "npm run build # $long" 'too long'
+expect none "npm run build # $long"
 
-# Other commands get no decision, including a run word beside quoted globs.
+# Other commands get no decision.
 expect none 'gh run view 200 --log'
 expect none "gh run list --json databaseId --jq '.[0].databaseId'"
 expect none 'gh run view 200 --log | grep rerun'
 expect none 'gh pr checks 12'
-# Quote removal makes a quoted mention read as a rerun; the guard fails closed on it, as gh-merge-ask.sh does.
-expect ask 'echo "gh run rerun 200"' 'does not start with gh'
 expect none 'npm run build'
 expect none "npm run lint -- '*.ts'"
 expect none 'echo $HOME'
@@ -137,19 +126,12 @@ expect none 'bash tests/run.sh 2>&1 | grep -E "^(FAIL|ok)"'
 expect none 'npm run-script build -- $X'
 expect none 'grep -n -E "R-[0-9]+" hooks/gh-rerun-ask.sh'
 expect none 'ls scripts/run/*.sh'
-# The bodies of the sanctioned commit-message and file-writing heredocs are text, so a run word there is not beside an
-# expansion.
+# The bodies of the sanctioned commit-message and file-writing heredocs are text, so a rerun there is not judged.
 expect none $'git commit -m "$(cat <<\'EOF\'\nfix: run the tests on ${X:-run}\nEOF\n)"'
-expect none $'cat > notes.txt <<\'EOF\'\nnpm run $X\nEOF'
-# Any other heredoc is read: one a shell runs, one with no file target, an opener inside a string, an unquoted
-# delimiter, text after the terminator, a here-string. A literal rerun in a sanctioned body asks.
-expect deny $'bash <<\'EOF\'\nnpm run $X\nEOF' 'written out literally'
-expect deny $'cat <<\'EOF\'\nnpm run $X\nEOF' 'written out literally'
-expect deny $'echo "<<\'EOF\'"\ngh ${X:-run} rerun 1\nEOF' 'could assemble gh run rerun'
-expect deny $'cat > notes.txt <<EOF\nnpm run $X\nEOF' 'written out literally'
-expect deny $'cat > notes.txt <<\'EOF\'\nx\nEOF\nnpm run $X' 'written out literally'
-expect deny $'cat <<<\'E\'\nnpm run $X\nE' 'written out literally'
-expect ask $'git commit -m "$(cat <<\'EOF\'\ngh run rerun 1\nEOF\n)"' 'shell syntax'
+expect none $'git commit -m "$(cat <<\'EOF\'\nfix: deny a non-PR gh run rerun 1\nEOF\n)"'
+expect none $'cat > notes.md <<\'EOF\'\nthen gh run rerun 100\nEOF'
+# A heredoc a shell runs is read, so a rerun in it is judged.
+expect deny $'bash <<\'EOF\'\ngh run rerun 100\nEOF' 'shell syntax'
 expect none 'gh pr create --body-file $CLAUDE_TEMP_DIR/pr-body.md'
 expect none 'ls -la'
 expect none ''
@@ -174,10 +156,16 @@ run "$r" 'gh run view 200' >/dev/null
 if [[ ! -s "$GRA_LOG" ]]; then ok "a command that is not a rerun runs no lookup"; else bad "lookup ran for a view"; fi
 
 out=$(jq -nc '{tool_input: {command: "gh run rerun 100"}}' | "$HOOK" 2>&1)
-if [[ "$(jq -r '.hookSpecificOutput.permissionDecision' <<< "$out" 2>/dev/null)" == ask ]]; then
-    ok "a payload with no working directory prompts"
+if [[ "$(jq -r '.hookSpecificOutput.permissionDecision' <<< "$out" 2>/dev/null)" == deny ]]; then
+    ok "a payload with no working directory is denied"
 else
     bad "no-cwd payload: $out"
+fi
+
+if grep -q 'hook_ask\|backstop ask' "$HOOK"; then
+    bad "gh-rerun-ask.sh can still ask, which parks an unattended session"
+else
+    ok "gh-rerun-ask.sh never asks"
 fi
 
 TMPL="$DIR/../settings.json.tmpl"
