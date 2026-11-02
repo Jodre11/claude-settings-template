@@ -41,6 +41,10 @@ plugins/
 # MCP auth state
 mcp-needs-auth-cache.json
 
+# CLI auth-refresh state: the OAuth refresh lock and the temp files it can leave, and the awsAuthRefresh result cache
+/.oauth_refresh.lock*
+/.aws_auth_refresh-*.json
+
 # Telemetry and stats
 statsig/
 stats-cache.json
