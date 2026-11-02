@@ -294,6 +294,32 @@ raw_commit "$d" later.md "clean line"
 push_to "$d" origin main
 check "an update is scanned only for the commits after the remote's tip" 0 "$rc"
 d=$(push_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" switch -q -c topic
+raw_commit "$d" topic.md "clean line"
+git -C "$d" -c core.hooksPath=/dev/null push -q origin topic
+# A host's merge commit on main (Merge pull request #N from <owner>/...) names the owner in its message only.
+git -C "$d" switch -q main
+raw_commit "$d" notes.md "clean line" -m "mentions $local_word"
+git -C "$d" -c core.hooksPath=/dev/null push -q origin main
+git -C "$d" switch -q topic
+git -C "$d" -c core.hooksPath=/dev/null merge -q --no-ff -m "merge main" main
+push_to "$d" origin topic
+check "an update that merges a published branch does not rescan its commits" 0 "$rc"
+check "the merged update landed" "$(git -C "$d" rev-parse topic)" "$(landed "$d" topic)"
+d=$(push_repo)
+with_list "$d" identity "$local_word"
+git -C "$d" switch -q -c topic
+raw_commit "$d" topic.md "clean line"
+git -C "$d" -c core.hooksPath=/dev/null push -q origin topic
+git -C "$d" switch -q main
+raw_commit "$d" notes.md "clean line" -m "mentions $local_word"
+git -C "$d" switch -q topic
+git -C "$d" -c core.hooksPath=/dev/null merge -q --no-ff -m "merge main" main
+push_to "$d" origin topic
+check "an update that merges an unpublished commit still scans it" 1 "$rc"
+check_match "that refusal names the unpublished commit's metadata" 'metadata: mentions' "$out"
+d=$(push_repo)
 raw_commit "$d" notes.md "see $word"
 git -C "$d" -c core.hooksPath=/dev/null push -q origin main
 git -C "$d" switch -q -c topic
