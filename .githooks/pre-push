@@ -2,9 +2,11 @@
 # Pre-push hook: scans every commit a push would publish, before it leaves the machine. The pre-commit screens each
 # commit as it is made, but a rebase, cherry-pick, am or merge makes commits without it, and so does a commit made with
 # the hooks off; this hook catches all of them. For each pushed ref it scans the commits the remote does not have yet:
-# <remote-sha>..<local-sha> when the remote's tip is known here, otherwise every commit on no remote-tracking branch of
-# that remote (a new branch), or the whole history when the push goes to a URL rather than a named remote. Each
-# commit is scanned on its own, so a value added and then removed within one push is still caught.
+# those after the remote's tip when it is known here, and on no remote-tracking branch of that remote, so a merge of an
+# already-published branch (main into a PR branch) does not rescan its commits; every commit on no remote-tracking
+# branch of that remote for a new branch; or the whole history (after the remote's tip, if known) when the push goes
+# to a URL rather than a named remote. Each commit is scanned on its own, so a value added and then removed within one
+# push is still caught.
 #
 # The scans:
 #   - no commit may add a local pattern list (.githooks/*-patterns.local), and no ref may name a blob or a tree, whose
@@ -40,7 +42,10 @@ is_named_remote() {
 # than a textconv driver's output.
 set_range() {
     if [[ ! "$2" =~ $zero_re ]] && git cat-file -e "$2^{commit}" 2>/dev/null; then
-        range=("$2..$1")
+        range=("$1" --not "$2")
+        if is_named_remote "$remote"; then
+            range+=("--remotes=$remote")
+        fi
     elif is_named_remote "$remote"; then
         range=("$1" --not "--remotes=$remote")
     else
